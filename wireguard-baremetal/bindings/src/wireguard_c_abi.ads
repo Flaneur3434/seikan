@@ -24,7 +24,7 @@ package Wireguard_C_ABI is
    procedure Receive_Bytes
       (Buf : System.Address;
        Len : Natural)
-      with Convention => C, External_Name => "wg_receive_bytes";
+      with Convention => C, Export, External_Name => "wg_receive_bytes";
 
    --  Prepare outgoing packet for transmission.
    --
@@ -41,7 +41,7 @@ package Wireguard_C_ABI is
       (Out_Buf : System.Address;
        Max_Len : Natural)
        return Natural
-      with Convention => C, External_Name => "wg_prepare_tx";
+      with Convention => C, Export, External_Name => "wg_prepare_tx";
 
    --  TODO: Add as needed
    --  - initialization
