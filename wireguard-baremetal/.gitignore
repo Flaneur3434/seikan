@@ -1,0 +1,25 @@
+# CMake build directory
+build/
+cmake-build-debug/
+cmake-build-release/
+
+# ESP-IDF
+sdkconfig
+sdkconfig.old
+managed_components/
+
+# Editor
+.vscode/
+.idea/
+*~
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

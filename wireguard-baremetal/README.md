@@ -2,6 +2,34 @@
 
 A **formally verified WireGuard client** for bare-metal and no-OS embedded systems. This project provides a **minimal, memory-safe, and cryptographically correct** implementation of the WireGuard protocol for resource-constrained microcontrollers—without POSIX, dynamic memory allocation, or a full operating system.
 
+## Core Design Principle: "Ada is the brain, C is the hands"
+
+```
+Protocol Logic (Ada/SPARK)           Hardware Access (C)
+┌─────────────────────────────────┐  ┌─────────────────────┐
+│                                 │  │                     │
+│  State Machine & Verification   │  │  Drivers & DMA      │
+│  Crypto Orchestration           │  │  Interrupt Handlers │
+│  Replay Protection              │  │  WiFi MAC Layer     │
+│  Packet Validation              │  │  Memory Management  │
+│                                 │  │                     │
+└────────────┬────────────────────┘  └────────────┬────────┘
+             │                                    │
+             └─────────── C ABI ──────────────────┘
+                  (2 functions only)
+```
+
+**Key Rules:**
+- **Ada owns all protocol state** - C never interprets WireGuard semantics
+- **C is untrusted I/O layer** - Ada validates every byte from C
+- **One-way data flow** - RX: C input → Ada validation → Ada decision; TX: Ada constructs → C transmits
+- **Minimal ABI boundary** - Only 2 exported C functions; no state pointers cross boundary
+
+See [bindings/README.md](bindings/README.md) for ABI details.
+See [platform/main/README.md](platform/main/README.md) for C integration.
+
+---
+
 ## Project Goals
 
 - **Small Trusted Computing Base (TCB)**: Minimal verified core with clear boundaries
