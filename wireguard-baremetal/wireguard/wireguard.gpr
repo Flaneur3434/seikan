@@ -1,6 +1,10 @@
 with "config/wireguard_config.gpr";
 project Wireguard is
 
+   --  ESP32-C6 target: RISC-V RV32IMAC
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "light-rv32imac";
+
    for Library_Name use "Wireguard";
    for Library_Version use Project'Library_Name & ".so." & Wireguard_Config.Crate_Version;
 
