@@ -1,0 +1,4 @@
+# pytest-embedded Integration Tests
+# 
+# This directory will contain integration tests using pytest-embedded.
+# See tests/README.md for setup instructions.

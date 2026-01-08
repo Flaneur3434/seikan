@@ -1,0 +1,8 @@
+# Unity Test Framework
+# 
+# This directory will contain the Unity test framework.
+# See: https://github.com/ThrowTheSwitch/Unity
+#
+# To add Unity:
+#   git submodule add https://github.com/ThrowTheSwitch/Unity.git tests/c/unity
+# Or download and extract manually.
