@@ -1,0 +1,34 @@
+{
+    "configurations": [
+        {
+            "name": "ESP-IDF",
+            "compilerPath": "${config:idf.toolsPath}undefined",
+            "compileCommands": "${config:idf.buildPath}/compile_commands.json",
+            "includePath": [
+                "${config:idf.espIdfPath}/components/**",
+                "${config:idf.espIdfPathWin}/components/**",
+                "${workspaceFolder}/wireguard-baremetal/platform/main",
+                "${workspaceFolder}/wireguard-baremetal/platform/common/include",
+                "${workspaceFolder}/wireguard-baremetal/platform/cortex_m/include",
+                "${workspaceFolder}/wireguard-baremetal/build/config",
+                "${workspaceFolder}/**"
+            ],
+            "defines": [
+                "ESP_PLATFORM",
+                "IDF_TARGET_ESP32C6"
+            ],
+            "cStandard": "c23",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "gcc-x64",
+            "browse": {
+                "path": [
+                    "${config:idf.espIdfPath}/components",
+                    "${config:idf.espIdfPathWin}/components",
+                    "${workspaceFolder}/wireguard-baremetal"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}

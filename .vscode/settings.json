@@ -1,0 +1,20 @@
+{
+    "C_Cpp.default.configurationName": "ESP-IDF",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/wireguard-baremetal/build/compile_commands.json",
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.enhancedColorization": true,
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c",
+        "*.ads": "ada"
+    },
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": false
+    },
+    "editor.rulers": [80, 120],
+    "editor.wordWrap": "off",
+    "cmake.configureOnOpen": true,
+    "cmake.sourceDirectory": "${workspaceFolder}/wireguard-baremetal",
+    "cmake.buildDirectory": "${workspaceFolder}/wireguard-baremetal/build"
+}
