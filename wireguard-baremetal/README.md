@@ -135,6 +135,28 @@ cd wireguard && alr exec -- gnatprove -P wireguard.gpr
 cd platform && idf.py build
 ```
 
+### WiFi Configuration (ESP32-C6)
+
+Configure WiFi credentials using the interactive menu:
+
+```bash
+idf.py menuconfig
+```
+
+Navigate to: **WiFi Configuration** → set SSID and Password
+
+Then build and flash:
+```bash
+./build.py build --idf flash
+```
+
+**How it works:**
+- **Kconfig** (`platform/main/Kconfig`) - Defines configuration options
+- **sdkconfig** - Your device-specific settings (in `.gitignore`, not committed)
+- **C code** - Uses `CONFIG_WIFI_SSID` and `CONFIG_WIFI_PASSWORD` macros at compile time
+
+The credentials compile directly into the firmware binary. Source code stays clean with no credentials in git.
+
 ## Verification
 
 ### SPARK Proof
