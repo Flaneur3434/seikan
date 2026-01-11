@@ -1,32 +1,13 @@
-#include <stddef.h>
-#include <stdint.h>
+#include <esp_netif.h>
+#include <esp_event.h>
+#include <esp_log.h>
+#include <esp_system.h>
+#include <nvs_flash.h>
 
-/*
- * WireGuard ESP32-C6 Application Entry Point
- *
- * Architecture:
- *   Ada/SPARK core owns protocol logic and state
- *   C layer provides hardware I/O and driver integration
- *
- * This file orchestrates:
- *   1. Hardware initialization
- *   2. Main event loop calling Ada core
- *   3. Packet RX/TX with network driver
- */
+#include "udp_server.h"
+#include "wifi_station.h"
 
-/*
- * External Ada ABI - defined in bindings/
- */
-extern void wg_receive_bytes(const uint8_t *buf, size_t len);
-extern size_t wg_prepare_tx(uint8_t *out, size_t max_len);
-
-/*
- * TODO: Hardware abstraction layer stubs
- *   - wifi_rx_packet()      - fetch received packet from queue
- *   - wifi_tx_packet()      - send packet via DMA
- *   - timer_init()          - start timers for keepalive/timeout
- *   - memory_init()         - allocate buffers
- */
+static const char *TAG = "main";
 
 int app_main(void)
 {
@@ -40,6 +21,32 @@ int app_main(void)
      *    - Check TX queue, call wg_prepare_tx()
      *    - Handle interrupts / timers
      */
+
+    /**
+     * ESP32 Wi-Fi is stateful and stores persistent data across boot
+     * PHY calibration data
+     * Country / regulatory domain
+     * STA/AP configuration
+     * Power-saving state
+     * Fast reconnect / roaming info
+     * ect ...
+     */
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    /* If you only want to open more logs in the wifi module, you need to make the max level greater than the default level,
+     * and call esp_log_level_set() before esp_wifi_init() to improve the log level of the wifi module. */
+    esp_log_level_set("wifi", ESP_LOG_DEBUG);
+
+    wifi_init_sta();
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+
+    xTaskCreate(udp_server_task, "udp_server", 4096, (void*)0, 5, NULL);
+    ESP_LOGI(TAG, "UDP Server task started ...");
 
     return 0;
 }
