@@ -1,0 +1,143 @@
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/time.h>
+
+// BSD socket functions and  data structures
+#include <sys/socket.h>
+// Address family and protocal information
+#include <netinet/in.h>
+// Functions for manipulating numeric IP addresses
+#include <arpa/inet.h>
+
+#include <esp_log.h>
+
+#define PORT 51820
+
+static const char *TAG = "udp srv";
+
+/*
+ * WireGuard ESP32-C6 Application Entry Point
+ *
+ * Architecture:
+ *   Ada/SPARK core owns protocol logic and state
+ *   C layer provides hardware I/O and driver integration
+ *
+ * This file orchestrates:
+ *   1. Hardware initialization
+ *   2. Main event loop calling Ada core
+ *   3. Packet RX/TX with network driver
+ */
+
+/*
+ * External Ada ABI - defined in bindings/
+ */
+extern void wg_receive_bytes(const uint8_t *buf, size_t len);
+extern size_t wg_prepare_tx(uint8_t *out, size_t max_len);
+
+void udp_server_task(void *pvParameters)
+{
+    (void)pvParameters;
+
+    char rx_buffer[128];
+    char addr_str[128];
+
+    struct sockaddr_in dest_addr = {};
+    dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(PORT);
+
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+    if (sock < 0)
+    {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        return;
+    }
+    ESP_LOGI(TAG, "Socket created");
+
+    // Increase RX buffer size with SO_RCVBUF in the future if needed
+    // UDP drops happen when the socket receive queue fills.
+    // More buffer = more burst absorption
+
+    // Increase TX buffer size with SO_SNDBUF in the future if needed
+    // Useful if enqueuing a burst of outgoing packets (handshake
+    // bursts, keepalives across many peers, etc.).
+
+    // SO_TIMESTAMP / SO_TIMESTAMPNS can provide per-packet timestamps
+
+    // Use connect()
+
+    // Tweak LwIP settings form menuconfig in future too if needed
+
+    // Set timeout
+    struct timeval timeout;
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+
+    // Binds a local address + port
+    int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    if (err < 0)
+    {
+        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+    }
+    ESP_LOGI(TAG, "Socket bound, port %d", PORT);
+
+    // TODO: Use connect() to set default remote peer
+    // Filter incoming packets, restrict to default peer
+    // Slightly cheaper send/receive path
+    // Better error reporting
+    // Need to reconnect if endpoint changes
+
+    struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
+    socklen_t socklen = sizeof(source_addr);
+
+    while (1)
+    {
+        ESP_LOGI(TAG, "Waiting for data");
+
+        // Haven't setup connect() yet, so can research packets from any IP
+        int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+        // Error occurred on receiving
+        if (len < 0)
+        {
+            ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
+            break;
+        }
+        // Data received
+        else
+        {
+            // Get the sender's ip address as string
+            if (source_addr.ss_family == PF_INET)
+            {
+                inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Haven't setup IPv6, exiting program ...");
+                break;
+            }
+
+            rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string ...
+            ESP_LOGI(TAG, "Received %d bytes from %s:", len, addr_str);
+            ESP_LOGI(TAG, "%s", rx_buffer);
+
+            // Echo back packet
+            int err = sendto(sock, rx_buffer, len, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+            if (err < 0)
+            {
+                ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+                break;
+            }
+        }
+    }
+
+    if (sock != -1)
+    {
+        ESP_LOGE(TAG, "Shutting down socket and restarting ...");
+        shutdown(sock, 0);
+        close(sock);
+    }
+}
