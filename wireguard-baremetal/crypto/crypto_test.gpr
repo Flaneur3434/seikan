@@ -1,0 +1,38 @@
+--  Test project for running GNATtest on host
+--  Uses host bindings instead of ESP-IDF bindings
+
+project Crypto_Test is
+
+   for Source_Dirs use (
+      "src/",                         --  crypto.ads (parent package)
+      "src/interfaces/",              --  crypto-random.ads (shared interface)
+      "src/bindings/",                --  crypto-host.ads (host binding)
+      "src/implementations/host/"    --  crypto-random.adb (host impl)
+   );
+
+   --  Exclude ESP-IDF specific files (they won't compile on host)
+   for Excluded_Source_Files use (
+      "crypto-esp_idf.ads"
+   );
+
+   for Object_Dir use "obj/test";
+   for Create_Missing_Dirs use "True";
+
+   --  Host target (native)
+   for Target use "x86_64-linux";
+
+   package Compiler is
+      for Default_Switches ("Ada") use (
+         "-g",              --  Debug info
+         "-gnatwa",         --  All warnings
+         "-gnatwe",         --  Warnings as errors
+         "-gnata",          --  Enable assertions
+         "-gnat2022"        --  Ada 2022 mode
+      );
+   end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es");
+   end Binder;
+
+end Crypto_Test;
