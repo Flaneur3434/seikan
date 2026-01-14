@@ -2,14 +2,26 @@
 --
 --  This is a PRIVATE package - only visible within Crypto hierarchy.
 --  Libsodium works on both ESP32 (via ESP-IDF component) and host.
+--
+--  NOTE: sodium_init() is called automatically during package elaboration.
 
 with System;
 with Interfaces.C;
 
 private package Crypto.Platform
-  with SPARK_Mode => Off
+  with SPARK_Mode => Off,
+       Elaborate_Body  --  Ensures body runs to call sodium_init
 is
    use Interfaces.C;
+
+   ---------------------
+   --  Initialization
+   ---------------------
+
+   --  int sodium_init(void);
+   --  Returns 0 on success, 1 if already initialized, -1 on failure
+   function Sodium_Init return int
+   with Import, Convention => C, External_Name => "sodium_init";
 
    ---------------------
    --  Random Number Generation
