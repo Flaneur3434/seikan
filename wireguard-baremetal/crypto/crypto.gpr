@@ -5,6 +5,10 @@ project Crypto is
    type Platform_Type is ("esp_idf", "host");
    Platform : Platform_Type := external ("PLATFORM", "esp_idf");
 
+   --  Crypto backend selection (which library provides primitives)
+   type Backend_Type is ("libsodium", "mbedtls");
+   Backend : Backend_Type := external ("CRYPTO_BACKEND", "libsodium");
+
    --  Target configuration
    case Platform is
       when "esp_idf" =>
@@ -17,15 +21,15 @@ project Crypto is
    for Library_Name use "Crypto";
    for Library_Version use Project'Library_Name & ".so." & Crypto_Config.Crate_Version;
 
-   --  Common source directories (shared across all platforms)
-   Common_Src := ("src/", "src/interfaces/", "src/platform/common/", "config/");
+   --  Common source directories
+   Common_Src := ("src/", "src/interfaces/", "src/implementation/", "config/");
 
-   --  Platform-specific sources
-   case Platform is
-      when "esp_idf" =>
-         for Source_Dirs use Common_Src & ("src/platform/esp_idf/");
-      when "host" =>
-         for Source_Dirs use Common_Src & ("src/platform/host/");
+   --  Backend-specific platform bindings (provides Crypto.Platform)
+   case Backend is
+      when "libsodium" =>
+         for Source_Dirs use Common_Src & ("src/platform/libsodium/");
+      when "mbedtls" =>
+         for Source_Dirs use Common_Src & ("src/platform/mbedtls/");
    end case;
 
    for Object_Dir use "obj/" & Platform;
@@ -46,11 +50,21 @@ project Crypto is
    end Binder;
 
    package Linker is
-      case Platform is
-         when "host" =>
-            for Linker_Options use ("-lsodium", "-L/usr/local/lib");
-         when "esp_idf" =>
-            null;  --  ESP-IDF handles libsodium linking via component
+      case Backend is
+         when "libsodium" =>
+            case Platform is
+               when "host" =>
+                  for Linker_Options use ("-lsodium", "-L/usr/local/lib");
+               when "esp_idf" =>
+                  null;  --  ESP-IDF handles libsodium linking via component
+            end case;
+         when "mbedtls" =>
+            case Platform is
+               when "host" =>
+                  for Linker_Options use ("-lmbedcrypto");
+               when "esp_idf" =>
+                  null;  --  ESP-IDF handles mbedtls linking via component
+            end case;
       end case;
    end Linker;
 

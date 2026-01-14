@@ -1,4 +1,4 @@
---  Libsodium C bindings (cross-platform)
+--  Platform-specific crypto bindings: libsodium
 --
 --  This is a PRIVATE package - only visible within Crypto hierarchy.
 --  Libsodium works on both ESP32 (via ESP-IDF component) and host.
@@ -6,10 +6,21 @@
 with System;
 with Interfaces.C;
 
-private package Crypto.Sodium
+private package Crypto.Platform
   with SPARK_Mode => Off
 is
    use Interfaces.C;
+
+   ---------------------
+   --  Random Number Generation
+   ---------------------
+
+   --  void randombytes_buf(void * const buf, const size_t size);
+   --  Fills buffer with cryptographically secure random bytes
+   procedure Randombytes_Buf
+     (Buffer : System.Address;
+      Size   : size_t)
+   with Import, Convention => C, External_Name => "randombytes_buf";
 
    ---------------------
    --  X25519 Key Exchange
@@ -42,10 +53,10 @@ is
    with Import, Convention => C, External_Name => "crypto_scalarmult";
 
    ---------------------
-   --  Future: Add more libsodium bindings here
+   --  Future: Add more bindings here
    --  - ChaCha20-Poly1305
    --  - BLAKE2b
    --  - etc.
    ---------------------
 
-end Crypto.Sodium;
+end Crypto.Platform;

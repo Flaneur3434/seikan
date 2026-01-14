@@ -83,7 +83,7 @@ wireguard-baremetal/
 │   └── packet_fuzzer/      # Fuzzing tools
 │
 ├── config/                 # Build & device configuration
-└── third_party/            # External dependencies
+└── third_party/            # External dependencies (libsodium)
 ```
 
 ## Technologies
@@ -92,9 +92,11 @@ wireguard-baremetal/
 |------------|---------|
 | **Ada/SPARK** | Primary implementation language; memory safety, strong typing, contract-based verification |
 | **Alire** | Ada package manager for dependency management |
-| **ESP-IDF** | Platform layer for embedded targets (Cortex-M, ESP32) |
-| **TLA+** | Formal specification of protocol state machines |
+| **ESP-IDF** | Platform layer for embedded targets (ESP32-C6) |
+| **libsodium** | Cryptographic primitives (X25519, ChaCha20-Poly1305, BLAKE2b) |
 | **GNATprove** | SPARK proof tool for absence of runtime errors |
+| **GNATtest** | Ada unit test harness generation |
+| **TLA+** | Formal specification of protocol state machines |
 
 ## Trusted Computing Base
 
