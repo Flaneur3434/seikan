@@ -1,7 +1,12 @@
+--  ESP-IDF platform bindings for ESP32
+--
+--  This is a PRIVATE package - only visible within Crypto hierarchy.
+--  External users should use Crypto.Random.Fill_Random instead.
+
 with System;
 with Interfaces.C;
 
-package Crypto.ESP_IDF
+private package Crypto.ESP_IDF
   with SPARK_Mode => Off
 is
    --  void esp_fill_random(void *buf, size_t len);
