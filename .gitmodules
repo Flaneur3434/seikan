@@ -1,0 +1,3 @@
+[submodule "wireguard-baremetal/third_party/libsodium"]
+	path = wireguard-baremetal/third_party/libsodium
+	url = https://github.com/jedisct1/libsodium.git

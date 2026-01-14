@@ -18,9 +18,9 @@ project Crypto is
    for Library_Version use Project'Library_Name & ".so." & Crypto_Config.Crate_Version;
 
    --  Common source directories (shared across all platforms)
-   Common_Src := ("src/", "src/interfaces/", "config/");
+   Common_Src := ("src/", "src/interfaces/", "src/platform/common/", "config/");
 
-   --  Platform-specific sources (bindings + implementations together)
+   --  Platform-specific sources
    case Platform is
       when "esp_idf" =>
          for Source_Dirs use Common_Src & ("src/platform/esp_idf/");
@@ -44,6 +44,15 @@ project Crypto is
    package Binder is
       for Switches ("Ada") use ("-Es"); --  Symbolic traceback
    end Binder;
+
+   package Linker is
+      case Platform is
+         when "host" =>
+            for Linker_Options use ("-lsodium", "-L/usr/local/lib");
+         when "esp_idf" =>
+            null;  --  ESP-IDF handles libsodium linking via component
+      end case;
+   end Linker;
 
    package Install is
       for Artifacts (".") use ("share");
