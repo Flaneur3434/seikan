@@ -1,24 +1,34 @@
 with "config/crypto_config.gpr";
 project Crypto is
 
-   --  ESP32-C6 target: RISC-V RV32IMAC
-   for Target use "riscv64-elf";
-   for Runtime ("Ada") use "light-rv32imac";
+   --  Platform selection: esp_idf (default) or host (for testing)
+   type Platform_Type is ("esp_idf", "host");
+   Platform : Platform_Type := external ("PLATFORM", "esp_idf");
+
+   --  Target configuration
+   case Platform is
+      when "esp_idf" =>
+         for Target use "riscv64-elf";
+         for Runtime ("Ada") use "light-rv32imac";
+      when "host" =>
+         null;  --  Use native target
+   end case;
 
    for Library_Name use "Crypto";
    for Library_Version use Project'Library_Name & ".so." & Crypto_Config.Crate_Version;
 
-   for Source_Dirs use (
-      "src/",
-      "src/interfaces/",
-      "src/bindings/",
-      "src/implementations/esp_idf/",
-      "config/"
-   );
+   --  Common source directories (shared across all platforms)
+   Common_Src := ("src/", "src/interfaces/", "config/");
 
-   --  Exclude host-only files
-   for Excluded_Source_Files use ("crypto-host.ads");
-   for Object_Dir use "obj/" & Crypto_Config.Build_Profile;
+   --  Platform-specific sources (bindings + implementations together)
+   case Platform is
+      when "esp_idf" =>
+         for Source_Dirs use Common_Src & ("src/platform/esp_idf/");
+      when "host" =>
+         for Source_Dirs use Common_Src & ("src/platform/host/");
+   end case;
+
+   for Object_Dir use "obj/" & Platform;
    for Create_Missing_Dirs use "True";
    for Library_Dir use "lib";
 

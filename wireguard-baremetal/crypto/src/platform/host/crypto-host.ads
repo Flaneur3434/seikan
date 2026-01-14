@@ -1,10 +1,13 @@
 --  Host platform bindings for testing on Linux/macOS
 --  Uses getrandom() syscall on Linux
+--
+--  This is a PRIVATE package - only visible within Crypto hierarchy.
+--  External users should use Crypto.Random.Fill_Random instead.
 
 with System;
 with Interfaces.C;
 
-package Crypto.Host
+private package Crypto.Host
   with SPARK_Mode => Off
 is
    --  ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);

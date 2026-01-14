@@ -34,10 +34,10 @@ package body Crypto.Random.Test_Data.Tests is
 --  end read only
 
 --  begin read only
-   procedure Test_Fill_Random (Gnattest_T : in Out Test);
-   procedure Test_Fill_Random_3b8490 (Gnattest_T : in Out Test) renames Test_Fill_Random;
+   procedure Test_Fill_Random (Gnattest_T : in out Test);
+   procedure Test_Fill_Random_3b8490 (Gnattest_T : in out Test) renames Test_Fill_Random;
 --  id:2.2/3b84907a51458a25/Fill_Random/1/0/
-   procedure Test_Fill_Random (Gnattest_T : in Out Test) is
+   procedure Test_Fill_Random (Gnattest_T : in out Test) is
    --  crypto-random.ads:10:4:Fill_Random
 --  end read only
 
