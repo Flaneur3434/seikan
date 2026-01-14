@@ -18,8 +18,14 @@ project Crypto is
          null;  --  Use native target
    end case;
 
-   for Library_Name use "Crypto";
-   for Library_Version use Project'Library_Name & ".so." & Crypto_Config.Crate_Version;
+   --  Library configuration (only for host builds - embedded links directly)
+   case Platform is
+      when "host" =>
+         for Library_Name use "Crypto";
+         for Library_Version use "libCrypto.so." & Crypto_Config.Crate_Version;
+      when "esp_idf" =>
+         null;  --  Sources compiled into main binary by ESP-IDF
+   end case;
 
    --  Common source directories
    Common_Src := ("src/", "src/interfaces/", "src/implementation/", "config/");
@@ -34,12 +40,25 @@ project Crypto is
 
    for Object_Dir use "obj/" & Platform;
    for Create_Missing_Dirs use "True";
-   for Library_Dir use "lib";
+
+   --  Library attributes only for host (embedded doesn't support standalone libs)
+   case Platform is
+      when "host" =>
+         for Library_Dir use "lib";
+      when "esp_idf" =>
+         null;
+   end case;
 
    type Library_Type_Type is ("relocatable", "static", "static-pic");
    Library_Type : Library_Type_Type :=
      external ("CRYPTO_LIBRARY_TYPE", external ("LIBRARY_TYPE", "static"));
-   for Library_Kind use Library_Type;
+
+   case Platform is
+      when "host" =>
+         for Library_Kind use Library_Type;
+      when "esp_idf" =>
+         null;
+   end case;
 
    package Compiler is
       for Default_Switches ("Ada") use Crypto_Config.Ada_Compiler_Switches;
