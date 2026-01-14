@@ -5,4 +5,4 @@ is
    with Global => null,
         Post => Buffer'Length = Buffer'Length;
 
-end Crypto.Random;         
+end Crypto.Random;
