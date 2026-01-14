@@ -1,6 +1,6 @@
---  ESP-IDF implementation of Crypto.X25519 using libsodium C bindings
+--  X25519 implementation using platform crypto backend
 
-with Crypto.ESP_IDF;
+with Crypto.Platform;
 with Interfaces.C;
 
 package body Crypto.X25519
@@ -13,7 +13,7 @@ is
       use Interfaces.C;
       Ret_Val : int;
    begin
-      Ret_Val := Crypto.ESP_IDF.ESP_Generate_Key_Pair
+      Ret_Val := Crypto.Platform.Crypto_Box_Keypair
         (Public_Key_Out => Key.Public_Key'Address,
          Secret_Key_Out => Key.Secret_Key'Address);
 
@@ -26,13 +26,13 @@ is
 
    procedure Scalar_Mult_Base
      (Public_Key : out X25519_Public_Key;
-      Secret_Key : in  X25519_Secret_Key;
+      Secret_Key : X25519_Secret_Key;
       Result     : out Crypto.Status)
    is
       use Interfaces.C;
       Ret_Val : int;
    begin
-      Ret_Val := Crypto.ESP_IDF.ESP_Scalarmult_Base
+      Ret_Val := Crypto.Platform.Crypto_Scalarmult_Base
         (Public_Key_Out => Public_Key'Address,
          Secret_Key_In  => Secret_Key'Address);
 
@@ -45,14 +45,14 @@ is
 
    procedure Scalar_Mult
      (Shared_Secret : out X25519_Shared_Secret;
-      My_Secret     : in  X25519_Secret_Key;
-      Their_Public  : in  X25519_Public_Key;
+      My_Secret     : X25519_Secret_Key;
+      Their_Public  : X25519_Public_Key;
       Result        : out Crypto.Status)
    is
       use Interfaces.C;
       Ret_Val : int;
    begin
-      Ret_Val := Crypto.ESP_IDF.ESP_Scalarmult
+      Ret_Val := Crypto.Platform.Crypto_Scalarmult
         (Shared_Secret_Out   => Shared_Secret'Address,
          My_Secret_Key_In    => My_Secret'Address,
          Their_Public_Key_In => Their_Public'Address);
