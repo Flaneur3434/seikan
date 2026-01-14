@@ -16,8 +16,8 @@ with System.Assertions;
 --  end read only
 
 with Crypto.Random;
-with Interfaces;
-use type Interfaces.Unsigned_8;
+with Crypto;
+use type Crypto.Unsigned_8;
 
 --  begin read only
 --  end read only
@@ -35,24 +35,21 @@ package body Crypto.Random.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Fill_Random (Gnattest_T : in out Test);
-   procedure Test_Fill_Random_3b8490 (Gnattest_T : in out Test) renames Test_Fill_Random;
---  id:2.2/3b84907a51458a25/Fill_Random/1/0/
+   procedure Test_Fill_Random_66814e (Gnattest_T : in out Test) renames Test_Fill_Random;
+--  id:2.2/66814e45b7bf780a/Fill_Random/1/0/
    procedure Test_Fill_Random (Gnattest_T : in out Test) is
-   --  crypto-random.ads:10:4:Fill_Random
+   --  crypto-random.ads:4:4:Fill_Random
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      --  Test 1: Buffer should not be all zeros after Fill_Random
-      Buffer : Crypto.Random.Byte_Array (1 .. 32) := (others => 0);
+      Buffer  : Crypto.Byte_Array (1 .. 32) := (others => 0);
+      Buffer2 : Crypto.Byte_Array (1 .. 32) := (others => 0);
       All_Zero : Boolean := True;
-
-      --  Test 2: Two calls should produce different results
-      Buffer2 : Crypto.Random.Byte_Array (1 .. 32) := (others => 0);
       Same : Boolean := True;
 
    begin
-      --  Test 1: Fill buffer and verify not all zeros
+      --  Test 1: Buffer should not be all zeros after Fill_Random
       Crypto.Random.Fill_Random (Buffer);
 
       for I in Buffer'Range loop
@@ -64,7 +61,7 @@ package body Crypto.Random.Test_Data.Tests is
 
       AUnit.Assertions.Assert
         (not All_Zero,
-         "Fill_Random produced all zeros - extremely unlikely for 32 bytes");
+         "Fill_Random produced all zeros - extremely unlikely");
 
       --  Test 2: Second call should produce different values
       Crypto.Random.Fill_Random (Buffer2);
@@ -78,7 +75,7 @@ package body Crypto.Random.Test_Data.Tests is
 
       AUnit.Assertions.Assert
         (not Same,
-         "Two Fill_Random calls produced identical buffers - extremely unlikely");
+         "Two Fill_Random calls produced identical buffers");
 
 --  begin read only
    end Test_Fill_Random;
