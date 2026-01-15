@@ -5,6 +5,8 @@ project Crypto is
    type Platform_Type is ("esp_idf", "host");
    Platform : Platform_Type := external ("PLATFORM", "esp_idf");
 
+   for Languages use ("Ada", "C");
+
    --  Crypto backend selection (which library provides primitives)
    type Backend_Type is ("libsodium", "mbedtls");
    Backend : Backend_Type := external ("CRYPTO_BACKEND", "libsodium");
@@ -27,15 +29,45 @@ project Crypto is
          null;  --  Sources compiled into main binary by ESP-IDF
    end case;
 
-   --  Common source directories
+   --  Common source directories (Ada + third-party C)
    Common_Src := ("src/", "src/interfaces/", "src/implementation/", "config/");
+   
+   --  Third-party C libraries (host only - ESP-IDF has its own build system)
+   Blake2_Src := ("../third_party/BLAKE2/ref/");
 
    --  Backend-specific platform bindings (provides Crypto.Platform)
    case Backend is
       when "libsodium" =>
-         for Source_Dirs use Common_Src & ("src/platform/libsodium/");
+         case Platform is
+            when "host" =>
+               for Source_Dirs use Common_Src & Blake2_Src & ("src/platform/libsodium/");
+            when "esp_idf" =>
+               for Source_Dirs use Common_Src & ("src/platform/libsodium/");
+         end case;
       when "mbedtls" =>
-         for Source_Dirs use Common_Src & ("src/platform/mbedtls/");
+         case Platform is
+            when "host" =>
+               for Source_Dirs use Common_Src & Blake2_Src & ("src/platform/mbedtls/");
+            when "esp_idf" =>
+               for Source_Dirs use Common_Src & ("src/platform/mbedtls/");
+         end case;
+   end case;
+   
+   --  Exclude BLAKE2 files we don't need (host only - they have main() for self-tests)
+   --  We only need blake2s-ref.c for WireGuard
+   case Platform is
+      when "host" =>
+         for Excluded_Source_Files use (
+            "blake2b-ref.c",     --  BLAKE2b not used by WireGuard
+            "blake2bp-ref.c",    --  Parallel BLAKE2b
+            "blake2sp-ref.c",    --  Parallel BLAKE2s
+            "blake2xb-ref.c",    --  Extended BLAKE2b
+            "blake2xs-ref.c",    --  Extended BLAKE2s
+            "genkat-c.c",        --  Test vector generator
+            "genkat-json.c"      --  Test vector generator (JSON)
+         );
+      when "esp_idf" =>
+         null;  --  No BLAKE2 sources included for ESP-IDF
    end case;
 
    for Object_Dir use "obj/" & Platform;
@@ -62,6 +94,22 @@ project Crypto is
 
    package Compiler is
       for Default_Switches ("Ada") use Crypto_Config.Ada_Compiler_Switches;
+      
+      --  C compiler switches for third-party code (BLAKE2)
+      Common_C_Switches := (
+         "-Wall",
+         "-Wextra", 
+         "-std=c99",
+         "-ffunction-sections",
+         "-fdata-sections"
+      );
+      
+      case Platform is
+         when "host" =>
+            for Default_Switches ("C") use Common_C_Switches & ("-O2", "-g");
+         when "esp_idf" =>
+            null;
+      end case;
    end Compiler;
 
    package Binder is
