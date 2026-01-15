@@ -52,7 +52,7 @@ crypto/src/
 
 ```bash
 cd crypto
-gprbuild -P crypto.gpr -XPLATFORM=host -XCRYPTO_BACKEND=libsodium
+alr build -- -XPLATFORM=host  -XCRYPTO_BACKEND=libsodium
 ```
 
 Requires libsodium installed:
@@ -65,7 +65,7 @@ cd third_party/libsodium
 ### ESP32 (for embedded)
 
 ```bash
-gprbuild -P crypto.gpr -XPLATFORM=esp_idf -XCRYPTO_BACKEND=libsodium
+alr build -- -XPLATFORM=esp_idf  -XCRYPTO_BACKEND=libsodium
 ```
 
 Uses libsodium from ESP-IDF component registry (added via `idf.py add-dependency`).
@@ -109,9 +109,9 @@ When you add new subprograms to the interfaces:
 
 ```bash
 cd crypto
-~/.alire/bin/gnattest -P crypto.gpr -XPLATFORM=host \
-  --harness-dir=../tests/ada/crypto/harness \
-  --tests-dir=../tests/ada/crypto/tests
+gnattest -P crypto.gpr -XPLATFORM=host \
+  --harness-dir="$(pwd)/../tests/ada/crypto/harness" \
+  --tests-dir="$(pwd)/../tests/ada/crypto/tests"
 ```
 
 GNATtest will preserve your existing test implementations and add stubs for new subprograms.
