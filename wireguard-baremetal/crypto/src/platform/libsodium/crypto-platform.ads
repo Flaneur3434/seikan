@@ -64,9 +64,62 @@ is
       return int
    with Import, Convention => C, External_Name => "crypto_scalarmult";
 
+   -- int crypto_aead_chacha20poly1305_ietf_encrypt(unsigned char *c,
+   --                                               unsigned long long *clen_p,
+   --                                               const unsigned char *m,
+   --                                               unsigned long long mlen,
+   --                                               const unsigned char *ad,
+   --                                               unsigned long long adlen,
+   --                                               const unsigned char *nsec,
+   --                                               const unsigned char *npub,
+   --                                               const unsigned char *k)
+   -- Encrypts a message using a secret key and public nonce. The out buffer 
+   -- contains a combination of the encrypted message and authentication tag.
+   function Crypto_AEAD_ChaCha20Poly1305_IETF_Encrypt
+     (Ciphertext_Out     : System.Address;
+      Ciphertext_Len_Out : System.Address;
+      Message_In         : System.Address;
+      Message_Len        : unsigned_long_long;
+      Ad_In              : System.Address;
+      Ad_Len             : unsigned_long_long;
+      Nsec               : System.Address;
+      Nonce_In           : System.Address;
+      Key_In             : System.Address) return int
+   with
+     Import,
+     Convention    => C,
+     External_Name => "crypto_aead_chacha20poly1305_ietf_encrypt";
+
+   --  int crypto_aead_chacha20poly1305_ietf_decrypt(unsigned char *m,
+   --                                                unsigned long long *mlen_p,
+   --                                                unsigned char *nsec,
+   --                                                const unsigned char *c,
+   --                                                unsigned long long clen,
+   --                                                const unsigned char *ad,
+   --                                                unsigned long long adlen,
+   --                                                const unsigned char *npub,
+   --                                                const unsigned char *k)
+   --  Decrypts ciphertext and verifies authentication tag.
+   --  Returns 0 on success, -1 if verification fails (invalid tag).
+   --  On failure, plaintext buffer is zeroed.
+   function Crypto_AEAD_ChaCha20Poly1305_IETF_Decrypt
+     (Message_Out     : System.Address;
+      Message_Len_Out : System.Address;
+      Nsec            : System.Address;
+      Ciphertext_In   : System.Address;
+      Ciphertext_Len  : unsigned_long_long;
+      Ad_In           : System.Address;
+      Ad_Len          : unsigned_long_long;
+      Nonce_In        : System.Address;
+      Key_In          : System.Address) return int
+   with
+     Import,
+     Convention    => C,
+     External_Name => "crypto_aead_chacha20poly1305_ietf_decrypt";
+
+
    ---------------------
    --  Future: Add more bindings here
-   --  - ChaCha20-Poly1305
    --  - BLAKE2b
    --  - etc.
    ---------------------
