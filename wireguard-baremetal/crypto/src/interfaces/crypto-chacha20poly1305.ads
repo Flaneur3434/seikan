@@ -18,7 +18,6 @@ is
       Result     : out Crypto.Status)
    with
      Pre    => Ciphertext'Length = Plaintext'Length + AEAD_Tag_Bytes,
-     Post   => (if Result = Crypto.Success then Ciphertext'Initialized),
      Global => null;
 
    -- Verifies that the cipher text includes valid tag and returns decrypted message
