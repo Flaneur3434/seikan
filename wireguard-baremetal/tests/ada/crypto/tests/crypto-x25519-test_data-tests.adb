@@ -17,6 +17,7 @@ with System.Assertions;
 
 with Crypto.X25519;
 with Crypto;
+with Crypto.Random;
 use type Crypto.Status;
 use type Crypto.Unsigned_8;
 
@@ -94,16 +95,15 @@ package body Crypto.X25519.Test_Data.Tests is
 
       pragma Unreferenced (Gnattest_T);
 
-      --  Test with a known secret key
-      Secret : constant Crypto.X25519_Secret_Key :=
-        (16#77#, 16#07#, 16#6d#, 16#0a#, 16#73#, 16#18#, 16#a5#, 16#7d#,
-         16#3c#, 16#16#, 16#c1#, 16#72#, 16#51#, 16#b2#, 16#66#, 16#45#,
-         16#df#, 16#4c#, 16#2f#, 16#87#, 16#eb#, 16#c0#, 16#99#, 16#2a#,
-         16#b1#, 16#77#, 16#fb#, 16#a5#, 16#1d#, 16#b9#, 16#2c#, 16#2a#);
+      --  Generate random secret key
+      Secret : Crypto.X25519_Secret_Key;
       Public : Crypto.X25519_Public_Key;
       Result : Crypto.Status;
 
    begin
+      --  Fill secret key with random data
+      Crypto.Random.Fill_Random (Crypto.Byte_Array (Secret));
+
       Crypto.X25519.Scalar_Mult_Base (Public, Secret, Result);
 
       AUnit.Assertions.Assert
@@ -135,7 +135,7 @@ package body Crypto.X25519.Test_Data.Tests is
    procedure Test_Scalar_Mult_6f3f6d (Gnattest_T : in out Test) renames Test_Scalar_Mult;
 --  id:2.2/6f3f6dd9a4e3ad84/Scalar_Mult/1/0/
    procedure Test_Scalar_Mult (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:25:4:Scalar_Mult
+   --  crypto-x25519.ads:27:4:Scalar_Mult
 --  end read only
 
       pragma Unreferenced (Gnattest_T);

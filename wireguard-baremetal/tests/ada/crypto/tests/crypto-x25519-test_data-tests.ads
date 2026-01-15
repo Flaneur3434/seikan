@@ -16,7 +16,7 @@ package Crypto.X25519.Test_Data.Tests is
    --  crypto-x25519.ads:17:4:Scalar_Mult_Base
 
    procedure Test_Scalar_Mult_6f3f6d (Gnattest_T : in out Test);
-   --  crypto-x25519.ads:25:4:Scalar_Mult
+   --  crypto-x25519.ads:27:4:Scalar_Mult
 
 end Crypto.X25519.Test_Data.Tests;
 --  end read only
