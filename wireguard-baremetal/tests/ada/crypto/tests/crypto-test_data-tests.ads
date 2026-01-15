@@ -10,7 +10,7 @@ package Crypto.Test_Data.Tests is
    with null record;
 
    procedure Test_Is_Success_cdfc80 (Gnattest_T : in out Test);
-   --  crypto.ads:10:4:Is_Success
+   --  crypto.ads:45:4:Is_Success
 
 end Crypto.Test_Data.Tests;
 --  end read only
