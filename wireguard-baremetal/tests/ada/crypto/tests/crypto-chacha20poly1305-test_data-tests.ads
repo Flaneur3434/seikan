@@ -13,7 +13,7 @@ package Crypto.ChaCha20Poly1305.Test_Data.Tests is
    --  crypto-chacha20poly1305.ads:12:4:Encrypt
 
    procedure Test_Decrypt_0f26c5 (Gnattest_T : in out Test);
-   --  crypto-chacha20poly1305.ads:25:4:Decrypt
+   --  crypto-chacha20poly1305.ads:24:4:Decrypt
 
 end Crypto.ChaCha20Poly1305.Test_Data.Tests;
 --  end read only
