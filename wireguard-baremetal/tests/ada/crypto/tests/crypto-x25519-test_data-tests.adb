@@ -90,7 +90,7 @@ package body Crypto.X25519.Test_Data.Tests is
    procedure Test_Scalar_Mult_Base_b4d251 (Gnattest_T : in out Test) renames Test_Scalar_Mult_Base;
 --  id:2.2/b4d2519aa2ea5bc9/Scalar_Mult_Base/1/0/
    procedure Test_Scalar_Mult_Base (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:17:4:Scalar_Mult_Base
+   --  crypto-x25519.ads:16:4:Scalar_Mult_Base
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -135,7 +135,7 @@ package body Crypto.X25519.Test_Data.Tests is
    procedure Test_Scalar_Mult_6f3f6d (Gnattest_T : in out Test) renames Test_Scalar_Mult;
 --  id:2.2/6f3f6dd9a4e3ad84/Scalar_Mult/1/0/
    procedure Test_Scalar_Mult (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:27:4:Scalar_Mult
+   --  crypto-x25519.ads:25:4:Scalar_Mult
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
