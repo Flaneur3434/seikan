@@ -16,7 +16,7 @@ is
    AEAD_Nonce_Bytes : constant := 12;
    AEAD_Tag_Bytes   : constant := 16;
 
-   --  BLAKE2b
+   --  BLAKE2s
    Hash_Bytes     : constant := 32;
    Hash_Key_Bytes : constant := 32;
 
