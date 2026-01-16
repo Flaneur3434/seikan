@@ -29,34 +29,30 @@ project Crypto is
          null;  --  Sources compiled into main binary by ESP-IDF
    end case;
 
-   --  Common source directories (Ada + third-party C)
+   --  Common source directories (Ada)
    Common_Src := ("src/", "src/interfaces/", "src/implementation/", "config/");
    
-   --  Third-party C libraries (host only - ESP-IDF has its own build system)
+   --  Third-party C libraries
    Blake2_Src := ("../third_party/BLAKE2/ref/");
+   
+   --  Platform bindings for BLAKE2 (Ada wrapper)
+   Blake2_Platform := ("src/platform/blake2_ref/");
 
-   --  Backend-specific platform bindings (provides Crypto.Platform)
+   --  Backend-specific platform bindings (defined once, used below)
+   Backend_Src := ("");  --  Default empty
    case Backend is
       when "libsodium" =>
-         case Platform is
-            when "host" =>
-               for Source_Dirs use Common_Src & Blake2_Src & ("src/platform/libsodium/");
-            when "esp_idf" =>
-               for Source_Dirs use Common_Src & ("src/platform/libsodium/");
-         end case;
+         Backend_Src := ("src/platform/libsodium/");
       when "mbedtls" =>
-         case Platform is
-            when "host" =>
-               for Source_Dirs use Common_Src & Blake2_Src & ("src/platform/mbedtls/");
-            when "esp_idf" =>
-               for Source_Dirs use Common_Src & ("src/platform/mbedtls/");
-         end case;
+         Backend_Src := ("src/platform/mbedtls/");
    end case;
-   
-   --  Exclude BLAKE2 files we don't need (host only - they have main() for self-tests)
-   --  We only need blake2s-ref.c for WireGuard
+
+   --  Build complete Source_Dirs based on Platform
    case Platform is
       when "host" =>
+         --  Host includes BLAKE2 C sources directly
+         for Source_Dirs use Common_Src & Blake2_Src & Blake2_Platform & Backend_Src;
+         --  Exclude BLAKE2 files we don't need (they have main() for self-tests)
          for Excluded_Source_Files use (
             "blake2b-ref.c",     --  BLAKE2b not used by WireGuard
             "blake2bp-ref.c",    --  Parallel BLAKE2b
@@ -67,7 +63,8 @@ project Crypto is
             "genkat-json.c"      --  Test vector generator (JSON)
          );
       when "esp_idf" =>
-         null;  --  No BLAKE2 sources included for ESP-IDF
+         --  ESP-IDF compiles BLAKE2 via its own CMake component
+         for Source_Dirs use Common_Src & Blake2_Platform & Backend_Src;
    end case;
 
    for Object_Dir use "obj/" & Platform;
