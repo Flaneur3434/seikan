@@ -9,8 +9,9 @@ with System;
 with Interfaces.C;
 
 private package Crypto.Platform
-  with SPARK_Mode => Off,
-       Elaborate_Body  --  Ensures body runs to call sodium_init
+  with
+    SPARK_Mode => Off,
+    Elaborate_Body  --  Ensures body runs to call sodium_init
 is
    use Interfaces.C;
 
@@ -29,9 +30,7 @@ is
 
    --  void randombytes_buf(void * const buf, const size_t size);
    --  Fills buffer with cryptographically secure random bytes
-   procedure Randombytes_Buf
-     (Buffer : System.Address;
-      Size   : size_t)
+   procedure Randombytes_Buf (Buffer : System.Address; Size : size_t)
    with Import, Convention => C, External_Name => "randombytes_buf";
 
    ---------------------
@@ -41,16 +40,14 @@ is
    --  int crypto_box_keypair(unsigned char *pk, unsigned char *sk);
    --  Generates a random X25519 keypair
    function Crypto_Box_Keypair
-     (Public_Key_Out : System.Address;
-      Secret_Key_Out : System.Address)
+     (Public_Key_Out : System.Address; Secret_Key_Out : System.Address)
       return int
    with Import, Convention => C, External_Name => "crypto_box_keypair";
 
    --  int crypto_scalarmult_base(unsigned char *q, const unsigned char *n);
    --  Computes public key from secret key: q = n × BasePoint
    function Crypto_Scalarmult_Base
-     (Public_Key_Out : System.Address;
-      Secret_Key_In  : System.Address)
+     (Public_Key_Out : System.Address; Secret_Key_In : System.Address)
       return int
    with Import, Convention => C, External_Name => "crypto_scalarmult_base";
 
@@ -60,8 +57,7 @@ is
    function Crypto_Scalarmult
      (Shared_Secret_Out   : System.Address;
       My_Secret_Key_In    : System.Address;
-      Their_Public_Key_In : System.Address)
-      return int
+      Their_Public_Key_In : System.Address) return int
    with Import, Convention => C, External_Name => "crypto_scalarmult";
 
    -- int crypto_aead_chacha20poly1305_ietf_encrypt(unsigned char *c,
@@ -73,7 +69,7 @@ is
    --                                               const unsigned char *nsec,
    --                                               const unsigned char *npub,
    --                                               const unsigned char *k)
-   -- Encrypts a message using a secret key and public nonce. The out buffer 
+   -- Encrypts a message using a secret key and public nonce. The out buffer
    -- contains a combination of the encrypted message and authentication tag.
    function Crypto_AEAD_ChaCha20Poly1305_IETF_Encrypt
      (Ciphertext_Out     : System.Address;
@@ -117,11 +113,13 @@ is
      Convention    => C,
      External_Name => "crypto_aead_chacha20poly1305_ietf_decrypt";
 
+   procedure Crypto_Memzero (Buffer_In : System.Address; Buffer_Size : size_t)
+   with Import, Convention => C, External_Name => "sodium_memzero";
 
-   ---------------------
-   --  Future: Add more bindings here
-   --  - BLAKE2b
-   --  - etc.
-   ---------------------
+   -- sodium_memcmp() is not a lexicographic comparator and is not a generic 
+   -- replacement for memcmp().
+   function Crypto_Cmp
+     (A_In : System.Address; B_in : System.Address; Length : size_t) return int
+   with Import, Convention => C, External_Name => "sodium_memcmp";
 
 end Crypto.Platform;
