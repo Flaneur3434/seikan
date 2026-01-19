@@ -33,26 +33,26 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Encrypt (Gnattest_T : in out Test);
-   procedure Test_Encrypt_fbd441 (Gnattest_T : in out Test) renames Test_Encrypt;
---  id:2.2/fbd441991e37222c/Encrypt/1/0/
+   procedure Test_Encrypt_589777 (Gnattest_T : in out Test) renames Test_Encrypt;
+--  id:2.2/589777355be4d8de/Encrypt/1/0/
    procedure Test_Encrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:12:4:Encrypt
+   --  crypto-chacha20poly1305.ads:21:4:Encrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
       --  Generate random test data
-      Key        : ChaCha20Poly1305_Key;
-      Nonce      : ChaCha20Poly1305_Nonce;
+      K          : Key;
+      N          : Nonce;
       Plaintext  : Byte_Array (0 .. 63);
       Ad         : Byte_Array (0 .. 15);
-      Ciphertext : Byte_Array (0 .. Plaintext'Length + AEAD_Tag_Bytes - 1);
+      Ciphertext : Byte_Array (0 .. Plaintext'Length + Tag_Bytes - 1);
       Result     : Status;
 
    begin
       --  Fill with random data
-      Crypto.Random.Fill_Random (Byte_Array (Key));
-      Crypto.Random.Fill_Random (Byte_Array (Nonce));
+      Crypto.Random.Fill_Random (Byte_Array (K));
+      Crypto.Random.Fill_Random (Byte_Array (N));
       Crypto.Random.Fill_Random (Plaintext);
       Crypto.Random.Fill_Random (Ad);
 
@@ -60,8 +60,8 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
       Encrypt
         (Plaintext  => Plaintext,
          Ad         => Ad,
-         Nonce      => Nonce,
-         Key        => Key,
+         N          => N,
+         K          => K,
          Ciphertext => Ciphertext,
          Result     => Result);
 
@@ -89,8 +89,8 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
          Decrypt
            (Ciphertext => Ciphertext,
             Ad         => Ad,
-            Nonce      => Nonce,
-            Key        => Key,
+            N          => N,
+            K          => K,
             Plaintext  => Decrypted,
             Result     => Dec_Result);
 
@@ -105,28 +105,28 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Decrypt (Gnattest_T : in out Test);
-   procedure Test_Decrypt_0f26c5 (Gnattest_T : in out Test) renames Test_Decrypt;
---  id:2.2/0f26c55863f3124c/Decrypt/1/0/
+   procedure Test_Decrypt_01079b (Gnattest_T : in out Test) renames Test_Decrypt;
+--  id:2.2/01079bfc518b5cd2/Decrypt/1/0/
    procedure Test_Decrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:24:4:Decrypt
+   --  crypto-chacha20poly1305.ads:33:4:Decrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
       --  Generate random test data
-      Key             : ChaCha20Poly1305_Key;
-      Nonce           : ChaCha20Poly1305_Nonce;
+      K               : Key;
+      N               : Nonce;
       Original_Pt     : Byte_Array (0 .. 63);
       Ad              : Byte_Array (0 .. 15);
-      Ciphertext      : Byte_Array (0 .. Original_Pt'Length + AEAD_Tag_Bytes - 1);
+      Ciphertext      : Byte_Array (0 .. Original_Pt'Length + Tag_Bytes - 1);
       Decrypted_Pt    : Byte_Array (Original_Pt'Range);
       Enc_Result      : Status;
       Dec_Result      : Status;
 
    begin
       --  Fill with random data
-      Crypto.Random.Fill_Random (Byte_Array (Key));
-      Crypto.Random.Fill_Random (Byte_Array (Nonce));
+      Crypto.Random.Fill_Random (Byte_Array (K));
+      Crypto.Random.Fill_Random (Byte_Array (N));
       Crypto.Random.Fill_Random (Original_Pt);
       Crypto.Random.Fill_Random (Ad);
 
@@ -134,8 +134,8 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
       Encrypt
         (Plaintext  => Original_Pt,
          Ad         => Ad,
-         Nonce      => Nonce,
-         Key        => Key,
+         N          => N,
+         K          => K,
          Ciphertext => Ciphertext,
          Result     => Enc_Result);
       Assert (Enc_Result = Success, "Encrypt for decrypt test should succeed");
@@ -144,8 +144,8 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
       Decrypt
         (Ciphertext => Ciphertext,
          Ad         => Ad,
-         Nonce      => Nonce,
-         Key        => Key,
+         N          => N,
+         K          => K,
          Plaintext  => Decrypted_Pt,
          Result     => Dec_Result);
 
@@ -164,8 +164,8 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
          Decrypt
            (Ciphertext => Tampered,
             Ad         => Ad,
-            Nonce      => Nonce,
-            Key        => Key,
+            N          => N,
+            K          => K,
             Plaintext  => Tampered_Pt,
             Result     => Tampered_Result);
 

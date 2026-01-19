@@ -37,15 +37,15 @@ package body Crypto.X25519.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Generate_Key_Pair (Gnattest_T : in out Test);
-   procedure Test_Generate_Key_Pair_957c1c (Gnattest_T : in out Test) renames Test_Generate_Key_Pair;
---  id:2.2/957c1ce56d21d064/Generate_Key_Pair/1/0/
+   procedure Test_Generate_Key_Pair_83252e (Gnattest_T : in out Test) renames Test_Generate_Key_Pair;
+--  id:2.2/83252e2bf854094a/Generate_Key_Pair/1/0/
    procedure Test_Generate_Key_Pair (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:10:4:Generate_Key_Pair
+   --  crypto-x25519.ads:24:4:Generate_Key_Pair
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      Keys   : Crypto.Key_Pair;
+      Keys   : Crypto.X25519.Key_Pair;
       Result : Crypto.Status;
       All_Zero_Public : Boolean := True;
       All_Zero_Secret : Boolean := True;
@@ -58,15 +58,15 @@ package body Crypto.X25519.Test_Data.Tests is
          "Generate_Key_Pair failed with status: " & Result'Image);
 
       --  Keys should not be all zeros
-      for I in Keys.Public_Key'Range loop
-         if Keys.Public_Key (I) /= 0 then
+      for I in Keys.Pub'Range loop
+         if Keys.Pub (I) /= 0 then
             All_Zero_Public := False;
             exit;
          end if;
       end loop;
 
-      for I in Keys.Secret_Key'Range loop
-         if Keys.Secret_Key (I) /= 0 then
+      for I in Keys.Sec'Range loop
+         if Keys.Sec (I) /= 0 then
             All_Zero_Secret := False;
             exit;
          end if;
@@ -87,17 +87,17 @@ package body Crypto.X25519.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Scalar_Mult_Base (Gnattest_T : in out Test);
-   procedure Test_Scalar_Mult_Base_b4d251 (Gnattest_T : in out Test) renames Test_Scalar_Mult_Base;
---  id:2.2/b4d2519aa2ea5bc9/Scalar_Mult_Base/1/0/
+   procedure Test_Scalar_Mult_Base_c4d75b (Gnattest_T : in out Test) renames Test_Scalar_Mult_Base;
+--  id:2.2/c4d75b3a7a22727c/Scalar_Mult_Base/1/0/
    procedure Test_Scalar_Mult_Base (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:16:4:Scalar_Mult_Base
+   --  crypto-x25519.ads:29:4:Scalar_Mult_Base
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
       --  Generate random secret key
-      Secret : Crypto.X25519_Secret_Key;
-      Public : Crypto.X25519_Public_Key;
+      Secret : Crypto.X25519.Secret_Key;
+      Public : Crypto.X25519.Public_Key;
       Result : Crypto.Status;
 
    begin
@@ -132,19 +132,19 @@ package body Crypto.X25519.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Scalar_Mult (Gnattest_T : in out Test);
-   procedure Test_Scalar_Mult_6f3f6d (Gnattest_T : in out Test) renames Test_Scalar_Mult;
---  id:2.2/6f3f6dd9a4e3ad84/Scalar_Mult/1/0/
+   procedure Test_Scalar_Mult_d94fd3 (Gnattest_T : in out Test) renames Test_Scalar_Mult;
+--  id:2.2/d94fd33aab35074a/Scalar_Mult/1/0/
    procedure Test_Scalar_Mult (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:25:4:Scalar_Mult
+   --  crypto-x25519.ads:35:4:Scalar_Mult
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
       --  Test Diffie-Hellman: Alice and Bob should derive same shared secret
-      Alice_Keys : Crypto.Key_Pair;
-      Bob_Keys   : Crypto.Key_Pair;
-      Alice_Shared : Crypto.X25519_Shared_Secret;
-      Bob_Shared   : Crypto.X25519_Shared_Secret;
+      Alice_Keys : Crypto.X25519.Key_Pair;
+      Bob_Keys   : Crypto.X25519.Key_Pair;
+      Alice_Shared : Crypto.X25519.Shared_Secret;
+      Bob_Shared   : Crypto.X25519.Shared_Secret;
       Result : Crypto.Status;
 
    begin
@@ -159,13 +159,13 @@ package body Crypto.X25519.Test_Data.Tests is
 
       --  Alice computes shared secret: Alice_Secret × Bob_Public
       Crypto.X25519.Scalar_Mult
-        (Alice_Shared, Alice_Keys.Secret_Key, Bob_Keys.Public_Key, Result);
+        (Alice_Shared, Alice_Keys.Sec, Bob_Keys.Pub, Result);
       AUnit.Assertions.Assert
         (Result = Crypto.Success, "Alice DH failed");
 
       --  Bob computes shared secret: Bob_Secret × Alice_Public
       Crypto.X25519.Scalar_Mult
-        (Bob_Shared, Bob_Keys.Secret_Key, Alice_Keys.Public_Key, Result);
+        (Bob_Shared, Bob_Keys.Sec, Alice_Keys.Pub, Result);
       AUnit.Assertions.Assert
         (Result = Crypto.Success, "Bob DH failed");
 

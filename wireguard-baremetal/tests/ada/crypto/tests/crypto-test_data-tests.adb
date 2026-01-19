@@ -37,7 +37,7 @@ package body Crypto.Test_Data.Tests is
    procedure Test_Is_Success_cdfc80 (Gnattest_T : in out Test) renames Test_Is_Success;
 --  id:2.2/cdfc80dfc79170b0/Is_Success/1/0/
    procedure Test_Is_Success (Gnattest_T : in out Test) is
-   --  crypto.ads:45:4:Is_Success
+   --  crypto.ads:14:4:Is_Success
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
