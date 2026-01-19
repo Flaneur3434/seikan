@@ -7,6 +7,7 @@
 
 with AUnit.Assertions; use AUnit.Assertions;
 with System.Assertions;
+with Interfaces.C;
 
 --  begin read only
 --  id:2.2/00/
@@ -55,7 +56,7 @@ package body Crypto.Blake2.Test_Data.Tests is
    procedure Test_Blake2s_440ffe (Gnattest_T : in out Test) renames Test_Blake2s;
 --  id:2.2/440ffea396742f90/Blake2s/1/0/
    procedure Test_Blake2s (Gnattest_T : in out Test) is
-   --  crypto-blake2.ads:4:4:Blake2s
+   --  crypto-blake2.ads:38:4:Blake2s
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -159,6 +160,193 @@ package body Crypto.Blake2.Test_Data.Tests is
 
 --  begin read only
    end Test_Blake2s;
+--  end read only
+
+
+--  begin read only
+   procedure Test_Blake2s_Init (Gnattest_T : in out Test);
+   procedure Test_Blake2s_Init_02f8fd (Gnattest_T : in out Test) renames Test_Blake2s_Init;
+--  id:2.2/02f8fd6e5952b1aa/Blake2s_Init/1/0/
+   procedure Test_Blake2s_Init (Gnattest_T : in out Test) is
+   --  crypto-blake2.ads:50:4:Blake2s_Init
+--  end read only
+
+      pragma Unreferenced (Gnattest_T);
+      State  : aliased Blake2s_State;
+      Result : Status;
+
+   begin
+      --  Initialize with standard output length (32 bytes)
+      Blake2s_Init (State => State, Outlen => 32, Result => Result);
+      Assert (Result = Success, "Init with Outlen=32 should succeed");
+      Assert (State.Outlen = Interfaces.C.size_t (32),
+              "State.Outlen should be 32");
+      Assert (State.Buflen = 0, "State.Buflen should be 0 after init");
+
+      --  Initialize with smaller output length (8 bytes)
+      Blake2s_Init (State => State, Outlen => 8, Result => Result);
+      Assert (Result = Success, "Init with Outlen=8 should succeed");
+      Assert (State.Outlen = Interfaces.C.size_t (8),
+              "State.Outlen should be 8");
+
+      --  Initialize with maximum output length (32 bytes)
+      Blake2s_Init (State => State, Outlen => BLAKE2S_OUTBYTES, Result => Result);
+      Assert (Result = Success, "Init with max outlen should succeed");
+      Assert (State.Outlen = Interfaces.C.size_t (BLAKE2S_OUTBYTES),
+              "State.Outlen should match");
+
+--  begin read only
+   end Test_Blake2s_Init;
+--  end read only
+
+
+--  begin read only
+   procedure Test_Blake2s_Init_Key (Gnattest_T : in out Test);
+   procedure Test_Blake2s_Init_Key_6ed733 (Gnattest_T : in out Test) renames Test_Blake2s_Init_Key;
+--  id:2.2/6ed733fb863d5836/Blake2s_Init_Key/1/0/
+   procedure Test_Blake2s_Init_Key (Gnattest_T : in out Test) is
+   --  crypto-blake2.ads:57:4:Blake2s_Init_Key
+--  end read only
+
+      pragma Unreferenced (Gnattest_T);
+      State      : aliased Blake2s_State;
+      Result     : Status;
+      Key_16     : Byte_Array (0 .. 15) := (others => 16#AA#);
+      Key_32     : Byte_Array (0 .. 31) := (others => 16#BB#);
+
+   begin
+      --  Initialize with 16-byte key
+      Blake2s_Init_Key
+        (State  => State,
+         Outlen => 32,
+         Key    => Key_16,
+         Result => Result);
+      Assert (Result = Success, "Init with 16-byte key should succeed");
+      Assert (State.Outlen = Interfaces.C.size_t (32),
+              "State.Outlen should be 32");
+
+      --  Initialize with 32-byte key (maximum)
+      Blake2s_Init_Key
+        (State  => State,
+         Outlen => 32,
+         Key    => Key_32,
+         Result => Result);
+      Assert (Result = Success, "Init with 32-byte key should succeed");
+
+      --  Initialize with different output lengths
+      Blake2s_Init_Key
+        (State  => State,
+         Outlen => 8,
+         Key    => Key_16,
+         Result => Result);
+      Assert (Result = Success, "Init with Outlen=8 and key should succeed");
+      Assert (State.Outlen = Interfaces.C.size_t (8),
+              "State.Outlen should be 8");
+
+--  begin read only
+   end Test_Blake2s_Init_Key;
+--  end read only
+
+
+--  begin read only
+   procedure Test_Blake2s_Update (Gnattest_T : in out Test);
+   procedure Test_Blake2s_Update_8f6ba6 (Gnattest_T : in out Test) renames Test_Blake2s_Update;
+--  id:2.2/8f6ba6a74fc7f2d1/Blake2s_Update/1/0/
+   procedure Test_Blake2s_Update (Gnattest_T : in out Test) is
+   --  crypto-blake2.ads:68:4:Blake2s_Update
+--  end read only
+
+      pragma Unreferenced (Gnattest_T);
+      State      : aliased Blake2s_State;
+      Result     : Status;
+      Data_Part1 : Byte_Array := (16#01#, 16#02#, 16#03#, 16#04#);
+      Data_Part2 : Byte_Array := (16#05#, 16#06#, 16#07#, 16#08#);
+      Empty_Data : Byte_Array (0 .. -1);  --  Empty array
+
+   begin
+      --  Initialize state
+      Blake2s_Init (State => State, Outlen => 32, Result => Result);
+      Assert (Result = Success, "Init should succeed");
+
+      --  Update with first part of data
+      Blake2s_Update (State => State, Data => Data_Part1, Result => Result);
+      Assert (Result = Success, "First update should succeed");
+      Assert (Interfaces.C.size_t (State.Buflen) <=
+              Interfaces.C.size_t (BLAKE2S_BLOCKBYTES),
+              "Buflen should not exceed block size");
+
+      --  Update with second part of data
+      Blake2s_Update (State => State, Data => Data_Part2, Result => Result);
+      Assert (Result = Success, "Second update should succeed");
+
+      --  Update with empty data (should be allowed)
+      Blake2s_Update (State => State, Data => Empty_Data, Result => Result);
+      Assert (Result = Success, "Update with empty data should succeed");
+
+      --  Update with larger data block
+      declare
+         Large_Data : Byte_Array (0 .. 127);
+      begin
+         Large_Data := (others => 16#FF#);
+         Blake2s_Update (State => State, Data => Large_Data, Result => Result);
+         Assert (Result = Success, "Update with large data should succeed");
+      end;
+
+--  begin read only
+   end Test_Blake2s_Update;
+--  end read only
+
+
+--  begin read only
+   procedure Test_Blake2s_Final (Gnattest_T : in out Test);
+   procedure Test_Blake2s_Final_4b2d49 (Gnattest_T : in out Test) renames Test_Blake2s_Final;
+--  id:2.2/4b2d49a0ced67de6/Blake2s_Final/1/0/
+   procedure Test_Blake2s_Final (Gnattest_T : in out Test) is
+   --  crypto-blake2.ads:75:4:Blake2s_Final
+--  end read only
+
+      pragma Unreferenced (Gnattest_T);
+      State      : aliased Blake2s_State;
+      Digest     : Byte_Array (0 .. 31);
+      Digest2    : Byte_Array (0 .. 31);
+      Update_Result : Status;
+      Final_Result  : Status;
+      Data       : Byte_Array := (Character'Pos ('a'), Character'Pos ('b'),
+                                  Character'Pos ('c'), 0);
+
+   begin
+      --  Test 1: Simple final without update
+      Blake2s_Init (State => State, Outlen => 32, Result => Update_Result);
+      Assert (Update_Result = Success, "Init should succeed");
+
+      Blake2s_Final (State => State, Digest => Digest, Result => Final_Result);
+      Assert (Final_Result = Success, "Final without update should succeed");
+      Assert (Digest'Length = 32, "Digest should be 32 bytes");
+
+      --  Test 2: Final after update
+      Blake2s_Init (State => State, Outlen => 32, Result => Update_Result);
+      Blake2s_Update (State => State, Data => Data, Result => Update_Result);
+      Assert (Update_Result = Success, "Update should succeed");
+
+      Blake2s_Final (State => State, Digest => Digest2, Result => Final_Result);
+      Assert (Final_Result = Success, "Final after update should succeed");
+
+      --  The hashes should be different (one is empty, one has data)
+      Assert (Digest /= Digest2,
+              "Hash of empty vs data should differ");
+
+      --  Test 3: Verify output buffer size matters
+      declare
+         Small_Digest : Byte_Array (0 .. 7);
+      begin
+         Blake2s_Init (State => State, Outlen => 8, Result => Update_Result);
+         Blake2s_Final (State => State, Digest => Small_Digest,
+                        Result => Final_Result);
+         Assert (Final_Result = Success, "Final with 8-byte output should succeed");
+      end;
+
+--  begin read only
+   end Test_Blake2s_Final;
 --  end read only
 
 --  begin read only
