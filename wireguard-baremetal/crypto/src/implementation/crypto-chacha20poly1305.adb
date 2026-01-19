@@ -8,8 +8,8 @@ is
    procedure Encrypt
      (Plaintext  : Byte_Array;
       Ad         : Byte_Array;
-      Nonce      : ChaCha20Poly1305_Nonce;
-      Key        : ChaCha20Poly1305_Key;
+      N          : Nonce;
+      K          : Key;
       Ciphertext : out Byte_Array;
       Result     : out Crypto.Status)
    is
@@ -25,8 +25,8 @@ is
            Ad_In              => Ad'Address,
            Ad_Len             => unsigned_long_long (Ad'Length),
            Nsec               => System.Null_Address,
-           Nonce_In           => Nonce'Address,
-           Key_In             => Key'Address);
+           Nonce_In           => N'Address,
+           Key_In             => K'Address);
 
       if Ret_Val = 0 then
          Result := Crypto.Success;
@@ -38,8 +38,8 @@ is
    procedure Decrypt
      (Ciphertext : Byte_Array;
       Ad         : Byte_Array;
-      Nonce      : ChaCha20Poly1305_Nonce;
-      Key        : ChaCha20Poly1305_Key;
+      N          : Nonce;
+      K          : Key;
       Plaintext  : out Byte_Array;
       Result     : out Crypto.Status)
    is
@@ -55,8 +55,8 @@ is
            Ciphertext_Len  => Ciphertext'Length,
            Ad_In           => Ad'Address,
            Ad_Len          => unsigned_long_long (Ad'Length),
-           Nonce_In        => Nonce'Address,
-           Key_In          => Key'Address);
+           Nonce_In        => N'Address,
+           Key_In          => K'Address);
 
       if Ret_Val = 0 then
          Result := Crypto.Success;
