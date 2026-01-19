@@ -3,9 +3,13 @@
 --  Provides key generation and key exchange using Curve25519.
 --  This is the public interface; implementations are platform-specific.
 
+with Interfaces;
+
 package Crypto.X25519
   with SPARK_Mode => On
 is
+   use Interfaces;
+
    --  X25519 Constants
    Scalarmult_Bytes        : constant Positive := 32;  --  Public key size
    Scalarmult_Scalar_Bytes : constant Positive := 32;  --  Secret key size
