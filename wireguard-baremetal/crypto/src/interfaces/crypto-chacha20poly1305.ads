@@ -3,10 +3,12 @@
 --  Encrypts and provides integrity for messages
 --  This is the public interface; implementations are platform-specific.
 
+with Interfaces;
+
 package Crypto.ChaCha20Poly1305
   with SPARK_Mode => On
 is
-   use type Unsigned_8;  --  Make parent package type operators useable
+   use Interfaces;
 
    --  IETF ChaCha20-Poly1305 AEAD Constants
    Key_Bytes   : constant Positive := 32;  --  256-bit key
