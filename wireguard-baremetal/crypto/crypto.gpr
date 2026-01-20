@@ -51,7 +51,8 @@ project Crypto is
    case Platform is
       when "host" =>
          --  Host includes BLAKE2 C sources directly
-         for Source_Dirs use Common_Src & Blake2_Src & Blake2_Platform & Backend_Src;
+         for Source_Dirs use
+           Common_Src & Blake2_Src & Blake2_Platform & Backend_Src;
          --  Exclude BLAKE2 files we don't need (they have main() for self-tests)
          for Excluded_Source_Files use (
             "blake2b-ref.c",     --  BLAKE2b not used by WireGuard

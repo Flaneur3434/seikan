@@ -16,8 +16,7 @@ with System.Assertions;
 --  end read only
 
 with Crypto.Random;
-with Crypto;
-use type Crypto.Unsigned_8;
+with Interfaces; use Interfaces;
 
 --  begin read only
 --  end read only

@@ -10,13 +10,13 @@ package Crypto.X25519.Test_Data.Tests is
    with null record;
 
    procedure Test_Generate_Key_Pair_83252e (Gnattest_T : in out Test);
-   --  crypto-x25519.ads:24:4:Generate_Key_Pair
+   --  crypto-x25519.ads:28:4:Generate_Key_Pair
 
    procedure Test_Scalar_Mult_Base_c4d75b (Gnattest_T : in out Test);
-   --  crypto-x25519.ads:29:4:Scalar_Mult_Base
+   --  crypto-x25519.ads:33:4:Scalar_Mult_Base
 
    procedure Test_Scalar_Mult_d94fd3 (Gnattest_T : in out Test);
-   --  crypto-x25519.ads:35:4:Scalar_Mult
+   --  crypto-x25519.ads:39:4:Scalar_Mult
 
 end Crypto.X25519.Test_Data.Tests;
 --  end read only
