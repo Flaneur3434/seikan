@@ -8,8 +8,7 @@ is
    procedure Encrypt
      (Plaintext  : Byte_Array;
       Ad         : Byte_Array;
-      N          : Nonce;
-      K          : Key;
+      Ctx        : Context;
       Ciphertext : out Byte_Array;
       Result     : out Crypto.Status)
    is
@@ -25,8 +24,8 @@ is
            Ad_In              => Ad'Address,
            Ad_Len             => unsigned_long_long (Ad'Length),
            Nsec               => System.Null_Address,
-           Nonce_In           => N'Address,
-           Key_In             => K'Address);
+           Nonce_In           => Ctx.N'Address,
+           Key_In             => Ctx.K'Address);
 
       if Ret_Val = 0 then
          Result := Crypto.Success;
@@ -38,8 +37,7 @@ is
    procedure Decrypt
      (Ciphertext : Byte_Array;
       Ad         : Byte_Array;
-      N          : Nonce;
-      K          : Key;
+      Ctx        : Context;
       Plaintext  : out Byte_Array;
       Result     : out Crypto.Status)
    is
@@ -52,11 +50,11 @@ is
            Message_Len_Out => System.Null_Address,
            Nsec            => System.Null_Address,
            Ciphertext_In   => Ciphertext'Address,
-           Ciphertext_Len  => Ciphertext'Length,
+           Ciphertext_Len  => unsigned_long_long (Ciphertext'Length),
            Ad_In           => Ad'Address,
            Ad_Len          => unsigned_long_long (Ad'Length),
-           Nonce_In        => N'Address,
-           Key_In          => K'Address);
+           Nonce_In        => Ctx.N'Address,
+           Key_In          => Ctx.K'Address);
 
       if Ret_Val = 0 then
          Result := Crypto.Success;
