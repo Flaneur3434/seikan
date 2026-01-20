@@ -1,4 +1,4 @@
---  Net - Network types for WireGuard protocol
+--  Net - Network types
 --
 --  Types used by Ada protocol logic to represent network endpoints.
 --  Actual I/O is handled by C platform layer.
@@ -10,14 +10,11 @@ package Net
 is
    use Interfaces;
 
-   subtype Byte is Unsigned_8;
-   type Byte_Array is array (Natural range <>) of Byte;
-
    --  IPv4 address (4 bytes, network byte order)
-   type IPv4_Address is array (0 .. 3) of Byte;
+   type IPv4_Address is array (0 .. 3) of Unsigned_8;
 
    --  IPv6 address (16 bytes, network byte order)
-   type IPv6_Address is array (0 .. 15) of Byte;
+   type IPv6_Address is array (0 .. 15) of Unsigned_8;
 
    --  UDP port number (host byte order)
    subtype Port_Number is Unsigned_16;
