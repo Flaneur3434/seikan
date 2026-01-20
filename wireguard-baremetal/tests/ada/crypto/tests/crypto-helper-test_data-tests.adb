@@ -15,8 +15,7 @@ with System.Assertions;
 --
 --  end read only
 
-with Interfaces; 
-use type Interfaces.Unsigned_8;
+with Interfaces; use Interfaces;
 
 --  begin read only
 --  end read only

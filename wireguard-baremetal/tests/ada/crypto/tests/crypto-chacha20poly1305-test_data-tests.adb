@@ -36,7 +36,7 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
    procedure Test_Encrypt_589777 (Gnattest_T : in out Test) renames Test_Encrypt;
 --  id:2.2/589777355be4d8de/Encrypt/1/0/
    procedure Test_Encrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:21:4:Encrypt
+   --  crypto-chacha20poly1305.ads:23:4:Encrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -108,7 +108,7 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
    procedure Test_Decrypt_01079b (Gnattest_T : in out Test) renames Test_Decrypt;
 --  id:2.2/01079bfc518b5cd2/Decrypt/1/0/
    procedure Test_Decrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:33:4:Decrypt
+   --  crypto-chacha20poly1305.ads:35:4:Decrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);

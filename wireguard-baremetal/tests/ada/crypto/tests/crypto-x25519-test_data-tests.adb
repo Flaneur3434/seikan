@@ -18,8 +18,8 @@ with System.Assertions;
 with Crypto.X25519;
 with Crypto;
 with Crypto.Random;
+with Interfaces; use Interfaces;
 use type Crypto.Status;
-use type Crypto.Unsigned_8;
 
 --  begin read only
 --  end read only
@@ -40,7 +40,7 @@ package body Crypto.X25519.Test_Data.Tests is
    procedure Test_Generate_Key_Pair_83252e (Gnattest_T : in out Test) renames Test_Generate_Key_Pair;
 --  id:2.2/83252e2bf854094a/Generate_Key_Pair/1/0/
    procedure Test_Generate_Key_Pair (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:24:4:Generate_Key_Pair
+   --  crypto-x25519.ads:28:4:Generate_Key_Pair
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -90,7 +90,7 @@ package body Crypto.X25519.Test_Data.Tests is
    procedure Test_Scalar_Mult_Base_c4d75b (Gnattest_T : in out Test) renames Test_Scalar_Mult_Base;
 --  id:2.2/c4d75b3a7a22727c/Scalar_Mult_Base/1/0/
    procedure Test_Scalar_Mult_Base (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:29:4:Scalar_Mult_Base
+   --  crypto-x25519.ads:33:4:Scalar_Mult_Base
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -135,7 +135,7 @@ package body Crypto.X25519.Test_Data.Tests is
    procedure Test_Scalar_Mult_d94fd3 (Gnattest_T : in out Test) renames Test_Scalar_Mult;
 --  id:2.2/d94fd33aab35074a/Scalar_Mult/1/0/
    procedure Test_Scalar_Mult (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:35:4:Scalar_Mult
+   --  crypto-x25519.ads:39:4:Scalar_Mult
 --  end read only
 
       pragma Unreferenced (Gnattest_T);

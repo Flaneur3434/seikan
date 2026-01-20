@@ -7,7 +7,6 @@
 
 with AUnit.Assertions; use AUnit.Assertions;
 with System.Assertions;
-with Interfaces.C;
 
 --  begin read only
 --  id:2.2/00/
