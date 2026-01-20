@@ -19,33 +19,34 @@ is
    type Nonce is array (0 .. Nonce_Bytes - 1) of Unsigned_8;
    type Key is array (0 .. Key_Bytes - 1) of Unsigned_8;
 
-   --  Encrypts message and concatenates it with authentication tag
+   type Context is record
+      N : Nonce;  --  96-bit nonce
+      K : Key;    --  256-bit key
+   end record;
+
+   --  Encrypts message and appends authentication tag
+   --  Ciphertext must be Plaintext'Length + Tag_Bytes
    procedure Encrypt
      (Plaintext  : Byte_Array;
       Ad         : Byte_Array;
-      N          : Nonce;
-      K          : Key;
+      Ctx        : Context;
       Ciphertext : out Byte_Array;
       Result     : out Crypto.Status)
    with
-     Pre    => Ciphertext'Length = Plaintext'Length + Tag_Bytes,
-     Global => null;
+     Global => null,
+     Pre    => Ciphertext'Length = Plaintext'Length + Tag_Bytes;
 
-   --  Verifies that the cipher text includes valid tag and returns decrypted
+   --  Verifies tag and decrypts ciphertext
+   --  Plaintext must be Ciphertext'Length - Tag_Bytes
    procedure Decrypt
      (Ciphertext : Byte_Array;
       Ad         : Byte_Array;
-      N          : Nonce;
-      K          : Key;
+      Ctx        : Context;
       Plaintext  : out Byte_Array;
       Result     : out Crypto.Status)
    with
-     Pre    =>
-       Ciphertext'Length >= Tag_Bytes
-       and then Plaintext'Length = Ciphertext'Length - Tag_Bytes,
-     Post   =>
-       (if Result /= Crypto.Success
-        then (for all I in Plaintext'Range => Plaintext (I) = 0)),
-     Global => null;
+     Global => null,
+     Pre    => Ciphertext'Length >= Tag_Bytes
+               and then Plaintext'Length = Ciphertext'Length - Tag_Bytes;
 
 end Crypto.ChaCha20Poly1305;

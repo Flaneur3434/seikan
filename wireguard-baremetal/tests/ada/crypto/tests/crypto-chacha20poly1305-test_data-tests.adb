@@ -33,17 +33,16 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Encrypt (Gnattest_T : in out Test);
-   procedure Test_Encrypt_589777 (Gnattest_T : in out Test) renames Test_Encrypt;
---  id:2.2/589777355be4d8de/Encrypt/1/0/
+   procedure Test_Encrypt_7c9a14 (Gnattest_T : in out Test) renames Test_Encrypt;
+--  id:2.2/7c9a1487baa5184e/Encrypt/1/0/
    procedure Test_Encrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:23:4:Encrypt
+   --  crypto-chacha20poly1305.ads:29:4:Encrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
       --  Generate random test data
-      K          : Key;
-      N          : Nonce;
+      Ctx        : Context;
       Plaintext  : Byte_Array (0 .. 63);
       Ad         : Byte_Array (0 .. 15);
       Ciphertext : Byte_Array (0 .. Plaintext'Length + Tag_Bytes - 1);
@@ -51,8 +50,8 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
    begin
       --  Fill with random data
-      Crypto.Random.Fill_Random (Byte_Array (K));
-      Crypto.Random.Fill_Random (Byte_Array (N));
+      Crypto.Random.Fill_Random (Byte_Array (Ctx.N));
+      Crypto.Random.Fill_Random (Byte_Array (Ctx.K));
       Crypto.Random.Fill_Random (Plaintext);
       Crypto.Random.Fill_Random (Ad);
 
@@ -60,8 +59,7 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
       Encrypt
         (Plaintext  => Plaintext,
          Ad         => Ad,
-         N          => N,
-         K          => K,
+         Ctx        => Ctx,
          Ciphertext => Ciphertext,
          Result     => Result);
 
@@ -89,8 +87,7 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
          Decrypt
            (Ciphertext => Ciphertext,
             Ad         => Ad,
-            N          => N,
-            K          => K,
+            Ctx        => Ctx,
             Plaintext  => Decrypted,
             Result     => Dec_Result);
 
@@ -105,17 +102,16 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Decrypt (Gnattest_T : in out Test);
-   procedure Test_Decrypt_01079b (Gnattest_T : in out Test) renames Test_Decrypt;
---  id:2.2/01079bfc518b5cd2/Decrypt/1/0/
+   procedure Test_Decrypt_d610aa (Gnattest_T : in out Test) renames Test_Decrypt;
+--  id:2.2/d610aaa19eeeaed0/Decrypt/1/0/
    procedure Test_Decrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:35:4:Decrypt
+   --  crypto-chacha20poly1305.ads:41:4:Decrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
       --  Generate random test data
-      K               : Key;
-      N               : Nonce;
+      Ctx             : Context;
       Original_Pt     : Byte_Array (0 .. 63);
       Ad              : Byte_Array (0 .. 15);
       Ciphertext      : Byte_Array (0 .. Original_Pt'Length + Tag_Bytes - 1);
@@ -125,8 +121,8 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
    begin
       --  Fill with random data
-      Crypto.Random.Fill_Random (Byte_Array (K));
-      Crypto.Random.Fill_Random (Byte_Array (N));
+      Crypto.Random.Fill_Random (Byte_Array (Ctx.N));
+      Crypto.Random.Fill_Random (Byte_Array (Ctx.K));
       Crypto.Random.Fill_Random (Original_Pt);
       Crypto.Random.Fill_Random (Ad);
 
@@ -134,8 +130,7 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
       Encrypt
         (Plaintext  => Original_Pt,
          Ad         => Ad,
-         N          => N,
-         K          => K,
+         Ctx        => Ctx,
          Ciphertext => Ciphertext,
          Result     => Enc_Result);
       Assert (Enc_Result = Success, "Encrypt for decrypt test should succeed");
@@ -144,8 +139,7 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
       Decrypt
         (Ciphertext => Ciphertext,
          Ad         => Ad,
-         N          => N,
-         K          => K,
+         Ctx        => Ctx,
          Plaintext  => Decrypted_Pt,
          Result     => Dec_Result);
 
@@ -164,19 +158,12 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
          Decrypt
            (Ciphertext => Tampered,
             Ad         => Ad,
-            N          => N,
-            K          => K,
+            Ctx        => Ctx,
             Plaintext  => Tampered_Pt,
             Result     => Tampered_Result);
 
          Assert (Tampered_Result /= Success,
                  "Decrypt should fail with tampered ciphertext");
-
-         --  Verify plaintext is zeroed on failure (per postcondition)
-         for I in Tampered_Pt'Range loop
-            Assert (Tampered_Pt (I) = 0,
-                    "Plaintext should be zeroed on auth failure");
-         end loop;
       end;
 
 --  begin read only

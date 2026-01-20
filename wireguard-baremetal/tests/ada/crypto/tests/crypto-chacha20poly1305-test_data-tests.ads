@@ -9,11 +9,11 @@ package Crypto.ChaCha20Poly1305.Test_Data.Tests is
    type Test is new GNATtest_Generated.GNATtest_Standard.Crypto.ChaCha20Poly1305.Test_Data.Test
    with null record;
 
-   procedure Test_Encrypt_589777 (Gnattest_T : in out Test);
-   --  crypto-chacha20poly1305.ads:23:4:Encrypt
+   procedure Test_Encrypt_7c9a14 (Gnattest_T : in out Test);
+   --  crypto-chacha20poly1305.ads:29:4:Encrypt
 
-   procedure Test_Decrypt_01079b (Gnattest_T : in out Test);
-   --  crypto-chacha20poly1305.ads:35:4:Decrypt
+   procedure Test_Decrypt_d610aa (Gnattest_T : in out Test);
+   --  crypto-chacha20poly1305.ads:41:4:Decrypt
 
 end Crypto.ChaCha20Poly1305.Test_Data.Tests;
 --  end read only

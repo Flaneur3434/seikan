@@ -8,9 +8,72 @@ is
    use Interfaces.C;
 
    --  BLAKE2s constants
+   BLAKE2S_OUTBYTES : constant Positive := 32;   --  Digest size (256 bits)
+   BLAKE2S_KEYBYTES : constant Positive := 32;   --  Maximum key size
+
+   --  Public subtypes for buffers
+   subtype Digest_Buffer is Byte_Array (0 .. BLAKE2S_OUTBYTES - 1);
+   subtype Key_Buffer is Byte_Array (0 .. BLAKE2S_KEYBYTES - 1);
+   subtype Digest_Length is Positive range 1 .. BLAKE2S_OUTBYTES;
+
+   type Blake2s_State is private;
+
+   ---------------------
+   --  Simple API (all-in-one)
+   ---------------------
+
+   --  Unkeyed hash
+   procedure Blake2s
+     (Digest : out Digest_Buffer;
+      Data   : Byte_Array;
+      Result : out Crypto.Status)
+   with Global => null;
+
+   --  Keyed hash (MAC)
+   procedure Blake2s
+     (Digest : out Digest_Buffer;
+      Data   : Byte_Array;
+      Key    : Key_Buffer;
+      Result : out Crypto.Status)
+   with Global => null;
+
+   ---------------------
+   --  Streaming API (incremental hashing)
+   ---------------------
+
+   --  Initialize a new streaming hash context
+   procedure Blake2s_Init
+     (State  : aliased out Blake2s_State;
+      Outlen : Digest_Length;
+      Result : out Crypto.Status)
+   with Global => null;
+
+   --  Initialize with a key
+   procedure Blake2s_Init_Key
+     (State  : aliased out Blake2s_State;
+      Outlen : Digest_Length;
+      Key    : Key_Buffer;
+      Result : out Crypto.Status)
+   with
+     Global => null;
+
+   --  Update hash with more data
+   procedure Blake2s_Update
+     (State  : aliased in out Blake2s_State;
+      Data   : Byte_Array;
+      Result : out Crypto.Status)
+   with Global => null;
+
+   --  Finalize and get the hash digest
+   procedure Blake2s_Final
+     (State  : aliased in out Blake2s_State;
+      Digest : out Byte_Array;
+      Result : out Crypto.Status)
+   with Global => null;
+
+private
+   --  BLAKE2s constants (internal)
    BLAKE2S_BLOCKBYTES : constant Positive := 64;   --  Block size
-   BLAKE2S_OUTBYTES   : constant Positive := 32;   --  Digest size (256 bits)
-   BLAKE2S_KEYBYTES   : constant Positive := 32;   --  Maximum key size
 
    --  Array types for BLAKE2s state components
    type Hash_Array is array (Natural range 0 .. 7) of Unsigned_32;
@@ -30,52 +93,5 @@ is
       Last_Node : Unsigned_8;           --  Is this the last node?
    end record
    with Convention => C;
-
-   ---------------------
-   --  Simple API (all-in-one)
-   ---------------------
-
-   procedure Blake2s
-     (Buffer_Out : out Byte_Array;
-      Buffer_In  : Byte_Array;
-      Key_Buffer : Byte_Array;
-      Result     : out Crypto.Status)
-   with Global => null, Pre => Buffer_Out'Length = BLAKE2S_OUTBYTES;
-
-   ---------------------
-   --  Streaming API (incremental hashing)
-   ---------------------
-
-   --  Initialize a new streaming hash context
-   procedure Blake2s_Init
-     (State  : aliased out Blake2s_State;
-      Outlen : Positive;
-      Result : out Crypto.Status)
-   with Global => null, Pre => Outlen <= BLAKE2S_OUTBYTES;
-
-   --  Initialize with a key
-   procedure Blake2s_Init_Key
-     (State  : aliased out Blake2s_State;
-      Outlen : Positive;
-      Key    : Byte_Array;
-      Result : out Crypto.Status)
-   with
-     Global => null,
-     Pre    =>
-       Outlen <= BLAKE2S_OUTBYTES and then Key'Length <= BLAKE2S_KEYBYTES;
-
-   --  Update hash with more data
-   procedure Blake2s_Update
-     (State  : aliased in out Blake2s_State;
-      Data   : Byte_Array;
-      Result : out Crypto.Status)
-   with Global => null;
-
-   --  Finalize and get the hash digest
-   procedure Blake2s_Final
-     (State  : aliased in out Blake2s_State;
-      Digest : out Byte_Array;
-      Result : out Crypto.Status)
-   with Global => null;
 
 end Crypto.Blake2;

@@ -1,24 +1,50 @@
 with Crypto.Blake2_Ref;
+with System;
 
 package body Crypto.Blake2
   with SPARK_Mode => Off
 is
+   --  Unkeyed hash
    procedure Blake2s
-     (Buffer_Out : out Byte_Array;
-      Buffer_In  : Byte_Array;
-      Key_Buffer : Byte_Array;
-      Result     : out Crypto.Status)
+     (Digest : out Digest_Buffer;
+      Data   : Byte_Array;
+      Result : out Crypto.Status)
    is
       Ret_Val : int;
    begin
       Ret_Val :=
         Crypto.Blake2_Ref.Blake2s
-          (Buffer_Out      => Buffer_Out'Address,
-           Buffer_Out_Size => size_t (Buffer_Out'Length),
-           Buffer_In       => Buffer_In'Address,
-           Buffer_In_Size  => size_t (Buffer_In'Length),
-           Key_In          => Key_Buffer'Address,
-           Key_In_Size     => size_t (Key_Buffer'Length));
+          (Buffer_Out      => Digest'Address,
+           Buffer_Out_Size => size_t (Digest'Length),
+           Buffer_In       => Data'Address,
+           Buffer_In_Size  => size_t (Data'Length),
+           Key_In          => System.Null_Address,
+           Key_In_Size     => 0);
+
+      if Ret_Val = 0 then
+         Result := Crypto.Success;
+      else
+         Result := Crypto.Error_Failed;
+      end if;
+   end Blake2s;
+
+   --  Keyed hash
+   procedure Blake2s
+     (Digest : out Digest_Buffer;
+      Data   : Byte_Array;
+      Key    : Key_Buffer;
+      Result : out Crypto.Status)
+   is
+      Ret_Val : int;
+   begin
+      Ret_Val :=
+        Crypto.Blake2_Ref.Blake2s
+          (Buffer_Out      => Digest'Address,
+           Buffer_Out_Size => size_t (Digest'Length),
+           Buffer_In       => Data'Address,
+           Buffer_In_Size  => size_t (Data'Length),
+           Key_In          => Key'Address,
+           Key_In_Size     => size_t (Key'Length));
 
       if Ret_Val = 0 then
          Result := Crypto.Success;
@@ -29,7 +55,7 @@ is
 
    procedure Blake2s_Init
      (State  : aliased out Blake2s_State;
-      Outlen : Positive;
+      Outlen : Digest_Length;
       Result : out Crypto.Status)
    is
       Ret_Val : int;
@@ -47,8 +73,8 @@ is
 
    procedure Blake2s_Init_Key
      (State  : aliased out Blake2s_State;
-      Outlen : Positive;
-      Key    : Byte_Array;
+      Outlen : Digest_Length;
+      Key    : Key_Buffer;
       Result : out Crypto.Status)
    is
       Ret_Val : int;
