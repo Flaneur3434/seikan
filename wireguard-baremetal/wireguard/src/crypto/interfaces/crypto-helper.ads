@@ -12,10 +12,9 @@ is
 
    --  Constant-time comparison of two buffers
    --  Returns Success if equal, Error_Failed if different
-   procedure Cmp
-     (A      : Byte_Array;
-      B      : Byte_Array;
-      Result : out Status)
+   function Cmp
+     (A : Byte_Array;
+      B : Byte_Array) return Status
    with
      Global => null,
      Pre    => A'Length = B'Length;

@@ -99,14 +99,14 @@ package body Crypto.Helper.Test_Data.Tests is
       A := (others => 16#42#);
       B := (others => 16#42#);
 
-      Cmp (A, B, Result);
+      Result := Cmp (A, B);
       Assert (Result = Success, "Equal buffers should compare as Success");
 
       --  Test 2: Different buffers should return Error_Failed
       A := (others => 16#00#);
       B := (others => 16#FF#);
 
-      Cmp (A, B, Result);
+      Result := Cmp (A, B);
       Assert (Result = Error_Failed,
               "Different buffers should compare as Error_Failed");
 
@@ -115,7 +115,7 @@ package body Crypto.Helper.Test_Data.Tests is
       B := (others => 16#AA#);
       B (15) := 16#AB#;  --  Change one byte in the middle
 
-      Cmp (A, B, Result);
+      Result := Cmp (A, B);
       Assert (Result = Error_Failed,
               "Single byte difference should be detected");
 
@@ -123,7 +123,7 @@ package body Crypto.Helper.Test_Data.Tests is
       A := (others => 0);
       B := (others => 0);
 
-      Cmp (A, B, Result);
+      Result := Cmp (A, B);
       Assert (Result = Success, "All-zero buffers should compare as Success");
 
       --  Test 5: First byte different
@@ -131,7 +131,7 @@ package body Crypto.Helper.Test_Data.Tests is
       B := (others => 16#55#);
       B (B'First) := 16#56#;
 
-      Cmp (A, B, Result);
+      Result := Cmp (A, B);
       Assert (Result = Error_Failed,
               "First byte difference should be detected");
 
@@ -140,7 +140,7 @@ package body Crypto.Helper.Test_Data.Tests is
       B := (others => 16#55#);
       B (B'Last) := 16#56#;
 
-      Cmp (A, B, Result);
+      Result := Cmp (A, B);
       Assert (Result = Error_Failed,
               "Last byte difference should be detected");
 
