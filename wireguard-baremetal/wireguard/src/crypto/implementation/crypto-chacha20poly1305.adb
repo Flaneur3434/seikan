@@ -2,6 +2,8 @@ with Crypto.Platform;
 with Interfaces.C;
 with System;
 
+use Interfaces.C;
+
 package body Crypto.ChaCha20Poly1305
   with SPARK_Mode => Off
 is
@@ -10,10 +12,11 @@ is
       Ad_Span         : Byte_Span;
       Nonce           : Nonce_Buffer;
       Key             : Key_Buffer;
-      Ciphertext_Span : Byte_Span; -- technically out parameter
+      --  technically out parameter
+      Ciphertext_Span : Byte_Span;
       Result          : out Status)
    is
-      use Interfaces.C;
+
       Ret_Val : int;
    begin
       Ret_Val :=
@@ -40,10 +43,10 @@ is
       Ad_Span         : Byte_Span;
       Nonce           : Nonce_Buffer;
       Key             : Key_Buffer;
-      Plaintext_Span  : Byte_Span; -- technically out parameter
+      --  technically out parameter
+      Plaintext_Span  : Byte_Span;
       Result          : out Status)
    is
-      use Interfaces.C;
       Ret_Val : int;
    begin
       Ret_Val :=
@@ -64,5 +67,21 @@ is
          Result := Error_Failed;
       end if;
    end Decrypt;
+
+   procedure Build_Nonce (Counter : Unsigned_64; N : out Nonce_Buffer) is
+      C : Unsigned_64 := Counter;
+   begin
+      --  First 4 bytes are zero
+      N (0) := 0;
+      N (1) := 0;
+      N (2) := 0;
+      N (3) := 0;
+
+      --  Last 8 bytes are counter in little-endian
+      for I in 0 .. 7 loop
+         N (4 + I) := Unsigned_8 (C and 16#FF#);
+         C := Shift_Right (C, 8);
+      end loop;
+   end Build_Nonce;
 
 end Crypto.ChaCha20Poly1305;
