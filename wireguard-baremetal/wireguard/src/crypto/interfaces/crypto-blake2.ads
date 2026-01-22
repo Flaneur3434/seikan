@@ -24,16 +24,16 @@ is
 
    --  Unkeyed hash
    procedure Blake2s
-     (Digest : out Digest_Buffer;
-      Data   : Byte_Array;
+     (Data   : Byte_Array;
+      Digest : out Digest_Buffer;
       Result : out Crypto.Status)
    with Global => null;
 
    --  Keyed hash (MAC)
    procedure Blake2s
-     (Digest : out Digest_Buffer;
-      Data   : Byte_Array;
+     (Data   : Byte_Array;
       Key    : Key_Buffer;
+      Digest : out Digest_Buffer;
       Result : out Crypto.Status)
    with Global => null;
 
@@ -43,24 +43,23 @@ is
 
    --  Initialize a new streaming hash context
    procedure Blake2s_Init
-     (State  : aliased out Blake2s_State;
-      Outlen : Digest_Length;
+     (Outlen : Digest_Length;
+      State  : aliased out Blake2s_State;
       Result : out Crypto.Status)
    with Global => null;
 
    --  Initialize with a key
    procedure Blake2s_Init_Key
-     (State  : aliased out Blake2s_State;
+     (Key    : Key_Buffer;
       Outlen : Digest_Length;
-      Key    : Key_Buffer;
+      State  : aliased out Blake2s_State;
       Result : out Crypto.Status)
-   with
-     Global => null;
+   with Global => null;
 
    --  Update hash with more data
    procedure Blake2s_Update
-     (State  : aliased in out Blake2s_State;
-      Data   : Byte_Array;
+     (Data   : Byte_Array;
+      State  : aliased in out Blake2s_State;
       Result : out Crypto.Status)
    with Global => null;
 
