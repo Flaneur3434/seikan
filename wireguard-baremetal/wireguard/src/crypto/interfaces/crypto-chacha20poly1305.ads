@@ -48,7 +48,10 @@ is
       Result          : out Status)
    with
      Global => null,
-     Pre    => Length (Ciphertext_Span) >= Length (Plaintext_Span) + Tag_Bytes;
+     Pre    =>
+       Length (Ciphertext_Span) >= Tag_Bytes
+       and then
+         Length (Ciphertext_Span) - Tag_Bytes >= Length (Plaintext_Span);
 
    --  Decrypts ciphertext from source span, writes plaintext to dest span
    --

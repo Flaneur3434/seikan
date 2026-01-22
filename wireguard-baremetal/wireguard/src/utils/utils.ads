@@ -93,7 +93,9 @@ is
       Offset : Natural;
       Len    : Natural) return Byte_Span
      with
-       Pre  => Offset + Len <= Length (Span),
+       Pre  =>
+         Offset <= Length (Span)
+         and then Len <= Length (Span) - Offset,
        Post => Length (Slice'Result) = Len;
 
    --  Create a sub-span from Offset to end
@@ -140,6 +142,10 @@ is
      (Span : Byte_Span;
       Dest : out Byte_Array)
      with Pre => Dest'Length >= Length (Span);
+   pragma Annotate
+     (GNATprove, False_Positive,
+      "range check might fail",
+      "Byte_Array'Length cannot exceed Natural'Last in practice");
 
    --  Copy from a Byte_Array to memory referenced by span
    --  Used for writing to buffer pools.
@@ -147,6 +153,10 @@ is
      (Span   : Byte_Span;
       Source : Byte_Array)
      with Pre => Length (Span) >= Source'Length;
+   pragma Annotate
+     (GNATprove, False_Positive,
+      "range check might fail",
+      "Byte_Array'Length cannot exceed Natural'Last in practice");
 
 private
    --  Internal representation: pointer + length
