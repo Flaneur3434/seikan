@@ -6,8 +6,8 @@ package body Crypto.Blake2
 is
    --  Unkeyed hash
    procedure Blake2s
-     (Digest : out Digest_Buffer;
-      Data   : Byte_Array;
+     (Data   : Byte_Array;
+      Digest : out Digest_Buffer;
       Result : out Crypto.Status)
    is
       Ret_Val : int;
@@ -30,9 +30,9 @@ is
 
    --  Keyed hash
    procedure Blake2s
-     (Digest : out Digest_Buffer;
-      Data   : Byte_Array;
+     (Data   : Byte_Array;
       Key    : Key_Buffer;
+      Digest : out Digest_Buffer;
       Result : out Crypto.Status)
    is
       Ret_Val : int;
@@ -54,8 +54,8 @@ is
    end Blake2s;
 
    procedure Blake2s_Init
-     (State  : aliased out Blake2s_State;
-      Outlen : Digest_Length;
+     (Outlen : Digest_Length;
+      State  : aliased out Blake2s_State;
       Result : out Crypto.Status)
    is
       Ret_Val : int;
@@ -72,9 +72,9 @@ is
    end Blake2s_Init;
 
    procedure Blake2s_Init_Key
-     (State  : aliased out Blake2s_State;
+     (Key    : Key_Buffer;
       Outlen : Digest_Length;
-      Key    : Key_Buffer;
+      State  : aliased out Blake2s_State;
       Result : out Crypto.Status)
    is
       Ret_Val : int;
@@ -94,8 +94,8 @@ is
    end Blake2s_Init_Key;
 
    procedure Blake2s_Update
-     (State  : aliased in out Blake2s_State;
-      Data   : Byte_Array;
+     (Data   : Byte_Array;
+      State  : aliased in out Blake2s_State;
       Result : out Crypto.Status)
    is
       Ret_Val : int;
