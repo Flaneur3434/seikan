@@ -6,60 +6,62 @@ package body Crypto.ChaCha20Poly1305
   with SPARK_Mode => Off
 is
    procedure Encrypt
-     (Plaintext  : Byte_Array;
-      Ad         : Byte_Array;
-      Ctx        : Context;
-      Ciphertext : out Byte_Array;
-      Result     : out Crypto.Status)
+     (Plaintext_Span  : Byte_Span;
+      Ad_Span         : Byte_Span;
+      Nonce           : Nonce_Buffer;
+      Key             : Key_Buffer;
+      Ciphertext_Span : Byte_Span; -- technically out parameter
+      Result          : out Status)
    is
       use Interfaces.C;
       Ret_Val : int;
    begin
       Ret_Val :=
         Crypto.Platform.Crypto_AEAD_ChaCha20Poly1305_IETF_Encrypt
-          (Ciphertext_Out     => Ciphertext'Address,
+          (Ciphertext_Out     => Data (Ciphertext_Span),
            Ciphertext_Len_Out => System.Null_Address,
-           Message_In         => Plaintext'Address,
-           Message_Len        => unsigned_long_long (Plaintext'Length),
-           Ad_In              => Ad'Address,
-           Ad_Len             => unsigned_long_long (Ad'Length),
+           Message_In         => Data (Plaintext_Span),
+           Message_Len        => unsigned_long_long (Length (Plaintext_Span)),
+           Ad_In              => Data (Ad_Span),
+           Ad_Len             => unsigned_long_long (Length (Ad_Span)),
            Nsec               => System.Null_Address,
-           Nonce_In           => Ctx.N'Address,
-           Key_In             => Ctx.K'Address);
+           Nonce_In           => Nonce'Address,
+           Key_In             => Key'Address);
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Encrypt;
 
    procedure Decrypt
-     (Ciphertext : Byte_Array;
-      Ad         : Byte_Array;
-      Ctx        : Context;
-      Plaintext  : out Byte_Array;
-      Result     : out Crypto.Status)
+     (Ciphertext_Span : Byte_Span;
+      Ad_Span         : Byte_Span;
+      Nonce           : Nonce_Buffer;
+      Key             : Key_Buffer;
+      Plaintext_Span  : Byte_Span; -- technically out parameter
+      Result          : out Status)
    is
       use Interfaces.C;
       Ret_Val : int;
    begin
       Ret_Val :=
         Crypto.Platform.Crypto_AEAD_ChaCha20Poly1305_IETF_Decrypt
-          (Message_Out     => Plaintext'Address,
+          (Message_Out     => Data (Plaintext_Span),
            Message_Len_Out => System.Null_Address,
            Nsec            => System.Null_Address,
-           Ciphertext_In   => Ciphertext'Address,
-           Ciphertext_Len  => unsigned_long_long (Ciphertext'Length),
-           Ad_In           => Ad'Address,
-           Ad_Len          => unsigned_long_long (Ad'Length),
-           Nonce_In        => Ctx.N'Address,
-           Key_In          => Ctx.K'Address);
+           Ciphertext_In   => Data (Ciphertext_Span),
+           Ciphertext_Len  => unsigned_long_long (Length (Ciphertext_Span)),
+           Ad_In           => Data (Ad_Span),
+           Ad_Len          => unsigned_long_long (Length (Ad_Span)),
+           Nonce_In        => Nonce'Address,
+           Key_In          => Key'Address);
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Decrypt;
 

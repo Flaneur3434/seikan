@@ -2,6 +2,13 @@
 --
 --  Encrypts and provides integrity for messages
 --  This is the public interface; implementations are platform-specific.
+--
+--  ZERO-COPY DESIGN (Design Contract Section F):
+--    - Crypto consumes spans, not owned copies (F21)
+--    - Plaintext destination is caller-provided (F22)
+--    - Nonce and AAD are derived without copying (F23)
+--    - All span-based APIs read directly from RX buffers
+--    - All span-based APIs write directly to TX buffers
 
 with Interfaces;
 
@@ -16,37 +23,54 @@ is
    Tag_Bytes   : constant Positive := 16;  --  128-bit authentication tag
 
    --  ChaCha20Poly1305 Types
-   type Nonce is array (0 .. Nonce_Bytes - 1) of Unsigned_8;
-   type Key is array (0 .. Key_Bytes - 1) of Unsigned_8;
+   subtype Nonce_Buffer is Byte_Array (0 .. Nonce_Bytes - 1);
+   subtype Key_Buffer is Byte_Array (0 .. Key_Bytes - 1);
 
-   type Context is record
-      N : Nonce;  --  96-bit nonce
-      K : Key;    --  256-bit key
-   end record;
+   ---------------------
+   --  Zero-Copy Span API (Design Contract F21-F23)
+   ---------------------
 
-   --  Encrypts message and appends authentication tag
-   --  Ciphertext must be Plaintext'Length + Tag_Bytes
+   --  Encrypts message from source span, writes ciphertext to destination span
+   --
+   --  ZERO-COPY: Reads plaintext directly from source span (RX buffer),
+   --             writes ciphertext directly to destination span (TX buffer).
+   --             AAD is read directly from span, no intermediate copies.
+   --
+   --  Ciphertext_Span must have capacity for plaintext + Tag_Bytes
    procedure Encrypt
-     (Plaintext  : Byte_Array;
-      Ad         : Byte_Array;
-      Ctx        : Context;
-      Ciphertext : out Byte_Array;
-      Result     : out Crypto.Status)
+     (Plaintext_Span  : Byte_Span;
+      Ad_Span         : Byte_Span;
+      Nonce           : Nonce_Buffer;
+      Key             : Key_Buffer;
+      -- The spans are (read-only descriptors) but the C FFI writes to the memory
+      -- they point to
+      Ciphertext_Span : Byte_Span; -- technically out parameter
+      Result          : out Status)
    with
      Global => null,
-     Pre    => Ciphertext'Length = Plaintext'Length + Tag_Bytes;
+     Pre    => Length (Ciphertext_Span) >= Length (Plaintext_Span) + Tag_Bytes;
 
-   --  Verifies tag and decrypts ciphertext
-   --  Plaintext must be Ciphertext'Length - Tag_Bytes
+   --  Decrypts ciphertext from source span, writes plaintext to dest span
+   --
+   --  ZERO-COPY: Reads ciphertext directly from source span (RX buffer),
+   --             writes plaintext to destination span (TX/work buffer).
+   --             AAD is read directly from span, no intermediate copies.
+   --
+   --  Plaintext_Span must have capacity for ciphertext - Tag_Bytes
    procedure Decrypt
-     (Ciphertext : Byte_Array;
-      Ad         : Byte_Array;
-      Ctx        : Context;
-      Plaintext  : out Byte_Array;
-      Result     : out Crypto.Status)
+     (Ciphertext_Span : Byte_Span;
+      Ad_Span         : Byte_Span;
+      Nonce           : Nonce_Buffer;
+      Key             : Key_Buffer;
+      -- The spans are (read-only descriptors) but the C FFI writes to the memory
+      -- they point to
+      Plaintext_Span  : Byte_Span; -- technically out parameter
+      Result          : out Status)
    with
      Global => null,
-     Pre    => Ciphertext'Length >= Tag_Bytes
-               and then Plaintext'Length = Ciphertext'Length - Tag_Bytes;
+     Pre    =>
+       Length (Ciphertext_Span) >= Tag_Bytes
+       and then
+         Length (Plaintext_Span) >= Length (Ciphertext_Span) - Tag_Bytes;
 
 end Crypto.ChaCha20Poly1305;
