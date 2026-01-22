@@ -29,6 +29,7 @@ project Wireguard is
       "src/handshake/",
       "src/transport/",
       "src/net/",
+      "src/utils/",
       "src/crypto/",
       "src/crypto/interfaces/",
       "src/crypto/implementation/",
