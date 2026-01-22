@@ -28,20 +28,22 @@ package body Crypto.Helper.Test_Data.Tests is
 --
 --  end read only
 
+   use Utils;  --  For From_Array and Byte_Span operations
+
 --  begin read only
 --  end read only
 
 --  begin read only
    procedure Test_Memzero (Gnattest_T : in out Test);
-   procedure Test_Memzero_68c902 (Gnattest_T : in out Test) renames Test_Memzero;
---  id:2.2/68c9020bbe688be6/Memzero/1/0/
+   procedure Test_Memzero_001f23 (Gnattest_T : in out Test) renames Test_Memzero;
+--  id:2.2/001f23d595ac0183/Memzero/1/0/
    procedure Test_Memzero (Gnattest_T : in out Test) is
-   --  crypto-helper.ads:4:4:Memzero
+   --  crypto-helper.ads:10:4:Memzero
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      Buffer : Byte_Array (0 .. 31) := (others => 16#FF#);
+      Buffer : aliased Byte_Array (0 .. 31) := (others => 16#FF#);
 
    begin
       --  Test 1: Memzero should zero out a buffer filled with 0xFF
@@ -80,16 +82,16 @@ package body Crypto.Helper.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Cmp (Gnattest_T : in out Test);
-   procedure Test_Cmp_fad6bd (Gnattest_T : in out Test) renames Test_Cmp;
---  id:2.2/fad6bd62b2d6a121/Cmp/1/0/
+   procedure Test_Cmp_1e707b (Gnattest_T : in out Test) renames Test_Cmp;
+--  id:2.2/1e707be31f845997/Cmp/1/0/
    procedure Test_Cmp (Gnattest_T : in out Test) is
-   --  crypto-helper.ads:7:4:Cmp
+   --  crypto-helper.ads:15:4:Cmp
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      A      : Byte_Array (0 .. 31);
-      B      : Byte_Array (0 .. 31);
+      A      : aliased Byte_Array (0 .. 31);
+      B      : aliased Byte_Array (0 .. 31);
       Result : Status;
 
    begin
