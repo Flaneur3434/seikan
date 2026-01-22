@@ -42,9 +42,9 @@ is
       Ad_Span         : Byte_Span;
       Nonce           : Nonce_Buffer;
       Key             : Key_Buffer;
-      -- The spans are (read-only descriptors) but the C FFI writes to the memory
-      -- they point to
-      Ciphertext_Span : Byte_Span; -- technically out parameter
+      --  The spans are (read-only descriptors) but the C FFI writes to the
+      --  memory they point to. So it's technically an out parameter.
+      Ciphertext_Span : Byte_Span;
       Result          : out Status)
    with
      Global => null,
@@ -65,9 +65,9 @@ is
       Ad_Span         : Byte_Span;
       Nonce           : Nonce_Buffer;
       Key             : Key_Buffer;
-      -- The spans are (read-only descriptors) but the C FFI writes to the memory
-      -- they point to
-      Plaintext_Span  : Byte_Span; -- technically out parameter
+      --  The spans are (read-only descriptors) but the C FFI writes to the
+      --  memory they point to. So it's technically an out parameter.
+      Plaintext_Span  : Byte_Span;
       Result          : out Status)
    with
      Global => null,
@@ -75,5 +75,8 @@ is
        Length (Ciphertext_Span) >= Tag_Bytes
        and then
          Length (Plaintext_Span) >= Length (Ciphertext_Span) - Tag_Bytes;
+
+   procedure Build_Nonce (Counter : Unsigned_64; N : out Nonce_Buffer)
+   with Post => (for all I in 0 .. 3 => N (I) = 0);
 
 end Crypto.ChaCha20Poly1305;
