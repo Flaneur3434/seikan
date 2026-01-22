@@ -9,7 +9,7 @@ is
    procedure Fill_Random (Buffer : out Byte_Array) is
    begin
       Crypto.Platform.Randombytes_Buf
-        (Buffer => Buffer (Buffer'First)'Address,
+        (Buffer => Buffer'Address,
          Size   => Interfaces.C.size_t (Buffer'Length));
    end Fill_Random;
 
