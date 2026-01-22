@@ -12,10 +12,9 @@ is
          Buffer_Size => size_t (Buffer'Length));
    end Memzero;
 
-   procedure Cmp
-     (A      : Byte_Array;
-      B      : Byte_Array;
-      Result : out Status)
+   function Cmp
+     (A : Byte_Array;
+      B : Byte_Array) return Status
    is
       use Interfaces.C;
       Ret_Val : int;
@@ -26,9 +25,9 @@ is
          Length => size_t (A'Length));
 
       if Ret_Val = 0 then
-         Result := Success;
+         return Success;
       else
-         Result := Error_Failed;
+         return Error_Failed;
       end if;
    end Cmp;
 
