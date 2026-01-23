@@ -48,11 +48,20 @@ project Wireguard is
          Backend_Src := ("src/crypto/platform/libsodium/");
    end case;
 
+   --  Utils platform bindings (FreeRTOS for esp_idf)
+   Utils_Platform_Src := ("");
+   case Platform is
+      when "esp_idf" =>
+         Utils_Platform_Src := ("src/utils/platform/freertos/");
+      when "host" =>
+         null;  --  No platform utils for host yet
+   end case;
+
    --  Build complete Source_Dirs based on Platform
    case Platform is
       when "host" =>
          --  Host includes BLAKE2 C sources directly
-         for Source_Dirs use Common_Sources & Blake2_Src & Blake2_Platform & Backend_Src;
+         for Source_Dirs use Common_Sources & Blake2_Src & Blake2_Platform & Backend_Src & Utils_Platform_Src;
          --  Exclude BLAKE2 files we don't need (they have main() for self-tests)
          for Excluded_Source_Files use (
             "blake2b-ref.c",     --  BLAKE2b not used by WireGuard
@@ -65,7 +74,7 @@ project Wireguard is
          );
       when "esp_idf" =>
          --  ESP-IDF compiles BLAKE2 via its own CMake component
-         for Source_Dirs use Common_Sources & Blake2_Platform & Backend_Src;
+         for Source_Dirs use Common_Sources & Blake2_Platform & Backend_Src & Utils_Platform_Src;
    end case;
 
    for Object_Dir use "obj/" & Platform;
