@@ -158,6 +158,30 @@ is
       "range check might fail",
       "Byte_Array'Length cannot exceed Natural'Last in practice");
 
+   ---------------------
+   --  Byte Array <-> Integer Conversion (Little Endian)
+   ---------------------
+
+   --  Byte array subtypes for integer conversions
+   subtype Bytes_4 is Byte_Array (0 .. 3);
+   subtype Bytes_8 is Byte_Array (0 .. 7);
+
+   --  Convert 4-byte little-endian array to Unsigned_32
+   function To_U32 (Bytes : Bytes_4) return Unsigned_32
+     with Inline;
+
+   --  Convert Unsigned_32 to 4-byte little-endian array
+   function From_U32 (Value : Unsigned_32) return Bytes_4
+     with Inline;
+
+   --  Convert 8-byte little-endian array to Unsigned_64
+   function To_U64 (Bytes : Bytes_8) return Unsigned_64
+     with Inline;
+
+   --  Convert Unsigned_64 to 8-byte little-endian array
+   function From_U64 (Value : Unsigned_64) return Bytes_8
+     with Inline;
+
 private
    --  Internal representation: pointer + length
    --  This matches the C ABI for easy FFI interop
