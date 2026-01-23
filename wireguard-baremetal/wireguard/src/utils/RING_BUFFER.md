@@ -1,287 +1,269 @@
-# Ring Buffer with SPARK-Proven Ownership
+# Ring Buffer Module
 
-A zero-copy buffer pool for network packet handling with formally verified ownership semantics.
+Pre-allocated buffer pool for zero-copy packet handling with provable ownership protocol.
 
-## Overview
+## Design Overview
 
-The `Utils.Ring_Buffer` module provides pre-allocated fixed-size buffers for RX/TX packet processing. Buffer ownership is tracked using SPARK ghost state, enabling static proof that:
+The ring buffer implements a **boundary ownership token** model where every buffer is in exactly one ownership state at any time. Ghost state (proof-only, no runtime cost) formally tracks ownership for SPARK proofs.
 
-- **No double-free**: A buffer can only be freed by its current owner
-- **No use-after-free**: Operations require valid ownership
-- **No leaks**: Conservation invariant ensures all buffers are accounted for
-- **Valid transitions**: Ownership transfers follow the defined state machine
-
-**Important**: Ghost state is for SPARK proofs only—it compiles away to nothing at runtime. Code in `SPARK_Mode => Off` sections and C code must be manually reviewed for correctness.
-
-## Ownership Model
-
-Each buffer has exactly **one owner** at any time:
+## Ownership State Machine
 
 ```
-┌──────────────────┐
-│  Owner_Free_Pool │◄────────────────────────────────┐
-│  (available)     │                                 │
-└────────┬─────────┘                                 │
-         │ Allocate()                                │
-         ▼                                           │
-┌─────────────────┐                                  │
-│Owner_Application│◄──────────┐                      │
-│  (caller owns)  │           │                      │
-└─┬─────────┬─────┘           │                      │
-  │         │                 │                      │
-  │ RX_     │ TX_         RX_ │ TX_              Free()
-  │ Enqueue │ Enqueue  Dequeue│ Dequeue              │
-  │         │                 │                      │
-  ▼         ▼                 │                      │
-┌─────────┐ ┌─────────┐       │                      │
-│Owner_RX │ │Owner_TX │───────┴──────────────────────┘
-│ _Queue  │ │ _Queue  │
-└─────────┘ └─────────┘
+                    RX PATH                          TX PATH
+                    ───────                          ───────
+
+                   ┌─────────┐
+                   │  Free   │◄────────────────────────────────────┐
+                   └────┬────┘                                     │
+         Rx_Alloc()     │             Tx_Alloc()                   │
+                   ┌────▼────┐                    ┌───────────┐    │
+                   │C_RxFill │                    │Ada_TxBuild│ ◄──┤
+                   └────┬────┘                    └─────┬─────┘    │
+         Rx_Enqueue()   │             Tx_Ready()        │          │
+                   ┌────▼────┐                    ┌─────▼───────┐  │
+                   │   RxQ   │                    │Ada_TxEncrypt│  │
+                   └────┬────┘                    └─────┬───────┘  │
+         Rx_Dequeue()   │             Tx_Enqueue()      │          │
+                   ┌────▼────────┐                ┌─────▼────┐     │
+                   │Ada_RxProcess│                │   TxQ    │     │
+                   └────┬────────┘                └─────┬────┘     │
+         Rx_Complete()  │             Tx_Dequeue()      │          │
+                        │                         ┌─────▼────┐     │
+                        │                         │ C_TxSend │     │
+                        │                         └─────┬────┘     │
+                        │             Tx_Complete()     │          │
+                        └───────────────────────────────┴──────────┘
 ```
 
-### Ownership States
+### State Descriptions
 
-| State | Description |
-|-------|-------------|
-| `Owner_Free_Pool` | Buffer available for allocation |
-| `Owner_Application` | Buffer held by Ada or C code |
-| `Owner_RX_Queue` | Buffer queued for receive processing |
-| `Owner_TX_Queue` | Buffer queued for transmission |
+| State | Owner | Description |
+|-------|-------|-------------|
+| `Free` | Pool | Available for allocation |
+| `C_RxFill` | C | C receiving data via recvfrom |
+| `RxQ` | Queue | Waiting for Ada to process |
+| `Ada_RxProcess` | Ada | Ada processing received packet |
+| `Ada_TxBuild` | Ada | Ada building TX packet plaintext |
+| `Ada_TxEncrypt` | Ada | Ada performing in-place AEAD encryption |
+| `TxQ` | Queue | Waiting for C to send |
+| `C_TxSend` | C | C sending via sendto (may EAGAIN) |
 
-### Valid Transitions
+## Valid Transitions
 
-| Operation | From | To |
-|-----------|------|-----|
-| `Allocate` | `Free_Pool` | `Application` |
-| `Free` | `Application` | `Free_Pool` |
-| `RX_Enqueue` | `Application` | `RX_Queue` |
-| `RX_Dequeue` | `RX_Queue` | `Application` |
-| `TX_Enqueue` | `Application` | `TX_Queue` |
-| `TX_Dequeue` | `TX_Queue` | `Application` |
+**RX Path:**
+```
+Free → C_RxFill → RxQ → Ada_RxProcess → Free
+```
 
-## Ghost State Implementation
+**TX Path:**
+```
+Free → Ada_TxBuild → Ada_TxEncrypt → TxQ → C_TxSend → Free
+```
 
-### Ghost Types (Proof Only - Zero Runtime Cost)
+**Drop Paths (error handling):**
+```
+C_RxFill | RxQ | Ada_RxProcess → Free  (via Rx_Drop)
+Ada_TxBuild | Ada_TxEncrypt | TxQ | C_TxSend → Free  (via Tx_Drop)
+```
+
+## Buffer Descriptor
 
 ```ada
-type Owner_Kind is (Owner_Free_Pool,
-                    Owner_Application,
-                    Owner_RX_Queue,
-                    Owner_TX_Queue)
-  with Ghost;
-
-type Ownership_Array is array (Buffer_Index) of Owner_Kind
-  with Ghost;
+type Buffer_Descriptor is record
+   Ptr : System.Address;  -- Pointer to buffer data
+   Len : size_t;          -- Actual data length
+   Cap : size_t;          -- Buffer capacity (1560)
+   Id  : size_t;          -- Buffer ID for ghost modeling
+end record with Convention => C;
 ```
-
-The `Ghost` aspect means these types exist only for proof—they generate **no runtime code**.
-
-### Ghost State in Body
-
-```ada
-Owners : Ownership_Array := (others => Owner_Free_Pool)
-  with Ghost;
-```
-
-This array tracks ownership of each buffer for SPARK analysis. It's declared in the package body and compiled away in the final binary.
-
-### Ghost Query Functions
-
-```ada
-function Get_Owner (Index : Buffer_Index) return Owner_Kind
-  with Ghost;
-
-function Count_With_Owner (Owner : Owner_Kind) return Buffer_Count
-  with Ghost;
-
---  Conservation invariant: all buffers accounted for
-function Ownership_Conserved return Boolean is
-  (Count_With_Owner (Owner_Free_Pool) +
-   Count_With_Owner (Owner_Application) +
-   Count_With_Owner (Owner_RX_Queue) +
-   Count_With_Owner (Owner_TX_Queue) = Pool_Size)
-  with Ghost;
-```
-
-### Expression Functions for Predicates
-
-```ada
-function Is_Owned (Ptr : System.Address) return Boolean is
-  (Is_Valid_Buffer (Ptr)
-   and then Get_Owner (Address_To_Index (Ptr)) = Owner_Application)
-  with Ghost;
-```
-
-## Contract Examples
-
-### Free: Application → Free_Pool (Documents No Double-Free)
-
-```ada
-procedure Free (Ptr : System.Address)
-  with Pre => Ownership_Conserved
-              and then (Ptr = System.Null_Address
-                        or else (Is_Valid_Buffer (Ptr)
-                                 and then Get_Owner (Address_To_Index (Ptr))
-                                          = Owner_Application)),
-       Post => Ownership_Conserved
-               and then (if Ptr /= System.Null_Address
-                            and Is_Valid_Buffer (Ptr)
-                         then Get_Owner (Address_To_Index (Ptr))
-                              = Owner_Free_Pool);
-```
-
-**What SPARK documents:**
-- Caller must own the buffer (`Get_Owner = Owner_Application`)
-- This contract expresses that double-free is invalid
-
-### RX_Enqueue: Application → RX_Queue
-
-```ada
-procedure RX_Enqueue (Ptr : System.Address; Len : Natural)
-  with Pre => Ownership_Conserved
-              and then Is_Valid_Buffer (Ptr)
-              and then Get_Owner (Address_To_Index (Ptr)) = Owner_Application
-              and then Len <= Buffer_Capacity,
-       Post => Ownership_Conserved
-               and then Get_Owner (Address_To_Index (Ptr)) = Owner_RX_Queue;
-```
-
-**What SPARK documents:**
-- Caller must own the buffer before enqueueing
-- After enqueue, RX_Queue owns the buffer
-
-## SPARK Verification Results
-
-```
-$ alr gnatprove -P wireguard.gpr --mode=silver -j6 -u utils-ring_buffer.adb
-
-Phase 1 of 3: generation of data representation information ...
-Phase 2 of 3: generation of Global contracts ...
-Phase 3 of 3: flow analysis and proof ...
-Summary logged in gnatprove/gnatprove.out
-```
-
-✅ **No errors or warnings at silver level**
-
-## Architecture
-
-### Spec (SPARK_Mode => On)
-
-The specification contains:
-- Ghost types and functions for ownership tracking
-- Contracts (Pre/Post) documenting ownership requirements
-- Abstract state declarations
-
-SPARK verifies that contracts are internally consistent.
-
-### Body (SPARK_Mode => Off)
-
-The body is `SPARK_Mode => Off` because it uses `'Address` attribute which is not allowed in SPARK. The implementation:
-- Uses ghost updates to track ownership (compiled away)
-- Manages actual buffer storage
-- Provides C exports
-
-**Manual review is required** to ensure the body correctly implements the contracts.
-
-## Usage Examples
-
-### Ada Usage
-
-```ada
-with Utils.Ring_Buffer; use Utils.Ring_Buffer;
-
-procedure Process_Packet is
-   Buf : System.Address;
-   Desc : Buffer_Descriptor;
-begin
-   --  Receive packet from queue
-   RX_Dequeue (Desc);
-   if Desc.Ptr = System.Null_Address then
-      return;  --  No packet
-   end if;
-
-   --  Process packet...
-   --  Contract says we now own Desc.Ptr
-
-   --  Option 1: Forward to TX (transfers ownership)
-   TX_Enqueue (Desc.Ptr, Natural (Desc.Len));
-   --  We no longer own Desc.Ptr!
-
-   --  Option 2: Return to pool
-   --  Free (Desc.Ptr);
-end Process_Packet;
-```
-
-### C Usage
-
-```c
-#include "wg_buffer.h"
-
-void network_isr(void) {
-    void* buf = wg_buf_alloc(1500);
-    if (!buf) return;
-
-    size_t len = hw_read_packet(buf, wg_buf_capacity());
-    wg_rx_enqueue(buf, len);  // Ownership transferred
-    // Don't use buf after this!
-}
-
-void main_loop(void) {
-    wg_buffer_t pkt = wg_rx_dequeue();
-    if (pkt.ptr) {
-        process_packet(pkt.ptr, pkt.len);
-        wg_buf_free(pkt.ptr);  // Return to pool
-    }
-
-    pkt = wg_tx_dequeue();
-    if (pkt.ptr) {
-        hw_send_packet(pkt.ptr, pkt.len);
-        wg_buf_free(pkt.ptr);
-    }
-}
-```
-
-## Conservation Invariant
-
-The key invariant SPARK tracks:
-
-```ada
-function Ownership_Conserved return Boolean is
-  (Count_With_Owner (Owner_Free_Pool) +
-   Count_With_Owner (Owner_Application) +
-   Count_With_Owner (Owner_RX_Queue) +
-   Count_With_Owner (Owner_TX_Queue) = Pool_Size);
-```
-
-Every operation's precondition requires this invariant, and every postcondition guarantees it's maintained. This documents that **no buffers are ever lost**.
 
 ## Configuration
 
+- **Buffer_Capacity**: 1560 bytes (MTU 1500 + headers + Poly1305 tag)
+- **Pool_Size**: 16 buffers
+- **Buffer_Alignment**: 16 bytes (optimal for SIMD/DMA)
+
+## Ada API
+
+### Initialization
+
 ```ada
-Buffer_Capacity : constant := 1560;  --  MTU (1500) + headers
-Pool_Size       : constant := 16;    --  Number of buffers
+procedure Initialize;
+--  Post: all buffers in Free state
 ```
 
-Total memory: `16 × 1560 = 24,960 bytes` (statically allocated)
+### RX Path Operations
 
-## Summary
+```ada
+procedure Rx_Alloc (Desc : out Buffer_Descriptor);
+--  Transition: Free → C_RxFill
+--  Returns Null_Descriptor if pool exhausted
 
-| Aspect | Status |
-|--------|--------|
-| SPARK contracts | ✅ Verified at silver level |
-| Ghost ownership | ✅ Compiles to zero runtime cost |
-| Body implementation | SPARK_Mode => Off (uses `'Address`) |
-| C exports | Working |
-| Runtime overhead | None (ghost code compiled away) |
+procedure Rx_Enqueue (Desc : Buffer_Descriptor);
+--  Transition: C_RxFill → RxQ
+--  Pre: buffer in C_RxFill state
 
-### What SPARK Proves
+procedure Rx_Dequeue (Desc : out Buffer_Descriptor; Success : out Boolean);
+--  Transition: RxQ → Ada_RxProcess
+--  Returns Success=False if queue empty
 
-- Contract consistency (preconditions, postconditions, invariants)
-- Ownership state machine is well-defined
-- No conflicting requirements
+procedure Rx_Complete (Ptr : System.Address);
+--  Transition: Ada_RxProcess → Free
+--  Pre: buffer in Ada_RxProcess state
 
-### What Requires Manual Review
+procedure Rx_Drop (Ptr : System.Address);
+--  Transition: any RX state → Free
+--  For error handling/cleanup
+```
 
-- Body correctly implements contracts (SPARK_Mode => Off)
-- C code follows ownership rules
-- No runtime ownership checking (trust the programmer)
+### TX Path Operations
+
+```ada
+procedure Tx_Alloc (Desc : out Buffer_Descriptor);
+--  Transition: Free → Ada_TxBuild
+--  Returns Null_Descriptor if pool exhausted
+
+procedure Tx_Ready (Ptr : System.Address; Len : size_t);
+--  Transition: Ada_TxBuild → Ada_TxEncrypt
+--  Call after writing plaintext, before encryption
+
+procedure Tx_Enqueue (Desc : Buffer_Descriptor);
+--  Transition: Ada_TxEncrypt → TxQ
+--  Call after encryption complete
+
+procedure Tx_Dequeue (Desc : out Buffer_Descriptor; Success : out Boolean);
+--  Transition: TxQ → C_TxSend
+--  Returns Success=False if queue empty
+
+procedure Tx_Complete (Ptr : System.Address);
+--  Transition: C_TxSend → Free
+--  Pre: buffer in C_TxSend state
+
+procedure Tx_Drop (Ptr : System.Address);
+--  Transition: any TX state → Free
+--  For error handling/cleanup
+```
+
+### Statistics
+
+```ada
+function Free_Count return Natural;     -- Buffers in Free state
+function Rx_Queue_Count return Natural; -- Buffers in RxQ state
+function Tx_Queue_Count return Natural; -- Buffers in TxQ state
+```
+
+## C Interface
+
+```c
+// Initialization
+void wg_buf_init(void);
+
+// RX Path
+Buffer_Descriptor wg_buf_rx_alloc(void);      // Free → C_RxFill
+void wg_buf_rx_enqueue(Buffer_Descriptor d);  // C_RxFill → RxQ
+
+// TX Path
+int wg_buf_tx_dequeue(Buffer_Descriptor* d);  // TxQ → C_TxSend (returns 1/0)
+void wg_buf_tx_complete(void* ptr);           // C_TxSend → Free
+
+// Statistics
+size_t wg_buf_capacity(void);      // Buffer size (1560)
+size_t wg_buf_free_count(void);    // Free buffers
+size_t wg_buf_rx_queue_count(void);// RX queue depth
+size_t wg_buf_tx_queue_count(void);// TX queue depth
+```
+
+## Ghost Ownership Model
+
+Ghost state provides compile-time verification of ownership invariants:
+
+### Key Invariants
+
+1. **Single Owner**: No buffer is in two states simultaneously
+2. **Conservation**: Total buffers across all states = Pool_Size
+3. **Legal Transitions**: Only valid state edges are possible
+4. **No Double Free**: Free state only reachable via valid completion/drop
+
+### Ghost Predicates
+
+```ada
+function Is_Free (Ptr) return Boolean;      -- In Free state
+function Is_C_Owned (Ptr) return Boolean;   -- In C_RxFill or C_TxSend
+function Is_Ada_Owned (Ptr) return Boolean; -- In Ada_RxProcess/TxBuild/TxEncrypt
+function Is_Queued (Ptr) return Boolean;    -- In RxQ or TxQ
+function Is_In_Rx_Path (Ptr) return Boolean;-- Any RX state
+function Is_In_Tx_Path (Ptr) return Boolean;-- Any TX state
+```
+
+## Usage Flow Examples
+
+### RX Path (C → Ada)
+
+```c
+// C networking layer
+Buffer_Descriptor desc = wg_buf_rx_alloc();
+if (desc.ptr == NULL) return;  // backpressure
+
+ssize_t n = recvfrom(fd, desc.ptr, desc.cap, ...);
+if (n > 0) {
+    desc.len = n;
+    wg_buf_rx_enqueue(desc);  // hand to Ada
+}
+// after enqueue, C cannot touch buffer
+```
+
+```ada
+-- Ada WireGuard core
+Rx_Dequeue (Desc, Success);
+if Success then
+   --  Process packet via Const_Span over Desc.Ptr/Desc.Len
+   Process_Packet (Desc);
+   Rx_Complete (Desc.Ptr);  -- return to pool
+end if;
+```
+
+### TX Path (Ada → C)
+
+```ada
+-- Ada WireGuard core
+Tx_Alloc (Desc);
+if Desc.Ptr /= Null_Address then
+   --  Write header + plaintext via Mut_Span
+   Build_Packet (Desc);
+   Tx_Ready (Desc.Ptr, Plaintext_Len);
+   
+   --  Encrypt in-place (header as AAD, payload encrypted)
+   Encrypt_In_Place (Desc);
+   Desc.Len := Final_Packet_Length;
+   
+   Tx_Enqueue (Desc);  -- hand to C
+end if;
+```
+
+```c
+// C networking layer
+Buffer_Descriptor desc;
+if (wg_buf_tx_dequeue(&desc)) {
+    ssize_t n = sendto(fd, desc.ptr, desc.len, ...);
+    if (n == desc.len) {
+        wg_buf_tx_complete(desc.ptr);  // return to pool
+    } else if (errno == EAGAIN) {
+        // keep in C_TxSend, retry later
+    }
+}
+```
+
+## Backpressure Handling
+
+- **RX exhaustion**: `Rx_Alloc` returns null descriptor; C should not call recvfrom
+- **TX EAGAIN**: Buffer stays in `C_TxSend` state; C retries sendto later
+- **Queue full**: Not directly possible with current design (bounded by pool size)
+
+## Thread Safety
+
+The current implementation is **NOT thread-safe**. For multi-threaded use:
+- Use platform-specific queues (FreeRTOS xQueue) for actual inter-task communication
+- Ada-side operations should be called from a single task
+- C-side operations should be called from a single task
+
+The internal RX/TX queues are for demonstration; production code should use FreeRTOS queues that only copy the 32-byte `Buffer_Descriptor`, not buffer data.
