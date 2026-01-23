@@ -3,10 +3,10 @@
 --  Encrypts and provides integrity for messages
 --  This is the public interface; implementations are platform-specific.
 --
---  ZERO-COPY DESIGN (Design Contract Section F):
---    - Crypto consumes spans, not owned copies (F21)
---    - Plaintext destination is caller-provided (F22)
---    - Nonce and AAD are derived without copying (F23)
+--  ZERO-COPY DESIGN
+--    - Crypto consumes spans, not owned copies
+--    - Plaintext destination is caller-provided
+--    - Nonce and AAD are derived without copying
 --    - All span-based APIs read directly from RX buffers
 --    - All span-based APIs write directly to TX buffers
 
@@ -26,17 +26,7 @@ is
    subtype Nonce_Buffer is Byte_Array (0 .. Nonce_Bytes - 1);
    subtype Key_Buffer is Byte_Array (0 .. Key_Bytes - 1);
 
-   ---------------------
-   --  Zero-Copy Span API (Design Contract F21-F23)
-   ---------------------
-
    --  Encrypts message from source span, writes ciphertext to destination span
-   --
-   --  ZERO-COPY: Reads plaintext directly from source span (RX buffer),
-   --             writes ciphertext directly to destination span (TX buffer).
-   --             AAD is read directly from span, no intermediate copies.
-   --
-   --  Ciphertext_Span must have capacity for plaintext + Tag_Bytes
    procedure Encrypt
      (Plaintext_Span  : Byte_Span;
       Ad_Span         : Byte_Span;
@@ -54,12 +44,6 @@ is
          Length (Ciphertext_Span) - Tag_Bytes >= Length (Plaintext_Span);
 
    --  Decrypts ciphertext from source span, writes plaintext to dest span
-   --
-   --  ZERO-COPY: Reads ciphertext directly from source span (RX buffer),
-   --             writes plaintext to destination span (TX/work buffer).
-   --             AAD is read directly from span, no intermediate copies.
-   --
-   --  Plaintext_Span must have capacity for ciphertext - Tag_Bytes
    procedure Decrypt
      (Ciphertext_Span : Byte_Span;
       Ad_Span         : Byte_Span;
