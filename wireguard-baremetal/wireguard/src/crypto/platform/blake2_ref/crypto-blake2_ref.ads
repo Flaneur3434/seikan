@@ -15,7 +15,8 @@ is
    --  Import the public type
    subtype Blake2s_State is Crypto.Blake2.Blake2s_State;
 
-   --  Typed pointer for type safety (must be general access to allow Unchecked_Access)
+   --  Typed pointer for type safety
+   --  (must be general access to allow Unchecked_Access)
    type Blake2s_State_Ptr is access all Blake2s_State;
 
    ---------------------

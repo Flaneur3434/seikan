@@ -10,6 +10,14 @@ is
    use Interfaces;
 
    ---------------------
+   --  Constants
+   ---------------------
+
+   --  Maximum packet size (MTU + headers + tag + alignment)
+   --  Used for buffer sizing and proof bounds
+   Max_Packet_Size : constant := 1560;
+
+   ---------------------
    --  Byte Array Type
    ---------------------
 

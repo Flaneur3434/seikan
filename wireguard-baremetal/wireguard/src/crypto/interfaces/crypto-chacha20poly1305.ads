@@ -21,7 +21,6 @@
 
 with Interfaces;
 with Utils; use Utils;
-with Utils.Ring_Buffer;
 
 package Crypto.ChaCha20Poly1305
   with SPARK_Mode => On
@@ -36,8 +35,8 @@ is
    --  WireGuard Transport Header size
    Header_Bytes : constant Positive := 16;
 
-   --  Maximum buffer size from ring buffer pool
-   Max_Buffer_Size : constant := Utils.Ring_Buffer.Buffer_Capacity;
+   --  Maximum buffer size for precondition proofs
+   Max_Buffer_Size : constant := Utils.Max_Packet_Size;
 
    --  ChaCha20Poly1305 Types
    subtype Nonce_Buffer is Byte_Array (0 .. Nonce_Bytes - 1);
@@ -98,8 +97,7 @@ is
    --
    --  On success:
    --    - Bytes [Header_Bytes .. Header_Bytes+Plaintext_Len-1] contain ciphertext
-   --    - Bytes [Header_Bytes+Plaintext_Len .. Header_Bytes+Plaintext_Len+15]
-   --      contain the Poly1305 tag
+   --    - Bytes [Header_Bytes+Plaintext_Len .. Header_Bytes+Plaintext_Len+15] contain the Poly1305 tag
    --    - Total packet length = Header_Bytes + Plaintext_Len + Tag_Bytes
    procedure Encrypt_In_Place
      (Buffer        : in out Byte_Array;
