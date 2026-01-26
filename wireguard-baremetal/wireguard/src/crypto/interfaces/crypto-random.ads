@@ -2,6 +2,8 @@
 --
 --  Provides cryptographically secure random bytes.
 
+with Utils; use Utils;
+
 package Crypto.Random
   with SPARK_Mode => On
 is

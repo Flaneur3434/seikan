@@ -1,14 +1,13 @@
 --  X25519 implementation using platform crypto backend
 
 with Crypto.Platform;
-with Interfaces.C;
+with Interfaces.C; use Interfaces.C;
 
 package body Crypto.X25519
   with SPARK_Mode => Off
 is
-   procedure Generate_Key_Pair (Key : out Key_Pair; Result : out Crypto.Status)
+   procedure Generate_Key_Pair (Key : out Key_Pair; Result : out Status)
    is
-      use Interfaces.C;
       Ret_Val : int;
    begin
       Ret_Val :=
@@ -17,16 +16,15 @@ is
            Secret_Key_Out => Key.Sec'Address);
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Generate_Key_Pair;
 
    procedure Scalar_Mult_Base
-     (Pub : out Public_Key; Sec : Secret_Key; Result : out Crypto.Status)
+     (Pub : out Public_Key; Sec : Secret_Key; Result : out Status)
    is
-      use Interfaces.C;
       Ret_Val : int;
    begin
       Ret_Val :=
@@ -34,9 +32,9 @@ is
           (Public_Key_Out => Pub'Address, Secret_Key_In => Sec'Address);
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Scalar_Mult_Base;
 
@@ -44,9 +42,8 @@ is
      (Shared       : out Shared_Secret;
       My_Secret    : Secret_Key;
       Their_Public : Public_Key;
-      Result       : out Crypto.Status)
+      Result       : out Status)
    is
-      use Interfaces.C;
       Ret_Val : int;
    begin
       Ret_Val :=
@@ -56,9 +53,9 @@ is
            Their_Public_Key_In => Their_Public'Address);
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Scalar_Mult;
 

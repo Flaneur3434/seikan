@@ -1,11 +1,10 @@
-with Interfaces;
-with Interfaces.C;
+with Interfaces; use Interfaces;
+with Interfaces.C; use Interfaces.C;
+with Utils; use Utils;
 
 package Crypto.Blake2
   with SPARK_Mode => On
 is
-   use Interfaces;
-   use Interfaces.C;
 
    --  BLAKE2s constants
    BLAKE2S_OUTBYTES : constant Positive := 32;   --  Digest size (256 bits)
@@ -26,7 +25,7 @@ is
    procedure Blake2s
      (Data   : Byte_Array;
       Digest : out Digest_Buffer;
-      Result : out Crypto.Status)
+      Result : out Status)
    with Global => null;
 
    --  Keyed hash (MAC)
@@ -34,7 +33,7 @@ is
      (Data   : Byte_Array;
       Key    : Key_Buffer;
       Digest : out Digest_Buffer;
-      Result : out Crypto.Status)
+      Result : out Status)
    with Global => null;
 
    ---------------------
@@ -45,7 +44,7 @@ is
    procedure Blake2s_Init
      (Outlen : Digest_Length;
       State  : aliased out Blake2s_State;
-      Result : out Crypto.Status)
+      Result : out Status)
    with Global => null;
 
    --  Initialize with a key
@@ -53,21 +52,21 @@ is
      (Key    : Key_Buffer;
       Outlen : Digest_Length;
       State  : aliased out Blake2s_State;
-      Result : out Crypto.Status)
+      Result : out Status)
    with Global => null;
 
    --  Update hash with more data
    procedure Blake2s_Update
      (Data   : Byte_Array;
       State  : aliased in out Blake2s_State;
-      Result : out Crypto.Status)
+      Result : out Status)
    with Global => null;
 
    --  Finalize and get the hash digest
    procedure Blake2s_Final
      (State  : aliased in out Blake2s_State;
       Digest : out Byte_Array;
-      Result : out Crypto.Status)
+      Result : out Status)
    with Global => null;
 
 private

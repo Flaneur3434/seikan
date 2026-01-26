@@ -8,7 +8,7 @@ is
    procedure Blake2s
      (Data   : Byte_Array;
       Digest : out Digest_Buffer;
-      Result : out Crypto.Status)
+      Result : out Status)
    is
       Ret_Val : int;
    begin
@@ -22,9 +22,9 @@ is
            Key_In_Size     => 0);
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Blake2s;
 
@@ -33,7 +33,7 @@ is
      (Data   : Byte_Array;
       Key    : Key_Buffer;
       Digest : out Digest_Buffer;
-      Result : out Crypto.Status)
+      Result : out Status)
    is
       Ret_Val : int;
    begin
@@ -47,16 +47,16 @@ is
            Key_In_Size     => size_t (Key'Length));
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Blake2s;
 
    procedure Blake2s_Init
      (Outlen : Digest_Length;
       State  : aliased out Blake2s_State;
-      Result : out Crypto.Status)
+      Result : out Status)
    is
       Ret_Val : int;
    begin
@@ -65,9 +65,9 @@ is
           (State => State'Unchecked_Access, Outlen => size_t (Outlen));
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Blake2s_Init;
 
@@ -75,7 +75,7 @@ is
      (Key    : Key_Buffer;
       Outlen : Digest_Length;
       State  : aliased out Blake2s_State;
-      Result : out Crypto.Status)
+      Result : out Status)
    is
       Ret_Val : int;
    begin
@@ -87,16 +87,16 @@ is
            Keylen => size_t (Key'Length));
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Blake2s_Init_Key;
 
    procedure Blake2s_Update
      (Data   : Byte_Array;
       State  : aliased in out Blake2s_State;
-      Result : out Crypto.Status)
+      Result : out Status)
    is
       Ret_Val : int;
    begin
@@ -107,16 +107,16 @@ is
            Len   => size_t (Data'Length));
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Blake2s_Update;
 
    procedure Blake2s_Final
      (State  : aliased in out Blake2s_State;
       Digest : out Byte_Array;
-      Result : out Crypto.Status)
+      Result : out Status)
    is
       Ret_Val : int;
    begin
@@ -127,9 +127,9 @@ is
            Outlen => size_t (Digest'Length));
 
       if Ret_Val = 0 then
-         Result := Crypto.Success;
+         Result := Success;
       else
-         Result := Crypto.Error_Failed;
+         Result := Error_Failed;
       end if;
    end Blake2s_Final;
 
