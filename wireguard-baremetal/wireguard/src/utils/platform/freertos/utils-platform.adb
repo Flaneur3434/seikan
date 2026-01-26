@@ -3,13 +3,11 @@
 --  Implements queue send/receive using ESP-IDF FreeRTOS xQueue API.
 --  Queue creation/deletion is handled by C code.
 
-with System;
-with Interfaces.C;
+with Interfaces.C; use Interfaces.C;
 
 package body Utils.Platform
   with SPARK_Mode => Off
 is
-   use Interfaces.C;
 
    ---------------------
    --  FreeRTOS Imports
