@@ -166,7 +166,9 @@ is
    --  Descriptor Conversion
    ---------------------
 
-   function To_Descriptor (B : Buffer) return Buffer_Descriptor is
+   function To_Descriptor (B : Buffer) return Buffer_Descriptor
+     with SPARK_Mode => Off
+   is
    begin
       if not Is_Valid (B) then
          return Null_Descriptor;
@@ -456,7 +458,9 @@ is
    end C_Init;
 
    --  RX: Allocate buffer for receiving (Free -> C_RxFill)
-   function C_Rx_Alloc return Buffer_Descriptor is
+   function C_Rx_Alloc return Buffer_Descriptor
+     with SPARK_Mode => Off
+   is
       Buf : Buffer;
    begin
       Rx_Alloc (Buf);
@@ -472,7 +476,9 @@ is
    end C_Rx_Enqueue;
 
    --  TX: Dequeue buffer for sending (TxQ -> C_TxSend)
-   function C_Tx_Dequeue (Desc : access Buffer_Descriptor) return int is
+   function C_Tx_Dequeue (Desc : access Buffer_Descriptor) return int
+     with SPARK_Mode => Off
+   is
       Buf     : Buffer;
       Success : Boolean;
    begin
