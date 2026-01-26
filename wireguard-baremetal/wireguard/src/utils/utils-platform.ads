@@ -12,13 +12,12 @@
 --  This is a PRIVATE package - only visible within Utils hierarchy.
 
 with System;
-with Interfaces.C;
 with Utils.Ring_Buffer;
 
 private package Utils.Platform
   with SPARK_Mode => Off
 is
-   use Interfaces.C;
+   
    use Utils.Ring_Buffer;
 
    --  Opaque queue handle (created by C code, passed to Ada)
