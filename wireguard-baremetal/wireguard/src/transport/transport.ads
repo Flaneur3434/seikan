@@ -13,7 +13,6 @@ with Utils;      use Utils;
 with Crypto.X25519;
 with Crypto.Blake2;
 with Crypto.ChaCha20Poly1305;
-with Crypto.TAI64N;
 
 package Transport
   with SPARK_Mode => On
@@ -187,24 +186,14 @@ is
 
    for Message_Transport_Header'Size use Transport_Header_Size * 8;
 
-   --  Full transport data message with variable-length encrypted payload.
-   --  The Enc_Packet span points to the encrypted data following the header.
+   --  For variable-length transport packets, work directly with buffers:
+   --    1. Overlay Message_Transport_Header at buffer start for fixed fields
+   --    2. Use Buffer(Transport_Header_Size .. Len-1) for encrypted payload
    --
-   --  Usage:
-   --    1. Overlay header on packet buffer to read fixed fields
-   --    2. Create Enc_Packet span from buffer offset 16 to end
-   --    3. Or use Parse_Transport_Data to construct from raw packet span
-   type Message_Transport_Data is record
-      Header     : Message_Transport_Header;
-      Enc_Packet : Byte_Span;  --  Variable-length encrypted payload
-   end record;
-
-   --  Parse a raw packet span into a transport data message.
-   --  Returns the header fields and a span pointing to the encrypted payload.
-   --  Precondition ensures packet is at least header size.
-   function Parse_Transport_Data
-     (Packet : Byte_Span) return Message_Transport_Data
-   with Pre => Length (Packet) >= Transport_Header_Size;
+   --  Example:
+   --    Header : Message_Transport_Header with Address => Buffer'Address;
+   --    Payload_Slice : Byte_Array renames
+   --      Buffer(Transport_Header_Size .. Total_Len - 1);
 
    ---------------------
    --  Message Kind Detection
