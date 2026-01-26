@@ -2,6 +2,8 @@
 --
 --  Secure memory operations for cryptographic data.
 
+with Utils; use Utils;
+
 package Crypto.Helper
   with SPARK_Mode => On
 is

@@ -1,11 +1,11 @@
 with Crypto.Platform;
-with Interfaces.C;
+with Interfaces.C; use Interfaces.C;
+with Utils;
 
 package body Crypto.Helper
   with SPARK_Mode => Off
 is
    procedure Memzero (Buffer : in out Byte_Array) is
-      use Interfaces.C;
    begin
       Crypto.Platform.Crypto_Memzero
         (Buffer_In   => Buffer'Address,
@@ -16,7 +16,6 @@ is
      (A : Byte_Array;
       B : Byte_Array) return Status
    is
-      use Interfaces.C;
       Ret_Val : int;
    begin
       Ret_Val := Crypto.Platform.Crypto_Cmp

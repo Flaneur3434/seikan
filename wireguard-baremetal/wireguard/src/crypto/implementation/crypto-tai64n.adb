@@ -5,6 +5,7 @@
 --  Initial value is random to ensure fresh start after each boot.
 
 with Crypto.Random;
+with Utils; use Utils;
 
 package body Crypto.TAI64N
   with SPARK_Mode => Off  --  Global counter state

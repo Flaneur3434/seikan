@@ -4,6 +4,7 @@
 --  This is the public interface; implementations are platform-specific.
 
 with Interfaces;
+with Utils; use Utils;
 
 package Crypto.X25519
   with SPARK_Mode => On
@@ -25,13 +26,13 @@ is
    end record;
 
    --  Generate a new random keypair
-   procedure Generate_Key_Pair (Key : out Key_Pair; Result : out Crypto.Status)
+   procedure Generate_Key_Pair (Key : out Key_Pair; Result : out Status)
    with Global => null;
 
    --  Compute public key from existing secret key
    --  Pub = Sec × BasePoint
    procedure Scalar_Mult_Base
-     (Pub : out Public_Key; Sec : Secret_Key; Result : out Crypto.Status)
+     (Pub : out Public_Key; Sec : Secret_Key; Result : out Status)
    with Global => null;
 
    --  Compute shared secret via Diffie-Hellman
@@ -40,7 +41,7 @@ is
      (Shared       : out Shared_Secret;
       My_Secret    : Secret_Key;
       Their_Public : Public_Key;
-      Result       : out Crypto.Status)
+      Result       : out Status)
    with Global => null;
 
 end Crypto.X25519;
