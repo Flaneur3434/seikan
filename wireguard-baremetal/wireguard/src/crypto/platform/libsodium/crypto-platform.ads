@@ -116,7 +116,7 @@ is
    procedure Crypto_Memzero (Buffer_In : System.Address; Buffer_Size : size_t)
    with Import, Convention => C, External_Name => "sodium_memzero";
 
-   -- sodium_memcmp() is not a lexicographic comparator and is not a generic 
+   -- sodium_memcmp() is not a lexicographic comparator and is not a generic
    -- replacement for memcmp().
    function Crypto_Cmp
      (A_In : System.Address; B_in : System.Address; Length : size_t) return int
