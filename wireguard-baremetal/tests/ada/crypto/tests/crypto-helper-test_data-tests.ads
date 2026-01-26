@@ -10,10 +10,10 @@ package Crypto.Helper.Test_Data.Tests is
    with null record;
 
    procedure Test_Memzero_001f23 (Gnattest_T : in out Test);
-   --  crypto-helper.ads:10:4:Memzero
+   --  crypto-helper.ads:12:4:Memzero
 
-   procedure Test_Cmp_1e707b (Gnattest_T : in out Test);
-   --  crypto-helper.ads:15:4:Cmp
+   procedure Test_Cmp_58311a (Gnattest_T : in out Test);
+   --  crypto-helper.ads:17:4:Cmp
 
 end Crypto.Helper.Test_Data.Tests;
 --  end read only

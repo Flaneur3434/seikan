@@ -55,10 +55,10 @@ package body Crypto.Blake2.Test_Data.Tests is
 
 --  begin read only
    procedure Test_1_Blake2s (Gnattest_T : in out Test);
-   procedure Test_Blake2s_d4c74c (Gnattest_T : in out Test) renames Test_1_Blake2s;
---  id:2.2/d4c74c556ec3255f/Blake2s/1/0/
+   procedure Test_Blake2s_2ee24c (Gnattest_T : in out Test) renames Test_1_Blake2s;
+--  id:2.2/2ee24cd6a6986547/Blake2s/1/0/
    procedure Test_1_Blake2s (Gnattest_T : in out Test) is
-   --  crypto-blake2.ads:26:4:Blake2s
+   --  crypto-blake2.ads:25:4:Blake2s
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -159,68 +159,19 @@ package body Crypto.Blake2.Test_Data.Tests is
 
 --  begin read only
    procedure Test_2_Blake2s (Gnattest_T : in out Test);
-   procedure Test_Blake2s_c422be (Gnattest_T : in out Test) renames Test_2_Blake2s;
---  id:2.2/c422bee11d942caf/Blake2s/0/0/
+   procedure Test_Blake2s_0dd8cc (Gnattest_T : in out Test) renames Test_2_Blake2s;
+--  id:2.2/0dd8cc188e5cf0d2/Blake2s/0/0/
    procedure Test_2_Blake2s (Gnattest_T : in out Test) is
-   --  crypto-blake2.ads:33:4:Blake2s
+   --  crypto-blake2.ads:32:4:Blake2s
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      --  Keyed BLAKE2s test vector from RFC 7693 Appendix E
-      --  Key: 32 bytes of 00 01 02 ... 1f
-      --  Input: "abc" (3 bytes)
-      Test_Key : Key_Buffer;
-      Hash_Out : Digest_Buffer;
-      Result   : Status;
-
    begin
-      --  Initialize test key: 00 01 02 ... 1f
-      for I in Test_Key'Range loop
-         Test_Key (I) := Interfaces.Unsigned_8 (I);
-      end loop;
 
-      --  Test keyed hash of "abc"
-      Blake2s
-        (Digest => Hash_Out,
-         Data   => Test_Input_Abc,
-         Key    => Test_Key,
-         Result => Result);
-
-      Assert (Result = Success, "Keyed Blake2s should succeed");
-
-      --  Verify keyed hash is different from unkeyed hash
-      Assert (Byte_Array (Hash_Out) /= Expected_Hash_Abc,
-              "Keyed hash should differ from unkeyed hash");
-
-      --  Verify determinism: same key + data = same hash
-      declare
-         Hash_Out_2 : Digest_Buffer;
-      begin
-         Blake2s
-           (Digest => Hash_Out_2,
-            Data   => Test_Input_Abc,
-            Key    => Test_Key,
-            Result => Result);
-         Assert (Result = Success, "Second keyed hash should succeed");
-         Assert (Byte_Array (Hash_Out) = Byte_Array (Hash_Out_2),
-                 "Same key + data should produce same hash");
-      end;
-
-      --  Verify different key produces different hash
-      declare
-         Different_Key : Key_Buffer := (others => 16#AA#);
-         Hash_Out_3    : Digest_Buffer;
-      begin
-         Blake2s
-           (Digest => Hash_Out_3,
-            Data   => Test_Input_Abc,
-            Key    => Different_Key,
-            Result => Result);
-         Assert (Result = Success, "Different key hash should succeed");
-         Assert (Byte_Array (Hash_Out) /= Byte_Array (Hash_Out_3),
-                 "Different key should produce different hash");
-      end;
+      AUnit.Assertions.Assert
+        (Gnattest_Generated.Default_Assert_Value,
+         "Test not implemented.");
 
 --  begin read only
    end Test_2_Blake2s;
@@ -229,10 +180,10 @@ package body Crypto.Blake2.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Blake2s_Init (Gnattest_T : in out Test);
-   procedure Test_Blake2s_Init_02f8fd (Gnattest_T : in out Test) renames Test_Blake2s_Init;
---  id:2.2/02f8fd6e5952b1aa/Blake2s_Init/1/0/
+   procedure Test_Blake2s_Init_4089d3 (Gnattest_T : in out Test) renames Test_Blake2s_Init;
+--  id:2.2/4089d300103e3cfa/Blake2s_Init/1/0/
    procedure Test_Blake2s_Init (Gnattest_T : in out Test) is
-   --  crypto-blake2.ads:45:4:Blake2s_Init
+   --  crypto-blake2.ads:44:4:Blake2s_Init
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -266,10 +217,10 @@ package body Crypto.Blake2.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Blake2s_Init_Key (Gnattest_T : in out Test);
-   procedure Test_Blake2s_Init_Key_e234c3 (Gnattest_T : in out Test) renames Test_Blake2s_Init_Key;
---  id:2.2/e234c365006256d2/Blake2s_Init_Key/1/0/
+   procedure Test_Blake2s_Init_Key_1ba4cb (Gnattest_T : in out Test) renames Test_Blake2s_Init_Key;
+--  id:2.2/1ba4cb0f5aa2b3d0/Blake2s_Init_Key/1/0/
    procedure Test_Blake2s_Init_Key (Gnattest_T : in out Test) is
-   --  crypto-blake2.ads:52:4:Blake2s_Init_Key
+   --  crypto-blake2.ads:51:4:Blake2s_Init_Key
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -305,10 +256,10 @@ package body Crypto.Blake2.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Blake2s_Update (Gnattest_T : in out Test);
-   procedure Test_Blake2s_Update_5f867a (Gnattest_T : in out Test) renames Test_Blake2s_Update;
---  id:2.2/5f867a34514027a9/Blake2s_Update/1/0/
+   procedure Test_Blake2s_Update_d2a0fc (Gnattest_T : in out Test) renames Test_Blake2s_Update;
+--  id:2.2/d2a0fc6eaafc89e0/Blake2s_Update/1/0/
    procedure Test_Blake2s_Update (Gnattest_T : in out Test) is
-   --  crypto-blake2.ads:61:4:Blake2s_Update
+   --  crypto-blake2.ads:59:4:Blake2s_Update
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -354,10 +305,10 @@ package body Crypto.Blake2.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Blake2s_Final (Gnattest_T : in out Test);
-   procedure Test_Blake2s_Final_df4a51 (Gnattest_T : in out Test) renames Test_Blake2s_Final;
---  id:2.2/df4a51293159657d/Blake2s_Final/1/0/
+   procedure Test_Blake2s_Final_5c5f63 (Gnattest_T : in out Test) renames Test_Blake2s_Final;
+--  id:2.2/5c5f638c72ccc710/Blake2s_Final/1/0/
    procedure Test_Blake2s_Final (Gnattest_T : in out Test) is
-   --  crypto-blake2.ads:68:4:Blake2s_Final
+   --  crypto-blake2.ads:66:4:Blake2s_Final
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -455,6 +406,75 @@ package body Crypto.Blake2.Test_Data.Tests is
 --  
 --           Assert (Result2 = Success, "Second unkeyed hash should succeed");
 --           Assert (Hash_Out = Hash_Out2, "Same input should produce same hash");
+--        end;
+--  
+--  begin read only
+   --  end Test_Blake2s;
+--  end read only
+
+
+--  begin read only
+   --  procedure Test_Blake2s (Gnattest_T : in out Test);
+   --  procedure Test_Blake2s_c422be (Gnattest_T : in out Test) renames Test_Blake2s;
+--  id:2.2/c422bee11d942caf/Blake2s/0/1/
+   --  procedure Test_Blake2s (Gnattest_T : in out Test) is
+--  end read only
+--  
+--        pragma Unreferenced (Gnattest_T);
+--  
+--        --  Keyed BLAKE2s test vector from RFC 7693 Appendix E
+--        --  Key: 32 bytes of 00 01 02 ... 1f
+--        --  Input: "abc" (3 bytes)
+--        Test_Key : Key_Buffer;
+--        Hash_Out : Digest_Buffer;
+--        Result   : Status;
+--  
+--     begin
+--        --  Initialize test key: 00 01 02 ... 1f
+--        for I in Test_Key'Range loop
+--           Test_Key (I) := Interfaces.Unsigned_8 (I);
+--        end loop;
+--  
+--        --  Test keyed hash of "abc"
+--        Blake2s
+--          (Digest => Hash_Out,
+--           Data   => Test_Input_Abc,
+--           Key    => Test_Key,
+--           Result => Result);
+--  
+--        Assert (Result = Success, "Keyed Blake2s should succeed");
+--  
+--        --  Verify keyed hash is different from unkeyed hash
+--        Assert (Byte_Array (Hash_Out) /= Expected_Hash_Abc,
+--                "Keyed hash should differ from unkeyed hash");
+--  
+--        --  Verify determinism: same key + data = same hash
+--        declare
+--           Hash_Out_2 : Digest_Buffer;
+--        begin
+--           Blake2s
+--             (Digest => Hash_Out_2,
+--              Data   => Test_Input_Abc,
+--              Key    => Test_Key,
+--              Result => Result);
+--           Assert (Result = Success, "Second keyed hash should succeed");
+--           Assert (Byte_Array (Hash_Out) = Byte_Array (Hash_Out_2),
+--                   "Same key + data should produce same hash");
+--        end;
+--  
+--        --  Verify different key produces different hash
+--        declare
+--           Different_Key : Key_Buffer := (others => 16#AA#);
+--           Hash_Out_3    : Digest_Buffer;
+--        begin
+--           Blake2s
+--             (Digest => Hash_Out_3,
+--              Data   => Test_Input_Abc,
+--              Key    => Different_Key,
+--              Result => Result);
+--           Assert (Result = Success, "Different key hash should succeed");
+--           Assert (Byte_Array (Hash_Out) /= Byte_Array (Hash_Out_3),
+--                   "Different key should produce different hash");
 --        end;
 --  
 --  begin read only

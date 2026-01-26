@@ -9,14 +9,14 @@ package Crypto.X25519.Test_Data.Tests is
    type Test is new GNATtest_Generated.GNATtest_Standard.Crypto.X25519.Test_Data.Test
    with null record;
 
-   procedure Test_Generate_Key_Pair_83252e (Gnattest_T : in out Test);
-   --  crypto-x25519.ads:28:4:Generate_Key_Pair
+   procedure Test_Generate_Key_Pair_75bb7e (Gnattest_T : in out Test);
+   --  crypto-x25519.ads:29:4:Generate_Key_Pair
 
-   procedure Test_Scalar_Mult_Base_c4d75b (Gnattest_T : in out Test);
-   --  crypto-x25519.ads:33:4:Scalar_Mult_Base
+   procedure Test_Scalar_Mult_Base_899079 (Gnattest_T : in out Test);
+   --  crypto-x25519.ads:34:4:Scalar_Mult_Base
 
-   procedure Test_Scalar_Mult_d94fd3 (Gnattest_T : in out Test);
-   --  crypto-x25519.ads:39:4:Scalar_Mult
+   procedure Test_Scalar_Mult_864b3a (Gnattest_T : in out Test);
+   --  crypto-x25519.ads:40:4:Scalar_Mult
 
 end Crypto.X25519.Test_Data.Tests;
 --  end read only

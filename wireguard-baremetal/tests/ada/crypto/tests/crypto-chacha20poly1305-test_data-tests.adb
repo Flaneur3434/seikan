@@ -35,10 +35,10 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Encrypt (Gnattest_T : in out Test);
-   procedure Test_Encrypt_11929c (Gnattest_T : in out Test) renames Test_Encrypt;
---  id:2.2/11929c81a94cfb4a/Encrypt/1/0/
+   procedure Test_Encrypt_fb0bd2 (Gnattest_T : in out Test) renames Test_Encrypt;
+--  id:2.2/fb0bd20419bd6af9/Encrypt/1/0/
    procedure Test_Encrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:40:4:Encrypt
+   --  crypto-chacha20poly1305.ads:50:4:Encrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -110,10 +110,10 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Decrypt (Gnattest_T : in out Test);
-   procedure Test_Decrypt_8e02e0 (Gnattest_T : in out Test) renames Test_Decrypt;
---  id:2.2/8e02e0521e73a5f7/Decrypt/1/0/
+   procedure Test_Decrypt_3205b1 (Gnattest_T : in out Test) renames Test_Decrypt;
+--  id:2.2/3205b17263c7113b/Decrypt/1/0/
    procedure Test_Decrypt (Gnattest_T : in out Test) is
-   --  crypto-chacha20poly1305.ads:58:4:Decrypt
+   --  crypto-chacha20poly1305.ads:65:4:Decrypt
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -187,6 +187,69 @@ package body Crypto.ChaCha20Poly1305.Test_Data.Tests is
 
 --  begin read only
    end Test_Decrypt;
+--  end read only
+
+
+--  begin read only
+   procedure Test_Encrypt_In_Place (Gnattest_T : in out Test);
+   procedure Test_Encrypt_In_Place_4edb45 (Gnattest_T : in out Test) renames Test_Encrypt_In_Place;
+--  id:2.2/4edb45490cb3f891/Encrypt_In_Place/1/0/
+   procedure Test_Encrypt_In_Place (Gnattest_T : in out Test) is
+   --  crypto-chacha20poly1305.ads:101:4:Encrypt_In_Place
+--  end read only
+
+      pragma Unreferenced (Gnattest_T);
+
+   begin
+
+      AUnit.Assertions.Assert
+        (Gnattest_Generated.Default_Assert_Value,
+         "Test not implemented.");
+
+--  begin read only
+   end Test_Encrypt_In_Place;
+--  end read only
+
+
+--  begin read only
+   procedure Test_Decrypt_In_Place (Gnattest_T : in out Test);
+   procedure Test_Decrypt_In_Place_84b536 (Gnattest_T : in out Test) renames Test_Decrypt_In_Place;
+--  id:2.2/84b53633c8e28f8b/Decrypt_In_Place/1/0/
+   procedure Test_Decrypt_In_Place (Gnattest_T : in out Test) is
+   --  crypto-chacha20poly1305.ads:128:4:Decrypt_In_Place
+--  end read only
+
+      pragma Unreferenced (Gnattest_T);
+
+   begin
+
+      AUnit.Assertions.Assert
+        (Gnattest_Generated.Default_Assert_Value,
+         "Test not implemented.");
+
+--  begin read only
+   end Test_Decrypt_In_Place;
+--  end read only
+
+
+--  begin read only
+   procedure Test_Build_Nonce (Gnattest_T : in out Test);
+   procedure Test_Build_Nonce_913f8b (Gnattest_T : in out Test) renames Test_Build_Nonce;
+--  id:2.2/913f8b836797e1ae/Build_Nonce/1/0/
+   procedure Test_Build_Nonce (Gnattest_T : in out Test) is
+   --  crypto-chacha20poly1305.ads:145:4:Build_Nonce
+--  end read only
+
+      pragma Unreferenced (Gnattest_T);
+
+   begin
+
+      AUnit.Assertions.Assert
+        (Gnattest_Generated.Default_Assert_Value,
+         "Test not implemented.");
+
+--  begin read only
+   end Test_Build_Nonce;
 --  end read only
 
 --  begin read only

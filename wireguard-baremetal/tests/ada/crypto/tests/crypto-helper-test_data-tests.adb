@@ -38,7 +38,7 @@ package body Crypto.Helper.Test_Data.Tests is
    procedure Test_Memzero_001f23 (Gnattest_T : in out Test) renames Test_Memzero;
 --  id:2.2/001f23d595ac0183/Memzero/1/0/
    procedure Test_Memzero (Gnattest_T : in out Test) is
-   --  crypto-helper.ads:10:4:Memzero
+   --  crypto-helper.ads:12:4:Memzero
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
@@ -82,10 +82,10 @@ package body Crypto.Helper.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Cmp (Gnattest_T : in out Test);
-   procedure Test_Cmp_1e707b (Gnattest_T : in out Test) renames Test_Cmp;
---  id:2.2/1e707be31f845997/Cmp/1/0/
+   procedure Test_Cmp_58311a (Gnattest_T : in out Test) renames Test_Cmp;
+--  id:2.2/58311a4ec2c45b28/Cmp/1/0/
    procedure Test_Cmp (Gnattest_T : in out Test) is
-   --  crypto-helper.ads:15:4:Cmp
+   --  crypto-helper.ads:17:4:Cmp
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
