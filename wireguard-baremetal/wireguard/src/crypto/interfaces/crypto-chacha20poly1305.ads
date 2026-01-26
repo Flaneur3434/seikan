@@ -21,6 +21,7 @@
 
 with Interfaces;
 with Utils; use Utils;
+with Utils.Ring_Buffer;
 
 package Crypto.ChaCha20Poly1305
   with SPARK_Mode => On
@@ -34,6 +35,9 @@ is
 
    --  WireGuard Transport Header size
    Header_Bytes : constant Positive := 16;
+
+   --  Maximum buffer size from ring buffer pool
+   Max_Buffer_Size : constant := Utils.Ring_Buffer.Buffer_Capacity;
 
    --  ChaCha20Poly1305 Types
    subtype Nonce_Buffer is Byte_Array (0 .. Nonce_Bytes - 1);
@@ -54,7 +58,9 @@ is
    with
      Global => null,
      Pre    =>
-       Ciphertext'Length >= Tag_Bytes
+       Plaintext'Length <= Max_Buffer_Size
+       and then Ciphertext'Length <= Max_Buffer_Size
+       and then Ciphertext'Length >= Tag_Bytes
        and then Ciphertext'Length - Tag_Bytes >= Plaintext'Length;
 
    --  Decrypts ciphertext + tag, writes plaintext to output buffer
@@ -68,7 +74,9 @@ is
    with
      Global => null,
      Pre    =>
-       Ciphertext'Length >= Tag_Bytes
+       Plaintext'Length <= Max_Buffer_Size
+       and then Ciphertext'Length <= Max_Buffer_Size
+       and then Ciphertext'Length >= Tag_Bytes
        and then Plaintext'Length >= Ciphertext'Length - Tag_Bytes;
 
    ---------------------
@@ -102,7 +110,8 @@ is
    with
      Global => null,
      Pre    =>
-       Buffer'Length >= Header_Bytes + Tag_Bytes
+       Buffer'Length <= Max_Buffer_Size
+       and then Buffer'Length >= Header_Bytes + Tag_Bytes
        and then Plaintext_Len <= Buffer'Length - Header_Bytes - Tag_Bytes;
 
    --  Decrypt ciphertext in-place within a mutable buffer.
@@ -129,7 +138,9 @@ is
    with
      Global => null,
      Pre    =>
-       Ciphertext_Len >= Tag_Bytes
+       Buffer'Length <= Max_Buffer_Size
+       and then Ciphertext_Len <= Max_Buffer_Size
+       and then Ciphertext_Len >= Tag_Bytes
        and then Buffer'Length >= Header_Bytes + Ciphertext_Len;
 
    ---------------------
