@@ -38,9 +38,10 @@ with System;
 with Interfaces.C; use Interfaces.C;
 
 package Utils.Ring_Buffer
-  with SPARK_Mode,
-       Abstract_State => (Buffer_Pool_State, Ghost_Ownership),
-       Initializes => (Buffer_Pool_State, Ghost_Ownership)
+  with
+    SPARK_Mode,
+    Abstract_State => (Buffer_Pool_State, Ghost_Ownership),
+    Initializes    => (Buffer_Pool_State, Ghost_Ownership)
 is
    use type System.Address;
 
@@ -48,8 +49,8 @@ is
    --  Configuration
    ---------------------
 
-   Buffer_Capacity : constant := 1560;  --  MTU (1500) + headers + tag
-   Pool_Size       : constant := 16;    --  Number of buffers
+   Buffer_Capacity  : constant := 1560;  --  MTU (1500) + headers + tag
+   Pool_Size        : constant := 16;    --  Number of buffers
    Buffer_Alignment : constant := 16;   --  16-byte alignment
 
    subtype Buffer_Index is Natural range 0 .. Pool_Size - 1;
@@ -59,12 +60,24 @@ is
    type Buffer_Id is new Natural range 0 .. Pool_Size - 1;
 
    ---------------------
+   --  Buffer Data Type (constrained array for type safety)
+   ---------------------
+
+   --  Fixed-size buffer data array
+   subtype Buffer_Data is Byte_Array (0 .. Buffer_Capacity - 1);
+
+   --  Typed pointer to buffer data (thin pointer, C-compatible)
+   --  Using access gives us type safety while remaining a single word
+   type Buffer_Data_Ptr is access all Buffer_Data
+     with Convention => C;
+
+   ---------------------
    --  Ownership State Machine (Ghost Types - proof only, no runtime cost)
    ---------------------
 
    --  All possible ownership states matching the zero-copy protocol
-   type Owner_State is (
-      Free,           --  In pool, available for allocation
+   type Owner_State is
+     (Free,           --  In pool, available for allocation
       C_RxFill,       --  C owns: receiving into buffer via recvfrom
       RxQ,            --  Queued: waiting for Ada to process
       Ada_RxProcess,  --  Ada owns: processing received packet
@@ -72,319 +85,439 @@ is
       Ada_TxEncrypt,  --  Ada owns: performing in-place encryption
       TxQ,            --  Queued: waiting for C to send
       C_TxSend        --  C owns: sending via sendto (may EAGAIN)
-   ) with Ghost;
+     )
+   with Ghost;
 
-   type Ownership_Array is array (Buffer_Index) of Owner_State
-     with Ghost;
+   type Ownership_Array is array (Buffer_Index) of Owner_State with Ghost;
 
    ---------------------
    --  Ghost State Queries
    ---------------------
 
    function Get_Owner (Index : Buffer_Index) return Owner_State
-     with Ghost,
-          Global => (Input => Ghost_Ownership);
+   with Ghost, Global => (Input => Ghost_Ownership);
 
    function Count_In_State (State : Owner_State) return Buffer_Count
-     with Ghost,
-          Global => (Input => Ghost_Ownership);
+   with Ghost, Global => (Input => Ghost_Ownership);
 
    --  Conservation invariant: all buffers are always accounted for
    function Ownership_Conserved return Boolean
-     with Ghost,
-          Global => (Input => Ghost_Ownership);
+   with Ghost, Global => (Input => Ghost_Ownership);
 
    ---------------------
    --  State Transition Predicates (Ghost)
    ---------------------
 
    --  Valid RX path transitions
-   function Is_Valid_Rx_Alloc_Transition (From : Owner_State) return Boolean is
-     (From = Free)
-     with Ghost;
+   function Is_Valid_Rx_Alloc_Transition (From : Owner_State) return Boolean
+   is (From = Free)
+   with Ghost;
 
-   function Is_Valid_Rx_Enqueue_Transition (From : Owner_State) return Boolean is
-     (From = C_RxFill)
-     with Ghost;
+   function Valid_Rx_Enqueue (From : Owner_State) return Boolean
+   is (From = C_RxFill)
+   with Ghost;
 
-   function Is_Valid_Rx_Dequeue_Transition (From : Owner_State) return Boolean is
-     (From = RxQ)
-     with Ghost;
+   function Valid_Rx_Dequeue (From : Owner_State) return Boolean
+   is (From = RxQ)
+   with Ghost;
 
-   function Is_Valid_Rx_Complete_Transition (From : Owner_State) return Boolean is
-     (From = Ada_RxProcess)
-     with Ghost;
+   function Valid_Rx_Complete (From : Owner_State) return Boolean
+   is (From = Ada_RxProcess)
+   with Ghost;
 
    --  Valid TX path transitions
-   function Is_Valid_Tx_Alloc_Transition (From : Owner_State) return Boolean is
-     (From = Free)
-     with Ghost;
+   function Is_Valid_Tx_Alloc_Transition (From : Owner_State) return Boolean
+   is (From = Free)
+   with Ghost;
 
-   function Is_Valid_Tx_Ready_Transition (From : Owner_State) return Boolean is
-     (From = Ada_TxBuild)
-     with Ghost;
+   function Valid_Tx_Ready (From : Owner_State) return Boolean
+   is (From = Ada_TxBuild)
+   with Ghost;
 
-   function Is_Valid_Tx_Enqueue_Transition (From : Owner_State) return Boolean is
-     (From = Ada_TxEncrypt)
-     with Ghost;
+   function Valid_Tx_Enqueue (From : Owner_State) return Boolean
+   is (From = Ada_TxEncrypt)
+   with Ghost;
 
-   function Is_Valid_Tx_Dequeue_Transition (From : Owner_State) return Boolean is
-     (From = TxQ)
-     with Ghost;
+   function Valid_Tx_Dequeue (From : Owner_State) return Boolean
+   is (From = TxQ)
+   with Ghost;
 
-   function Is_Valid_Tx_Complete_Transition (From : Owner_State) return Boolean is
-     (From = C_TxSend)
-     with Ghost;
+   function Valid_Tx_Complete (From : Owner_State) return Boolean
+   is (From = C_TxSend)
+   with Ghost;
 
    ---------------------
-   --  Buffer Address Operations
+   --  Buffer Address Operations (internal, for validation)
    ---------------------
 
+   function Is_Valid_Buffer (Ptr : Buffer_Data_Ptr) return Boolean
+   with Global => (Input => Buffer_Pool_State);
+
+   function Ptr_To_Index (Ptr : Buffer_Data_Ptr) return Buffer_Index
+   with Global => (Input => Buffer_Pool_State), Pre => Is_Valid_Buffer (Ptr);
+
+   function Index_To_Ptr (Index : Buffer_Index) return Buffer_Data_Ptr
+   with
+     Global => (Input => Buffer_Pool_State),
+     Post   => Is_Valid_Buffer (Index_To_Ptr'Result);
+
+   --  Legacy address-based operations (for C interface compatibility)
    function Is_Valid_Buffer (Ptr : System.Address) return Boolean
-     with Global => (Input => Buffer_Pool_State);
+   with Global => (Input => Buffer_Pool_State);
 
    function Address_To_Index (Ptr : System.Address) return Buffer_Index
-     with Global => (Input => Buffer_Pool_State),
-          Pre => Is_Valid_Buffer (Ptr);
+   with Global => (Input => Buffer_Pool_State), Pre => Is_Valid_Buffer (Ptr);
 
    function Index_To_Address (Index : Buffer_Index) return System.Address
-     with Global => (Input => Buffer_Pool_State),
-          Post => Is_Valid_Buffer (Index_To_Address'Result);
+   with
+     Global => (Input => Buffer_Pool_State),
+     Post   => Is_Valid_Buffer (Index_To_Address'Result);
 
-   function Get_Buffer_Id (Index : Buffer_Index) return Buffer_Id is
-     (Buffer_Id (Index))
-     with Ghost;
+   function Get_Buffer_Id (Index : Buffer_Index) return Buffer_Id
+   is (Buffer_Id (Index))
+   with Ghost;
 
    ---------------------
-   --  Buffer Descriptor (C-compatible, for passing to queues)
+   --  Buffer Handle (Ada-friendly, passed by reference for large records)
+   ---------------------
+
+   --  Buffer handle for Ada code - uses typed pointer instead of raw address
+   --  Ada automatically passes records this size by reference
+   type Buffer is record
+      Data : Buffer_Data_Ptr;  --  Typed pointer to buffer data (thin pointer)
+      Len  : Natural;          --  Actual data length in buffer
+      Id   : Buffer_Index;     --  Buffer ID for ownership tracking
+   end record;
+
+   Null_Buffer : constant Buffer := (Data => null, Len => 0, Id => 0);
+
+   --  Check if buffer handle is valid (non-null)
+   function Is_Valid (B : Buffer) return Boolean is (B.Data /= null)
+     with Inline;
+
+   --  Get the capacity of a buffer (always Buffer_Capacity for valid buffers)
+   function Capacity (B : Buffer) return Natural is
+     (if B.Data /= null then Buffer_Capacity else 0)
+     with Inline;
+
+   ---------------------
+   --  Buffer Descriptor (C-compatible, for C interface only)
    ---------------------
 
    type Buffer_Descriptor is record
-      Ptr : System.Address;  --  Pointer to buffer data
+      Ptr : System.Address;  --  Raw pointer for C code
       Len : size_t;          --  Actual data length in buffer
       Cap : size_t;          --  Buffer capacity
       Id  : size_t;          --  Buffer ID for ghost modeling
    end record
-     with Convention => C;
+   with Convention => C;
 
    Null_Descriptor : constant Buffer_Descriptor :=
      (Ptr => System.Null_Address, Len => 0, Cap => 0, Id => 0);
+
+   --  Convert between Ada Buffer and C Buffer_Descriptor
+   function To_Descriptor (B : Buffer) return Buffer_Descriptor
+     with Inline,
+          Post => (if Is_Valid (B)
+                   then To_Descriptor'Result.Ptr /= System.Null_Address
+                   else To_Descriptor'Result = Null_Descriptor);
+
+   function From_Descriptor (D : Buffer_Descriptor) return Buffer
+     with Inline;
 
    ---------------------
    --  Pool Initialization
    ---------------------
 
    procedure Initialize
-     with Global => (Output => (Buffer_Pool_State, Ghost_Ownership)),
-          Post => (for all I in Buffer_Index => Get_Owner (I) = Free)
-                  and Count_In_State (Free) = Pool_Size
-                  and Ownership_Conserved;
+   with
+     Global => (Output => (Buffer_Pool_State, Ghost_Ownership)),
+     Post   =>
+       (for all I in Buffer_Index => Get_Owner (I) = Free)
+       and then Count_In_State (Free) = Pool_Size
+       and then Ownership_Conserved;
 
    ---------------------
-   --  RX Path Operations
+   --  RX Path Operations (Ada-friendly using Buffer type)
    ---------------------
 
-   --  Allocate a buffer for RX (C calls this before recvfrom)
+   --  Allocate a buffer for RX (Ada calls this)
    --  Transition: Free -> C_RxFill
-   procedure Rx_Alloc (Desc : out Buffer_Descriptor)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved,
-          Post => Ownership_Conserved
-                  and (if Desc.Ptr = System.Null_Address
-                       then Count_In_State (Free) = 0
-                       else Is_Valid_Buffer (Desc.Ptr)
-                            and Get_Owner (Address_To_Index (Desc.Ptr)) = C_RxFill
-                            and Desc.Cap = size_t (Buffer_Capacity)
-                            and Desc.Len = 0);
+   procedure Rx_Alloc (Buf : out Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    => Ownership_Conserved,
+     Post   =>
+       Ownership_Conserved
+       and then
+         (if not Is_Valid (Buf)
+          then Count_In_State (Free) = 0
+          else
+            Is_Valid_Buffer (Buf.Data)
+            and then Get_Owner (Ptr_To_Index (Buf.Data)) = C_RxFill
+            and then Buf.Len = 0);
 
-   --  Enqueue filled RX buffer (C calls after recvfrom success)
+   --  Enqueue filled RX buffer (after receiving data)
    --  Transition: C_RxFill -> RxQ
-   procedure Rx_Enqueue (Desc : Buffer_Descriptor)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved
-                  and then Desc.Ptr /= System.Null_Address
-                  and then Is_Valid_Buffer (Desc.Ptr)
-                  and then Get_Owner (Address_To_Index (Desc.Ptr)) = C_RxFill,
-          Post => Ownership_Conserved
-                  and then Get_Owner (Address_To_Index (Desc.Ptr)) = RxQ;
+   procedure Rx_Enqueue (Buf : Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    =>
+       Ownership_Conserved
+       and then Is_Valid (Buf)
+       and then Is_Valid_Buffer (Buf.Data)
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = C_RxFill,
+     Post   =>
+       Ownership_Conserved
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = RxQ;
 
    --  Dequeue RX buffer for processing (Ada calls this)
    --  Transition: RxQ -> Ada_RxProcess
-   procedure Rx_Dequeue (Desc : out Buffer_Descriptor; Success : out Boolean)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved,
-          Post => Ownership_Conserved
-                  and (if not Success
-                       then Desc = Null_Descriptor
-                       else Is_Valid_Buffer (Desc.Ptr)
-                            and Get_Owner (Address_To_Index (Desc.Ptr))
-                                = Ada_RxProcess);
+   procedure Rx_Dequeue (Buf : out Buffer; Success : out Boolean)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    => Ownership_Conserved,
+     Post   =>
+       Ownership_Conserved
+       and then
+         (if not Success
+          then not Is_Valid (Buf)
+          else
+            Is_Valid_Buffer (Buf.Data)
+            and then Get_Owner (Ptr_To_Index (Buf.Data)) = Ada_RxProcess);
 
    --  Complete RX processing, return buffer to pool (Ada calls this)
    --  Transition: Ada_RxProcess -> Free
-   procedure Rx_Complete (Ptr : System.Address)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved
-                  and then Ptr /= System.Null_Address
-                  and then Is_Valid_Buffer (Ptr)
-                  and then Get_Owner (Address_To_Index (Ptr)) = Ada_RxProcess,
-          Post => Ownership_Conserved
-                  and then Get_Owner (Address_To_Index (Ptr)) = Free;
+   procedure Rx_Complete (Buf : in out Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    =>
+       Ownership_Conserved
+       and then Is_Valid (Buf)
+       and then Is_Valid_Buffer (Buf.Data)
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = Ada_RxProcess,
+     Post   =>
+       Ownership_Conserved
+       and then Get_Owner (Buf.Id) = Free
+       and then not Is_Valid (Buf);
 
    ---------------------
-   --  TX Path Operations
+   --  TX Path Operations (Ada-friendly using Buffer type)
    ---------------------
 
    --  Allocate a buffer for TX (Ada calls this)
    --  Transition: Free -> Ada_TxBuild
-   procedure Tx_Alloc (Desc : out Buffer_Descriptor)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved,
-          Post => Ownership_Conserved
-                  and (if Desc.Ptr = System.Null_Address
-                       then Count_In_State (Free) = 0
-                       else Is_Valid_Buffer (Desc.Ptr)
-                            and Get_Owner (Address_To_Index (Desc.Ptr)) = Ada_TxBuild
-                            and Desc.Cap = size_t (Buffer_Capacity)
-                            and Desc.Len = 0);
+   procedure Tx_Alloc (Buf : out Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    => Ownership_Conserved,
+     Post   =>
+       Ownership_Conserved
+       and then
+         (if not Is_Valid (Buf)
+          then Count_In_State (Free) = 0
+          else
+            Is_Valid_Buffer (Buf.Data)
+            and then Get_Owner (Ptr_To_Index (Buf.Data)) = Ada_TxBuild
+            and then Buf.Len = 0);
 
    --  Mark buffer as ready for encryption (Ada calls this)
    --  Transition: Ada_TxBuild -> Ada_TxEncrypt
-   procedure Tx_Ready (Ptr : System.Address; Len : size_t)
-     with Global => (Input  => Buffer_Pool_State,
-                     In_Out => Ghost_Ownership),
-          Pre  => Ownership_Conserved
-                  and then Ptr /= System.Null_Address
-                  and then Is_Valid_Buffer (Ptr)
-                  and then Get_Owner (Address_To_Index (Ptr)) = Ada_TxBuild,
-          Post => Ownership_Conserved
-                  and then Get_Owner (Address_To_Index (Ptr)) = Ada_TxEncrypt;
+   procedure Tx_Ready (Buf : in out Buffer; Len : Natural)
+   with
+     Global => (Input => Buffer_Pool_State, In_Out => Ghost_Ownership),
+     Pre    =>
+       Ownership_Conserved
+       and then Is_Valid (Buf)
+       and then Is_Valid_Buffer (Buf.Data)
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = Ada_TxBuild
+       and then Len <= Buffer_Capacity,
+     Post   =>
+       Ownership_Conserved
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = Ada_TxEncrypt
+       and then Buf.Len = Len;
 
    --  Enqueue encrypted TX buffer for sending (Ada calls after encryption)
    --  Transition: Ada_TxEncrypt -> TxQ
-   procedure Tx_Enqueue (Desc : Buffer_Descriptor)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved
-                  and then Desc.Ptr /= System.Null_Address
-                  and then Is_Valid_Buffer (Desc.Ptr)
-                  and then Get_Owner (Address_To_Index (Desc.Ptr)) = Ada_TxEncrypt,
-          Post => Ownership_Conserved
-                  and then Get_Owner (Address_To_Index (Desc.Ptr)) = TxQ;
+   procedure Tx_Enqueue (Buf : Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    =>
+       Ownership_Conserved
+       and then Is_Valid (Buf)
+       and then Is_Valid_Buffer (Buf.Data)
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = Ada_TxEncrypt,
+     Post   =>
+       Ownership_Conserved
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = TxQ;
 
-   --  Dequeue TX buffer for sending (C calls this)
+   --  Dequeue TX buffer for sending (C calls this via wrapper)
    --  Transition: TxQ -> C_TxSend
-   procedure Tx_Dequeue (Desc : out Buffer_Descriptor; Success : out Boolean)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved,
-          Post => Ownership_Conserved
-                  and (if not Success
-                       then Desc = Null_Descriptor
-                       else Is_Valid_Buffer (Desc.Ptr)
-                            and Get_Owner (Address_To_Index (Desc.Ptr))
-                                = C_TxSend);
+   procedure Tx_Dequeue (Buf : out Buffer; Success : out Boolean)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    => Ownership_Conserved,
+     Post   =>
+       Ownership_Conserved
+       and then
+         (if not Success
+          then not Is_Valid (Buf)
+          else
+            Is_Valid_Buffer (Buf.Data)
+            and then Get_Owner (Ptr_To_Index (Buf.Data)) = C_TxSend);
 
-   --  Complete TX send, return buffer to pool (C calls after sendto success)
+   --  Complete TX send, return buffer to pool
    --  Transition: C_TxSend -> Free
-   procedure Tx_Complete (Ptr : System.Address)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved
-                  and then Ptr /= System.Null_Address
-                  and then Is_Valid_Buffer (Ptr)
-                  and then Get_Owner (Address_To_Index (Ptr)) = C_TxSend,
-          Post => Ownership_Conserved
-                  and then Get_Owner (Address_To_Index (Ptr)) = Free;
+   procedure Tx_Complete (Buf : in out Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    =>
+       Ownership_Conserved
+       and then Is_Valid (Buf)
+       and then Is_Valid_Buffer (Buf.Data)
+       and then Get_Owner (Ptr_To_Index (Buf.Data)) = C_TxSend,
+     Post   =>
+       Ownership_Conserved
+       and then Get_Owner (Buf.Id) = Free
+       and then not Is_Valid (Buf);
 
    ---------------------
    --  Drop/Abort Operations (for error paths)
    ---------------------
 
-   --  Drop an RX buffer at any point in RX path
-   procedure Rx_Drop (Ptr : System.Address)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved
-                  and (Ptr = System.Null_Address
-                       or else (Is_Valid_Buffer (Ptr)
-                                and then Get_Owner (Address_To_Index (Ptr))
-                                         in C_RxFill | RxQ | Ada_RxProcess)),
-          Post => Ownership_Conserved
-                  and (if Ptr /= System.Null_Address and Is_Valid_Buffer (Ptr)
-                       then Get_Owner (Address_To_Index (Ptr)) = Free);
+   --  Drop a buffer at any point in RX path (Ada-friendly)
+   procedure Rx_Drop (Buf : in out Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    =>
+       Ownership_Conserved
+       and then
+         (not Is_Valid (Buf)
+          or else
+            (Is_Valid_Buffer (Buf.Data)
+             and then
+               Get_Owner (Ptr_To_Index (Buf.Data))
+               in C_RxFill | RxQ | Ada_RxProcess)),
+     Post   =>
+       Ownership_Conserved
+       and then not Is_Valid (Buf);
 
-   --  Drop a TX buffer at any point in TX path
-   procedure Tx_Drop (Ptr : System.Address)
-     with Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
-          Pre  => Ownership_Conserved
-                  and (Ptr = System.Null_Address
-                       or else (Is_Valid_Buffer (Ptr)
-                                and then Get_Owner (Address_To_Index (Ptr))
-                                         in Ada_TxBuild | Ada_TxEncrypt | TxQ | C_TxSend)),
-          Post => Ownership_Conserved
-                  and (if Ptr /= System.Null_Address and Is_Valid_Buffer (Ptr)
-                       then Get_Owner (Address_To_Index (Ptr)) = Free);
+   --  Drop a buffer at any point in TX path (Ada-friendly)
+   procedure Tx_Drop (Buf : in out Buffer)
+   with
+     Global => (In_Out => (Buffer_Pool_State, Ghost_Ownership)),
+     Pre    =>
+       Ownership_Conserved
+       and then
+         (not Is_Valid (Buf)
+          or else
+            (Is_Valid_Buffer (Buf.Data)
+             and then
+               Get_Owner (Ptr_To_Index (Buf.Data))
+               in Ada_TxBuild | Ada_TxEncrypt | TxQ | C_TxSend)),
+     Post   =>
+       Ownership_Conserved
+       and then not Is_Valid (Buf);
 
    ---------------------
    --  Ghost Ownership Predicates (for use in contracts)
    ---------------------
 
-   --  Check if buffer is in Free state
-   function Is_Free (Ptr : System.Address) return Boolean is
-     (Is_Valid_Buffer (Ptr)
-      and then Get_Owner (Address_To_Index (Ptr)) = Free)
-     with Ghost,
-          Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
+   --  Check if buffer is in Free state (Buffer version)
+   function Is_Free (B : Buffer) return Boolean
+   is (Is_Valid (B)
+       and then Is_Valid_Buffer (B.Data)
+       and then Get_Owner (Ptr_To_Index (B.Data)) = Free)
+   with Ghost, Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
 
    --  Check if buffer is owned by C (RX or TX paths)
-   function Is_C_Owned (Ptr : System.Address) return Boolean is
-     (Is_Valid_Buffer (Ptr)
-      and then Get_Owner (Address_To_Index (Ptr)) in C_RxFill | C_TxSend)
-     with Ghost,
-          Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
+   function Is_C_Owned (B : Buffer) return Boolean
+   is (Is_Valid (B)
+       and then Is_Valid_Buffer (B.Data)
+       and then Get_Owner (Ptr_To_Index (B.Data)) in C_RxFill | C_TxSend)
+   with Ghost, Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
 
    --  Check if buffer is owned by Ada (RX or TX paths)
-   function Is_Ada_Owned (Ptr : System.Address) return Boolean is
-     (Is_Valid_Buffer (Ptr)
-      and then Get_Owner (Address_To_Index (Ptr))
-               in Ada_RxProcess | Ada_TxBuild | Ada_TxEncrypt)
-     with Ghost,
-          Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
+   function Is_Ada_Owned (B : Buffer) return Boolean
+   is (Is_Valid (B)
+       and then Is_Valid_Buffer (B.Data)
+       and then
+         Get_Owner (Ptr_To_Index (B.Data))
+         in Ada_RxProcess | Ada_TxBuild | Ada_TxEncrypt)
+   with Ghost, Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
 
    --  Check if buffer is in any queue
-   function Is_Queued (Ptr : System.Address) return Boolean is
-     (Is_Valid_Buffer (Ptr)
-      and then Get_Owner (Address_To_Index (Ptr)) in RxQ | TxQ)
-     with Ghost,
-          Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
+   function Is_Queued (B : Buffer) return Boolean
+   is (Is_Valid (B)
+       and then Is_Valid_Buffer (B.Data)
+       and then Get_Owner (Ptr_To_Index (B.Data)) in RxQ | TxQ)
+   with Ghost, Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
 
    --  Check if buffer is in RX path (any RX state)
-   function Is_In_Rx_Path (Ptr : System.Address) return Boolean is
-     (Is_Valid_Buffer (Ptr)
-      and then Get_Owner (Address_To_Index (Ptr))
-               in C_RxFill | RxQ | Ada_RxProcess)
-     with Ghost,
-          Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
+   function Is_In_Rx_Path (B : Buffer) return Boolean
+   is (Is_Valid (B)
+       and then Is_Valid_Buffer (B.Data)
+       and then
+         Get_Owner (Ptr_To_Index (B.Data)) in C_RxFill | RxQ | Ada_RxProcess)
+   with Ghost, Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
 
    --  Check if buffer is in TX path (any TX state)
-   function Is_In_Tx_Path (Ptr : System.Address) return Boolean is
-     (Is_Valid_Buffer (Ptr)
-      and then Get_Owner (Address_To_Index (Ptr))
-               in Ada_TxBuild | Ada_TxEncrypt | TxQ | C_TxSend)
-     with Ghost,
-          Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
+   function Is_In_Tx_Path (B : Buffer) return Boolean
+   is (Is_Valid (B)
+       and then Is_Valid_Buffer (B.Data)
+       and then
+         Get_Owner (Ptr_To_Index (B.Data))
+         in Ada_TxBuild | Ada_TxEncrypt | TxQ | C_TxSend)
+   with Ghost, Global => (Input => (Buffer_Pool_State, Ghost_Ownership));
 
    ---------------------
    --  Statistics
    ---------------------
 
    function Free_Count return Natural
-     with Global => (Input => Buffer_Pool_State),
-          Post => Free_Count'Result <= Pool_Size;
+   with
+     Global => (Input => Buffer_Pool_State),
+     Post   => Free_Count'Result <= Pool_Size;
 
    function Rx_Queue_Count return Natural
-     with Global => (Input => Buffer_Pool_State),
-          Post => Rx_Queue_Count'Result <= Pool_Size;
+   with
+     Global => (Input => Buffer_Pool_State),
+     Post   => Rx_Queue_Count'Result <= Pool_Size;
 
    function Tx_Queue_Count return Natural
-     with Global => (Input => Buffer_Pool_State),
-          Post => Tx_Queue_Count'Result <= Pool_Size;
+   with
+     Global => (Input => Buffer_Pool_State),
+     Post   => Tx_Queue_Count'Result <= Pool_Size;
+
+   ---------------------
+   --  C Interface
+   ---------------------
+
+   procedure C_Init
+   with Export, Convention => C, External_Name => "wg_buf_init";
+
+   function C_Rx_Alloc return Buffer_Descriptor
+   with Export, Convention => C, External_Name => "wg_buf_rx_alloc";
+
+   procedure C_Rx_Enqueue (Desc : Buffer_Descriptor)
+   with Export, Convention => C, External_Name => "wg_buf_rx_enqueue";
+
+   function C_Tx_Dequeue (Desc : access Buffer_Descriptor) return int
+   with Export, Convention => C, External_Name => "wg_buf_tx_dequeue";
+
+   procedure C_Tx_Complete (Ptr : System.Address)
+   with Export, Convention => C, External_Name => "wg_buf_tx_complete";
+
+   function C_Buffer_Capacity return size_t
+   with Export, Convention => C, External_Name => "wg_buf_capacity";
+
+   function C_Free_Count return size_t
+   with Export, Convention => C, External_Name => "wg_buf_free_count";
+
+   function C_Rx_Queue_Count return size_t
+   with Export, Convention => C, External_Name => "wg_buf_rx_queue_count";
+
+   function C_Tx_Queue_Count return size_t
+   with Export, Convention => C, External_Name => "wg_buf_tx_queue_count";
 
 end Utils.Ring_Buffer;
