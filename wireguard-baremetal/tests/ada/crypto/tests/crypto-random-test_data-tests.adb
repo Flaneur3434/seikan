@@ -39,13 +39,13 @@ package body Crypto.Random.Test_Data.Tests is
    procedure Test_Fill_Random_5d854d (Gnattest_T : in out Test) renames Test_Fill_Random;
 --  id:2.2/5d854dad6ab48fc1/Fill_Random/1/0/
    procedure Test_Fill_Random (Gnattest_T : in out Test) is
-   --  crypto-random.ads:9:4:Fill_Random
+   --  crypto-random.ads:11:4:Fill_Random
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      Buffer  : aliased Crypto.Byte_Array (1 .. 32) := (others => 0);
-      Buffer2 : aliased Crypto.Byte_Array (1 .. 32) := (others => 0);
+      Buffer  : aliased Utils.Byte_Array (1 .. 32) := (others => 0);
+      Buffer2 : aliased Utils.Byte_Array (1 .. 32) := (others => 0);
       All_Zero : Boolean := True;
       Same : Boolean := True;
 
