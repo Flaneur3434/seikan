@@ -217,7 +217,8 @@ is
 
    --  Convert between Ada Buffer and C Buffer_Descriptor
    function To_Descriptor (B : Buffer) return Buffer_Descriptor
-     with Inline,
+     with SPARK_Mode => Off,
+          Inline,
           Post => (if Is_Valid (B)
                    then To_Descriptor'Result.Ptr /= System.Null_Address
                    else To_Descriptor'Result = Null_Descriptor);
@@ -497,13 +498,15 @@ is
    with Export, Convention => C, External_Name => "wg_buf_init";
 
    function C_Rx_Alloc return Buffer_Descriptor
-   with Export, Convention => C, External_Name => "wg_buf_rx_alloc";
+   with SPARK_Mode => Off,
+        Export, Convention => C, External_Name => "wg_buf_rx_alloc";
 
    procedure C_Rx_Enqueue (Desc : Buffer_Descriptor)
    with Export, Convention => C, External_Name => "wg_buf_rx_enqueue";
 
    function C_Tx_Dequeue (Desc : access Buffer_Descriptor) return int
-   with Export, Convention => C, External_Name => "wg_buf_tx_dequeue";
+   with SPARK_Mode => Off,
+        Export, Convention => C, External_Name => "wg_buf_tx_dequeue";
 
    procedure C_Tx_Complete (Ptr : System.Address)
    with Export, Convention => C, External_Name => "wg_buf_tx_complete";
