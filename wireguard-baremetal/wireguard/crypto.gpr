@@ -1,0 +1,97 @@
+--  Crypto library - ChaCha20Poly1305, X25519, BLAKE2s
+with "config/wireguard_config.gpr";
+with "utils.gpr";
+
+library project Crypto is
+
+   --  Platform selection
+   type Platform_Type is ("esp_idf", "host");
+   Platform : Platform_Type := external ("PLATFORM", "esp_idf");
+
+   --  Crypto backend selection
+   type Crypto_Backend_Type is ("libsodium");
+   Crypto_Backend : Crypto_Backend_Type :=
+     external ("CRYPTO_BACKEND", "libsodium");
+
+   for Languages use ("Ada", "C");
+   for Library_Name use "WgCrypto";
+
+   case Platform is
+      when "esp_idf" =>
+         for Target use "riscv64-elf";
+         for Runtime ("Ada") use "light-rv32imac";
+      when "host" =>
+         null;
+   end case;
+
+   --  Ada crypto sources
+   Crypto_Ada := (
+      "src/crypto/",
+      "src/crypto/interfaces/",
+      "src/crypto/implementation/",
+      "src/crypto/platform/blake2_ref/"
+   );
+
+   --  Backend-specific platform bindings
+   Backend_Src := ("");
+   case Crypto_Backend is
+      when "libsodium" =>
+         Backend_Src := ("src/crypto/platform/libsodium/");
+   end case;
+
+   --  BLAKE2 C sources (only for host)
+   Blake2_Src := ("../third_party/BLAKE2/ref/");
+
+   case Platform is
+      when "host" =>
+         for Source_Dirs use Crypto_Ada & Backend_Src & Blake2_Src;
+         for Excluded_Source_Files use (
+            "blake2b-ref.c",
+            "blake2bp-ref.c",
+            "blake2sp-ref.c",
+            "blake2xb-ref.c",
+            "blake2xs-ref.c",
+            "genkat-c.c",
+            "genkat-json.c"
+         );
+      when "esp_idf" =>
+         for Source_Dirs use Crypto_Ada & Backend_Src;
+   end case;
+
+   for Object_Dir use "obj/" & Platform & "/crypto";
+   for Library_Dir use "lib";
+   for Create_Missing_Dirs use "True";
+
+   type Library_Type_Type is ("relocatable", "static", "static-pic");
+   Library_Type : Library_Type_Type := external ("LIBRARY_TYPE", "static");
+   for Library_Kind use Library_Type;
+
+   package Compiler is
+      for Default_Switches ("Ada") use Wireguard_Config.Ada_Compiler_Switches;
+
+      Common_C_Switches := (
+         "-Wall", "-Wextra", "-std=c99",
+         "-ffunction-sections", "-fdata-sections"
+      );
+
+      case Platform is
+         when "host" =>
+            for Default_Switches ("C") use Common_C_Switches & ("-O2", "-g");
+         when "esp_idf" =>
+            null;
+      end case;
+   end Compiler;
+
+   package Linker is
+      case Crypto_Backend is
+         when "libsodium" =>
+            case Platform is
+               when "host" =>
+                  for Linker_Options use ("-lsodium", "-L/usr/local/lib");
+               when "esp_idf" =>
+                  null;
+            end case;
+      end case;
+   end Linker;
+
+end Crypto;

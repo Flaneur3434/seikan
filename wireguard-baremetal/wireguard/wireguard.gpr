@@ -1,85 +1,48 @@
-with "config/wireguard_config.gpr";
-project Wireguard is
+--  WireGuard - Aggregate project
+--
+--  This project aggregates all WireGuard sub-libraries.
+--  Use individual .gpr files for targeted testing/analysis:
+--    - utils.gpr     : Base utilities, spans, ring buffers
+--    - crypto.gpr    : ChaCha20Poly1305, X25519, BLAKE2s
+--    - transport.gpr : Transport layer encryption
+--    - handshake.gpr : Noise IKpsk2 handshake
+--    - net.gpr       : Network bindings
+--    - core.gpr      : State machine
 
-   --  Platform selection (esp_idf or host)
+with "config/wireguard_config.gpr";
+with "utils.gpr";
+with "crypto.gpr";
+with "transport.gpr";
+--  with "handshake.gpr";  --  TODO: empty for now
+with "net.gpr";
+--  with "core.gpr";       --  TODO: empty for now
+
+library project Wireguard is
+
    type Platform_Type is ("esp_idf", "host");
    Platform : Platform_Type := external ("PLATFORM", "esp_idf");
 
-   --  Crypto backend selection
    type Crypto_Backend_Type is ("libsodium");
-   Crypto_Backend : Crypto_Backend_Type := external ("CRYPTO_BACKEND", "libsodium");
+   Crypto_Backend : Crypto_Backend_Type :=
+     external ("CRYPTO_BACKEND", "libsodium");
 
-   for Languages use ("Ada", "C");
+   for Languages use ("Ada");
+   for Library_Name use "Wireguard";
 
-   --  ESP32-C6 target: RISC-V RV32IMAC (only for esp_idf)
    case Platform is
       when "esp_idf" =>
          for Target use "riscv64-elf";
          for Runtime ("Ada") use "light-rv32imac";
       when "host" =>
-         null;  --  Use native target/runtime
+         null;
    end case;
 
-   for Library_Name use "Wireguard";
-
-   --  Common source directories (Ada)
-   Common_Sources :=
-     ("src/",
-      "src/core/",
-      "src/handshake/",
-      "src/transport/",
-      "src/net/",
-      "src/utils/",
-      "src/crypto/",
-      "src/crypto/interfaces/",
-      "src/crypto/implementation/",
-      "config/");
-
-   --  Third-party C libraries
-   Blake2_Src := ("../third_party/BLAKE2/ref/");
-
-   --  Platform bindings for BLAKE2 (Ada wrapper)
-   Blake2_Platform := ("src/crypto/platform/blake2_ref/");
-
-   --  Backend-specific platform bindings
-   Backend_Src := ("");
-   case Crypto_Backend is
-      when "libsodium" =>
-         Backend_Src := ("src/crypto/platform/libsodium/");
-   end case;
-
-   --  Utils platform bindings (FreeRTOS for esp_idf)
-   Utils_Platform_Src := ("");
-   case Platform is
-      when "esp_idf" =>
-         Utils_Platform_Src := ("src/utils/platform/freertos/");
-      when "host" =>
-         null;  --  No platform utils for host yet
-   end case;
-
-   --  Build complete Source_Dirs based on Platform
-   case Platform is
-      when "host" =>
-         --  Host includes BLAKE2 C sources directly
-         for Source_Dirs use Common_Sources & Blake2_Src & Blake2_Platform & Backend_Src & Utils_Platform_Src;
-         --  Exclude BLAKE2 files we don't need (they have main() for self-tests)
-         for Excluded_Source_Files use (
-            "blake2b-ref.c",     --  BLAKE2b not used by WireGuard
-            "blake2bp-ref.c",    --  Parallel BLAKE2b
-            "blake2sp-ref.c",    --  Parallel BLAKE2s
-            "blake2xb-ref.c",    --  Extended BLAKE2b
-            "blake2xs-ref.c",    --  Extended BLAKE2s
-            "genkat-c.c",        --  Test vector generator
-            "genkat-json.c"      --  Test vector generator (JSON)
-         );
-      when "esp_idf" =>
-         --  ESP-IDF compiles BLAKE2 via its own CMake component
-         for Source_Dirs use Common_Sources & Blake2_Platform & Backend_Src & Utils_Platform_Src;
-   end case;
+   --  Top-level sources (just src/wireguard.ads, bindings)
+   for Source_Dirs use ("src/", "src/bindings/", "config/");
 
    for Object_Dir use "obj/" & Platform;
-   for Create_Missing_Dirs use "True";
    for Library_Dir use "lib";
+   for Create_Missing_Dirs use "True";
 
    type Library_Type_Type is ("relocatable", "static", "static-pic");
    Library_Type : Library_Type_Type :=
@@ -88,34 +51,6 @@ project Wireguard is
 
    package Compiler is
       for Default_Switches ("Ada") use Wireguard_Config.Ada_Compiler_Switches;
-
-      --  C compiler switches for third-party code (BLAKE2)
-      Common_C_Switches := (
-         "-Wall",
-         "-Wextra",
-         "-std=c99",
-         "-ffunction-sections",
-         "-fdata-sections"
-      );
-
-      case Platform is
-         when "host" =>
-            for Default_Switches ("C") use Common_C_Switches & ("-O2", "-g");
-         when "esp_idf" =>
-            null;
-      end case;
    end Compiler;
-
-   package Linker is
-      case Crypto_Backend is
-         when "libsodium" =>
-            case Platform is
-               when "host" =>
-                  for Linker_Options use ("-lsodium", "-L/usr/local/lib");
-               when "esp_idf" =>
-                  null;  --  ESP-IDF handles libsodium linking via component
-            end case;
-      end case;
-   end Linker;
 
 end Wireguard;
