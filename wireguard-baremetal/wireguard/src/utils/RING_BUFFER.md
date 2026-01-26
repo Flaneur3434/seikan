@@ -6,6 +6,8 @@ Pre-allocated buffer pool for zero-copy packet handling with provable ownership 
 
 The ring buffer implements a **boundary ownership token** model where every buffer is in exactly one ownership state at any time. Ghost state (proof-only, no runtime cost) formally tracks ownership for SPARK proofs.
 
+**Key Design Principle**: Minimize raw pointer usage. Ada code uses typed `Buffer` handles with `Buffer_Data_Ptr` (typed access to constrained arrays), while raw `System.Address` is only used at the C interface boundary.
+
 ## Ownership State Machine
 
 ```
@@ -66,15 +68,51 @@ C_RxFill | RxQ | Ada_RxProcess → Free  (via Rx_Drop)
 Ada_TxBuild | Ada_TxEncrypt | TxQ | C_TxSend → Free  (via Tx_Drop)
 ```
 
-## Buffer Descriptor
+## Buffer Types
+
+### Buffer (Ada-friendly handle)
+
+The primary type for Ada code. Uses a typed pointer instead of raw addresses:
+
+```ada
+--  Fixed-size buffer data array
+subtype Buffer_Data is Byte_Array (0 .. Buffer_Capacity - 1);
+
+--  Typed pointer (thin pointer, C-compatible)
+--  Using 'access all' allows pointing to statically-allocated buffers
+type Buffer_Data_Ptr is access all Buffer_Data with Convention => C;
+
+--  Ada buffer handle - passed by reference for large records
+type Buffer is record
+   Data : Buffer_Data_Ptr;  -- Typed pointer to buffer data
+   Len  : Natural;          -- Actual data length
+   Id   : Buffer_Index;     -- Buffer ID for ownership tracking
+end record;
+```
+
+**Benefits:**
+- **Type safety**: `Buffer_Data_Ptr` can only point to correctly-sized arrays
+- **Native array access**: `Buf.Data.all (I)` or `Buf.Data (Start .. End)` with bounds checking
+- **No raw pointers in Ada**: Only the C interface uses `System.Address`
+- **Pass by reference**: Ada automatically passes large records by reference
+
+### Buffer_Descriptor (C interface only)
+
+Raw pointer-based struct for C interop:
 
 ```ada
 type Buffer_Descriptor is record
-   Ptr : System.Address;  -- Pointer to buffer data
+   Ptr : System.Address;  -- Raw pointer for C code
    Len : size_t;          -- Actual data length
    Cap : size_t;          -- Buffer capacity (1560)
    Id  : size_t;          -- Buffer ID for ghost modeling
 end record with Convention => C;
+```
+
+Conversion functions:
+```ada
+function To_Descriptor (B : Buffer) return Buffer_Descriptor;
+function From_Descriptor (D : Buffer_Descriptor) return Buffer;
 ```
 
 ## Configuration
@@ -95,53 +133,73 @@ procedure Initialize;
 ### RX Path Operations
 
 ```ada
-procedure Rx_Alloc (Desc : out Buffer_Descriptor);
+procedure Rx_Alloc (Buf : out Buffer);
 --  Transition: Free → C_RxFill
---  Returns Null_Descriptor if pool exhausted
+--  Returns Null_Buffer if pool exhausted
 
-procedure Rx_Enqueue (Desc : Buffer_Descriptor);
+procedure Rx_Enqueue (Buf : Buffer);
 --  Transition: C_RxFill → RxQ
 --  Pre: buffer in C_RxFill state
 
-procedure Rx_Dequeue (Desc : out Buffer_Descriptor; Success : out Boolean);
+procedure Rx_Dequeue (Buf : out Buffer; Success : out Boolean);
 --  Transition: RxQ → Ada_RxProcess
 --  Returns Success=False if queue empty
 
-procedure Rx_Complete (Ptr : System.Address);
+procedure Rx_Complete (Buf : in out Buffer);
 --  Transition: Ada_RxProcess → Free
 --  Pre: buffer in Ada_RxProcess state
+--  Post: Buf is invalidated (set to Null_Buffer)
 
-procedure Rx_Drop (Ptr : System.Address);
+procedure Rx_Drop (Buf : in out Buffer);
 --  Transition: any RX state → Free
 --  For error handling/cleanup
+--  Post: Buf is invalidated
 ```
 
 ### TX Path Operations
 
 ```ada
-procedure Tx_Alloc (Desc : out Buffer_Descriptor);
+procedure Tx_Alloc (Buf : out Buffer);
 --  Transition: Free → Ada_TxBuild
---  Returns Null_Descriptor if pool exhausted
+--  Returns Null_Buffer if pool exhausted
 
-procedure Tx_Ready (Ptr : System.Address; Len : size_t);
+procedure Tx_Ready (Buf : in out Buffer; Len : Natural);
 --  Transition: Ada_TxBuild → Ada_TxEncrypt
 --  Call after writing plaintext, before encryption
+--  Updates Buf.Len to Len
 
-procedure Tx_Enqueue (Desc : Buffer_Descriptor);
+procedure Tx_Enqueue (Buf : Buffer);
 --  Transition: Ada_TxEncrypt → TxQ
 --  Call after encryption complete
 
-procedure Tx_Dequeue (Desc : out Buffer_Descriptor; Success : out Boolean);
+procedure Tx_Dequeue (Buf : out Buffer; Success : out Boolean);
 --  Transition: TxQ → C_TxSend
 --  Returns Success=False if queue empty
 
-procedure Tx_Complete (Ptr : System.Address);
+procedure Tx_Complete (Buf : in out Buffer);
 --  Transition: C_TxSend → Free
 --  Pre: buffer in C_TxSend state
+--  Post: Buf is invalidated
 
-procedure Tx_Drop (Ptr : System.Address);
+procedure Tx_Drop (Buf : in out Buffer);
 --  Transition: any TX state → Free
 --  For error handling/cleanup
+--  Post: Buf is invalidated
+```
+
+### Buffer Access
+
+```ada
+--  Check if buffer is valid
+function Is_Valid (B : Buffer) return Boolean is (B.Data /= null);
+
+--  Get buffer capacity
+function Capacity (B : Buffer) return Natural;  -- Returns Buffer_Capacity or 0
+
+--  Access buffer data (type-safe, bounds-checked)
+Buf.Data.all (Index)           -- Single element access
+Buf.Data (Start .. End)        -- Slice access
+Buf.Data.all                   -- Full array access
 ```
 
 ### Statistics
@@ -187,12 +245,12 @@ Ghost state provides compile-time verification of ownership invariants:
 ### Ghost Predicates
 
 ```ada
-function Is_Free (Ptr) return Boolean;      -- In Free state
-function Is_C_Owned (Ptr) return Boolean;   -- In C_RxFill or C_TxSend
-function Is_Ada_Owned (Ptr) return Boolean; -- In Ada_RxProcess/TxBuild/TxEncrypt
-function Is_Queued (Ptr) return Boolean;    -- In RxQ or TxQ
-function Is_In_Rx_Path (Ptr) return Boolean;-- Any RX state
-function Is_In_Tx_Path (Ptr) return Boolean;-- Any TX state
+function Is_Free (B : Buffer) return Boolean;      -- In Free state
+function Is_C_Owned (B : Buffer) return Boolean;   -- In C_RxFill or C_TxSend
+function Is_Ada_Owned (B : Buffer) return Boolean; -- In Ada_RxProcess/TxBuild/TxEncrypt
+function Is_Queued (B : Buffer) return Boolean;    -- In RxQ or TxQ
+function Is_In_Rx_Path (B : Buffer) return Boolean;-- Any RX state
+function Is_In_Tx_Path (B : Buffer) return Boolean;-- Any TX state
 ```
 
 ## Usage Flow Examples
@@ -214,11 +272,11 @@ if (n > 0) {
 
 ```ada
 -- Ada WireGuard core
-Rx_Dequeue (Desc, Success);
+Rx_Dequeue (Buf, Success);
 if Success then
-   --  Process packet via Const_Span over Desc.Ptr/Desc.Len
-   Process_Packet (Desc);
-   Rx_Complete (Desc.Ptr);  -- return to pool
+   --  Access packet data directly via typed pointer
+   Process_Packet (Buf.Data (0 .. Buf.Len - 1));
+   Rx_Complete (Buf);  -- return to pool, Buf invalidated
 end if;
 ```
 
@@ -226,17 +284,19 @@ end if;
 
 ```ada
 -- Ada WireGuard core
-Tx_Alloc (Desc);
-if Desc.Ptr /= Null_Address then
-   --  Write header + plaintext via Mut_Span
-   Build_Packet (Desc);
-   Tx_Ready (Desc.Ptr, Plaintext_Len);
+Tx_Alloc (Buf);
+if Is_Valid (Buf) then
+   --  Write header + plaintext directly to buffer
+   Buf.Data (0 .. Header_Len - 1) := Header;
+   Buf.Data (Header_Len .. Header_Len + Payload_Len - 1) := Payload;
+   
+   Tx_Ready (Buf, Header_Len + Payload_Len);
    
    --  Encrypt in-place (header as AAD, payload encrypted)
-   Encrypt_In_Place (Desc);
-   Desc.Len := Final_Packet_Length;
+   Encrypt_In_Place (Buf.Data.all, Payload_Len, Nonce, Key, Status);
+   Buf.Len := Final_Packet_Length;
    
-   Tx_Enqueue (Desc);  -- hand to C
+   Tx_Enqueue (Buf);  -- hand to C
 end if;
 ```
 
@@ -267,3 +327,12 @@ The current implementation is **NOT thread-safe**. For multi-threaded use:
 - C-side operations should be called from a single task
 
 The internal RX/TX queues are for demonstration; production code should use FreeRTOS queues that only copy the 32-byte `Buffer_Descriptor`, not buffer data.
+
+## Why `access all` instead of `access`?
+
+The `Buffer_Data_Ptr` type uses `access all` because:
+
+- **`access T`** - Can only point to heap-allocated objects (created with `new`)
+- **`access all T`** - Can point to *any* aliased object, including statically-allocated ones
+
+Our buffer pool is **pre-allocated statically** (not heap-allocated), so we need `access all` to take `'Access` of the statically-allocated `Buffers` array elements.
