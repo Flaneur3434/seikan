@@ -49,7 +49,7 @@ is
    --  Configuration
    ---------------------
 
-   Buffer_Capacity  : constant := 1560;  --  MTU (1500) + headers + tag
+   Buffer_Capacity  : constant := Utils.Max_Packet_Size;
    Pool_Size        : constant := 16;    --  Number of buffers
    Buffer_Alignment : constant := 16;   --  16-byte alignment
 

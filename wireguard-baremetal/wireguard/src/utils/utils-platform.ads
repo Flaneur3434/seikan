@@ -17,7 +17,7 @@ with Utils.Ring_Buffer;
 private package Utils.Platform
   with SPARK_Mode => Off
 is
-   
+
    use Utils.Ring_Buffer;
 
    --  Opaque queue handle (created by C code, passed to Ada)
