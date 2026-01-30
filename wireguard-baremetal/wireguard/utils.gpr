@@ -21,11 +21,9 @@ library project Utils is
    --  Source directories
    case Platform is
       when "esp_idf" =>
-         for Source_Dirs use ("src/utils/", "src/utils/platform/freertos/");
+         for Source_Dirs use ("src/utils/");
       when "host" =>
          for Source_Dirs use ("src/utils/");
-         --  Exclude platform-specific specs with no body on host
-         for Excluded_Source_Files use ("utils-platform.ads");
    end case;
 
    for Object_Dir use "obj/" & Platform & "/utils";
