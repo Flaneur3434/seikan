@@ -22,7 +22,7 @@ library project Wireguard is
    type Platform_Type is ("esp_idf", "host");
    Platform : Platform_Type := external ("PLATFORM", "esp_idf");
 
-   type Crypto_Backend_Type is ("libsodium");
+   type Crypto_Backend_Type is ("libsodium", "libhydrogen");
    Crypto_Backend : Crypto_Backend_Type :=
      external ("CRYPTO_BACKEND", "libsodium");
 

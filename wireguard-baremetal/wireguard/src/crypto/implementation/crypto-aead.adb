@@ -1,9 +1,11 @@
-with Crypto.Platform;
+--  AEAD implementation using crypto library backend
+
+with Crypto.Crypto_Lib;
 with Interfaces.C; use Interfaces.C;
 with System;
 with System.Storage_Elements;
 
-package body Crypto.ChaCha20Poly1305
+package body Crypto.AEAD
   with SPARK_Mode => Off
 is
    use System.Storage_Elements;
@@ -23,7 +25,7 @@ is
       Ret_Val : int;
    begin
       Ret_Val :=
-        Crypto.Platform.Crypto_AEAD_ChaCha20Poly1305_IETF_Encrypt
+        Crypto.Crypto_Lib.AEAD_Encrypt
           (Ciphertext_Out     => Ciphertext'Address,
            Ciphertext_Len_Out => System.Null_Address,
            Message_In         => Plaintext'Address,
@@ -56,7 +58,7 @@ is
       Ret_Val : int;
    begin
       Ret_Val :=
-        Crypto.Platform.Crypto_AEAD_ChaCha20Poly1305_IETF_Decrypt
+        Crypto.Crypto_Lib.AEAD_Decrypt
           (Message_Out     => Plaintext'Address,
            Message_Len_Out => System.Null_Address,
            Nsec            => System.Null_Address,
@@ -87,7 +89,7 @@ is
    is
       Ret_Val : int;
 
-      --  Header is AAD (bytes 0..15)
+      --  Header is AAD (bytes 0..Header_Bytes-1)
       Header_Addr : constant System.Address := Buffer'Address;
 
       --  Plaintext starts at offset Header_Bytes
@@ -99,11 +101,11 @@ is
       Ciphertext_Addr : constant System.Address := Plaintext_Addr;
 
    begin
-      --  libsodium's encrypt function writes ciphertext + tag to output
+      --  Encrypt function writes ciphertext + tag to output
       --  We use the same address for input plaintext and output ciphertext
-      --  This works because ChaCha20 is a stream cipher (XOR-based)
+      --  This works because stream ciphers are XOR-based
       Ret_Val :=
-        Crypto.Platform.Crypto_AEAD_ChaCha20Poly1305_IETF_Encrypt
+        Crypto.Crypto_Lib.AEAD_Encrypt
           (Ciphertext_Out     => Ciphertext_Addr,
            Ciphertext_Len_Out => System.Null_Address,
            Message_In         => Plaintext_Addr,
@@ -134,7 +136,7 @@ is
    is
       Ret_Val : int;
 
-      --  Header is AAD (bytes 0..15)
+      --  Header is AAD (bytes 0..Header_Bytes-1)
       Header_Addr : constant System.Address := Buffer'Address;
 
       --  Ciphertext + tag starts at offset Header_Bytes
@@ -145,10 +147,10 @@ is
       Plaintext_Addr : constant System.Address := Ciphertext_Addr;
 
    begin
-      --  libsodium's decrypt function reads ciphertext + tag from input
+      --  Decrypt function reads ciphertext + tag from input
       --  and writes plaintext to output. We use the same address.
       Ret_Val :=
-        Crypto.Platform.Crypto_AEAD_ChaCha20Poly1305_IETF_Decrypt
+        Crypto.Crypto_Lib.AEAD_Decrypt
           (Message_Out     => Plaintext_Addr,
            Message_Len_Out => System.Null_Address,
            Nsec            => System.Null_Address,
@@ -172,18 +174,45 @@ is
 
    procedure Build_Nonce (Counter : Unsigned_64; N : out Nonce_Buffer) is
       C : Unsigned_64 := Counter;
-   begin
-      --  First 4 bytes are zero
-      N (0) := 0;
-      N (1) := 0;
-      N (2) := 0;
-      N (3) := 0;
 
-      --  Last 8 bytes are counter in little-endian
-      for I in 0 .. 7 loop
-         N (4 + I) := Unsigned_8 (C and 16#FF#);
-         C := Shift_Right (C, 8);
-      end loop;
+      --  Suppress warnings about constant conditions - these checks are
+      --  intentionally compile-time constants that differ per backend:
+      --    libsodium:   Nonce_Bytes = 12 (ChaCha20-Poly1305 IETF)
+      --    libhydrogen: Nonce_Bytes = 0  (internal counter)
+      pragma Warnings (Off, "condition is always*");
+      pragma Warnings (Off, "unreachable code");
+   begin
+      --  Handle backends with no external nonce
+      if Nonce_Bytes = 0 then
+         --  Empty nonce, counter handled internally by backend
+         N := (others => 0);
+         return;
+      end if;
+
+      --  Standard format for 12-byte nonce: 0x00000000 || LE64(counter)
+      if Nonce_Bytes = 12 then
+         --  First 4 bytes are zero
+         N (0) := 0;
+         N (1) := 0;
+         N (2) := 0;
+         N (3) := 0;
+
+         --  Last 8 bytes are counter in little-endian
+         for I in 0 .. 7 loop
+            N (4 + I) := Unsigned_8 (C and 16#FF#);
+            C := Shift_Right (C, 8);
+         end loop;
+      else
+         --  Generic: fill with little-endian counter, pad with zeros
+         for I in N'Range loop
+            if I < 8 then
+               N (I) := Unsigned_8 (C and 16#FF#);
+               C := Shift_Right (C, 8);
+            else
+               N (I) := 0;
+            end if;
+         end loop;
+      end if;
    end Build_Nonce;
 
-end Crypto.ChaCha20Poly1305;
+end Crypto.AEAD;

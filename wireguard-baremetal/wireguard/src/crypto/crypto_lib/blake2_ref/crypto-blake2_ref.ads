@@ -4,19 +4,17 @@
 --  Provides Ada bindings to the official BLAKE2 C reference code.
 
 with System;
-with Interfaces.C;
+with Interfaces.C; use Interfaces.C;
 with Crypto.Blake2;
 
 private package Crypto.Blake2_Ref
   with SPARK_Mode => Off
 is
-   use Interfaces.C;
 
-   --  Import the public type
+   --  Import the public type from Crypto.Blake2
    subtype Blake2s_State is Crypto.Blake2.Blake2s_State;
 
    --  Typed pointer for type safety
-   --  (must be general access to allow Unchecked_Access)
    type Blake2s_State_Ptr is access all Blake2s_State;
 
    ---------------------

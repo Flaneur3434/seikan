@@ -1,4 +1,9 @@
---  Transport library - WireGuard transport layer
+--  Transport library - VeriGuard transport layer
+--
+--  Wire format depends on crypto backend:
+--    libsodium   - WireGuard compatible (hardcoded rep clauses)
+--    libhydrogen - VeriGuard format (flexible layout, larger messages)
+--
 with "config/wireguard_config.gpr";
 with "utils.gpr";
 with "crypto.gpr";
@@ -7,6 +12,11 @@ library project Transport is
 
    type Platform_Type is ("esp_idf", "host");
    Platform : Platform_Type := external ("PLATFORM", "esp_idf");
+
+   --  Crypto backend selection (must match crypto.gpr)
+   type Crypto_Backend_Type is ("libsodium", "libhydrogen");
+   Crypto_Backend : Crypto_Backend_Type :=
+     external ("CRYPTO_BACKEND", "libsodium");
 
    for Languages use ("Ada");
    for Library_Name use "WgTransport";
@@ -19,7 +29,16 @@ library project Transport is
          null;
    end case;
 
-   for Source_Dirs use ("src/transport/");
+   --  Backend-specific message type definitions
+   Backend_Src := ("");
+   case Crypto_Backend is
+      when "libsodium" =>
+         Backend_Src := ("src/transport/platform/libsodium/");
+      when "libhydrogen" =>
+         Backend_Src := ("src/transport/platform/libhydrogen/");
+   end case;
+
+   for Source_Dirs use ("src/transport/") & Backend_Src;
    for Object_Dir use "obj/" & Platform & "/transport";
    for Library_Dir use "lib";
    for Create_Missing_Dirs use "True";
