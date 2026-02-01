@@ -1,7 +1,11 @@
---  ChaCha20Poly1305 IETF (Authenticated Encryption with Associated Data)
+--  Authenticated Encryption with Associated Data (AEAD) Interface
 --
---  Encrypts and provides integrity for messages
---  This is the public interface; implementations are platform-specific.
+--  Generic AEAD interface that works with any crypto backend.
+--  Encrypts and provides integrity for messages.
+--
+--  This is the public interface; implementations delegate to Crypto.Platform.
+--  Field sizes are defined by the platform layer, allowing different backends
+--  (libsodium with ChaCha20-Poly1305, libhydrogen with Gimli secretbox, etc.)
 --
 --  ZERO-COPY DESIGN
 --    - Uses native Ada arrays (passed by reference automatically)
@@ -10,37 +14,41 @@
 --
 --  IN-PLACE ENCRYPTION (for TX path)
 --    Buffer layout before encryption:
---      [0..15]                    = Transport header (AAD)
---      [16..16+PT_len-1]          = Plaintext payload
---      [16+PT_len..16+PT_len+15]  = Reserved for Poly1305 tag
+--      [0..Header_Bytes-1]           = Transport header (AAD)
+--      [Header_Bytes..Header+PT-1]   = Plaintext payload
+--      [Header+PT..Header+PT+Tag-1]  = Reserved for auth tag
 --
 --    After encryption:
---      [0..15]                    = Transport header (unchanged)
---      [16..16+PT_len-1]          = Ciphertext (overwrites plaintext)
---      [16+PT_len..16+PT_len+15]  = Authentication tag
+--      [0..Header_Bytes-1]           = Transport header (unchanged)
+--      [Header_Bytes..Header+PT-1]   = Ciphertext (overwrites plaintext)
+--      [Header+PT..Header+PT+Tag-1]  = Authentication tag
 
 with Interfaces;
 with Utils; use Utils;
+with Crypto.Config;
 
-package Crypto.ChaCha20Poly1305
+package Crypto.AEAD
   with SPARK_Mode => On
 is
    use Interfaces;
 
-   --  IETF ChaCha20-Poly1305 AEAD Constants
-   Key_Bytes   : constant Positive := 32;  --  256-bit key
-   Nonce_Bytes : constant Positive := 12;  --  96-bit nonce (IETF variant)
-   Tag_Bytes   : constant Positive := 16;  --  128-bit authentication tag
+   --  AEAD Constants (from platform config)
+   Key_Bytes   : constant Positive := Crypto.Config.AEAD_Key_Bytes;
+   Nonce_Bytes : constant Natural  := Crypto.Config.AEAD_Nonce_Bytes;
+   Tag_Bytes   : constant Positive := Crypto.Config.AEAD_Tag_Bytes;
 
-   --  WireGuard Transport Header size
+   --  Transport Header size (protocol-defined, not backend-specific)
    Header_Bytes : constant Positive := 16;
 
    --  Maximum buffer size for precondition proofs
    Max_Buffer_Size : constant := Utils.Max_Packet_Size;
 
-   --  ChaCha20Poly1305 Types
-   subtype Nonce_Buffer is Byte_Array (0 .. Nonce_Bytes - 1);
+   --  AEAD Types
    subtype Key_Buffer is Byte_Array (0 .. Key_Bytes - 1);
+
+   --  Nonce buffer - may be empty for backends that handle nonces internally
+   --  Note: When Nonce_Bytes = 0, this creates an empty range array
+   subtype Nonce_Buffer is Byte_Array (0 .. Natural'Max (Nonce_Bytes, 1) - 1);
 
    ---------------------
    --  Standard Encrypt/Decrypt (separate buffers)
@@ -83,7 +91,7 @@ is
    ---------------------
 
    --  Encrypt plaintext in-place within a mutable buffer.
-   --  The buffer must have the WireGuard transport packet layout:
+   --  The buffer must have the transport packet layout:
    --    - Header at offset 0 (used as AAD, not modified)
    --    - Plaintext at offset Header_Bytes (encrypted in place)
    --    - Tag space reserved at end
@@ -91,13 +99,13 @@ is
    --  Parameters:
    --    Buffer         : Mutable array covering entire packet region
    --    Plaintext_Len  : Length of plaintext (not including header or tag)
-   --    Nonce          : 12-byte nonce (built from counter)
-   --    Key            : 32-byte encryption key
+   --    Nonce          : Nonce buffer (may be unused by some backends)
+   --    Key            : Encryption key
    --    Result         : Success or error status
    --
    --  On success:
    --    - Bytes [Header_Bytes .. Header_Bytes+Plaintext_Len-1] contain ciphertext
-   --    - Bytes [Header_Bytes+Plaintext_Len .. Header_Bytes+Plaintext_Len+15] contain the Poly1305 tag
+   --    - Bytes [Header_Bytes+Plaintext_Len .. +Tag_Bytes-1] contain auth tag
    --    - Total packet length = Header_Bytes + Plaintext_Len + Tag_Bytes
    procedure Encrypt_In_Place
      (Buffer        : in out Byte_Array;
@@ -113,15 +121,15 @@ is
        and then Plaintext_Len <= Buffer'Length - Header_Bytes - Tag_Bytes;
 
    --  Decrypt ciphertext in-place within a mutable buffer.
-   --  The buffer must have the WireGuard transport packet layout:
+   --  The buffer must have the transport packet layout:
    --    - Header at offset 0 (used as AAD verification)
    --    - Ciphertext + tag starting at offset Header_Bytes
    --
    --  Parameters:
    --    Buffer         : Mutable array covering entire packet
    --    Ciphertext_Len : Length of ciphertext INCLUDING the tag
-   --    Nonce          : 12-byte nonce (built from counter in header)
-   --    Key            : 32-byte decryption key
+   --    Nonce          : Nonce buffer (may be unused by some backends)
+   --    Key            : Decryption key
    --    Result         : Success if tag verified, Error_Failed otherwise
    --
    --  On success:
@@ -145,8 +153,9 @@ is
    --  Utility Functions
    ---------------------
 
-   --  Build a WireGuard nonce from counter: 0x00000000 || LE64(counter)
-   procedure Build_Nonce (Counter : Unsigned_64; N : out Nonce_Buffer)
-   with Post => (for all I in 0 .. 3 => N (I) = 0);
+   --  Build a nonce from counter: backend-specific format
+   --  For libsodium (12-byte): 0x00000000 || LE64(counter)
+   --  For libhydrogen (0-byte): no-op, counter managed internally
+   procedure Build_Nonce (Counter : Unsigned_64; N : out Nonce_Buffer);
 
-end Crypto.ChaCha20Poly1305;
+end Crypto.AEAD;

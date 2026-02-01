@@ -1,4 +1,15 @@
---  Crypto library - ChaCha20Poly1305, X25519, BLAKE2s
+--  Crypto library - Generic crypto interfaces with platform-specific backends
+--
+--  Public Interfaces:
+--    Crypto.KX     - Key exchange (Generate_Key_Pair, DH, etc.)
+--    Crypto.AEAD   - Authenticated encryption (Encrypt, Decrypt)
+--    Crypto.Hash   - Cryptographic hashing
+--    Crypto.Config - Backend-specific constants (key sizes, tag sizes, etc.)
+--
+--  Backends:
+--    libsodium   - X25519, ChaCha20-Poly1305 IETF, BLAKE2s (WireGuard compatible)
+--    libhydrogen - Gimli-based primitives (VeriGuard)
+--
 with "config/wireguard_config.gpr";
 with "utils.gpr";
 
@@ -9,7 +20,7 @@ library project Crypto is
    Platform : Platform_Type := external ("PLATFORM", "esp_idf");
 
    --  Crypto backend selection
-   type Crypto_Backend_Type is ("libsodium");
+   type Crypto_Backend_Type is ("libsodium", "libhydrogen");
    Crypto_Backend : Crypto_Backend_Type :=
      external ("CRYPTO_BACKEND", "libsodium");
 
@@ -24,27 +35,49 @@ library project Crypto is
          null;
    end case;
 
-   --  Ada crypto sources
+   --  Ada crypto sources (common)
    Crypto_Ada := (
       "src/crypto/",
       "src/crypto/interfaces/",
       "src/crypto/implementation/",
-      "src/crypto/platform/blake2_ref/"
+      "src/crypto/crypto_lib/blake2_ref/"
    );
 
-   --  Backend-specific platform bindings
-   Backend_Src := ("");
+   --  Platform-specific sources (random bytes, etc.)
+   Platform_Src := ("");
+   case Platform is
+      when "host" =>
+         Platform_Src := ("src/crypto/platform/host/");
+      when "esp_idf" =>
+         Platform_Src := ("src/crypto/platform/esp_idf/");
+   end case;
+
+   --  Backend-specific crypto library bindings
+   Crypto_Lib_Src := ("");
    case Crypto_Backend is
       when "libsodium" =>
-         Backend_Src := ("src/crypto/platform/libsodium/");
+         Crypto_Lib_Src := ("src/crypto/crypto_lib/libsodium/");
+      when "libhydrogen" =>
+         Crypto_Lib_Src := ("src/crypto/crypto_lib/libhydrogen/");
    end case;
+
+   --  libhydrogen C source (single file library)
+   Libhydrogen_Src := ("../third_party/libhydrogen/");
 
    --  BLAKE2 C sources (only for host)
    Blake2_Src := ("../third_party/BLAKE2/ref/");
 
    case Platform is
       when "host" =>
-         for Source_Dirs use Crypto_Ada & Backend_Src & Blake2_Src;
+         case Crypto_Backend is
+            when "libsodium" =>
+               for Source_Dirs use
+                 Crypto_Ada & Platform_Src & Crypto_Lib_Src & Blake2_Src;
+            when "libhydrogen" =>
+               for Source_Dirs use
+                 Crypto_Ada & Platform_Src & Crypto_Lib_Src &
+                 Blake2_Src & Libhydrogen_Src;
+         end case;
          for Excluded_Source_Files use (
             "blake2b-ref.c",
             "blake2bp-ref.c",
@@ -55,7 +88,14 @@ library project Crypto is
             "genkat-json.c"
          );
       when "esp_idf" =>
-         for Source_Dirs use Crypto_Ada & Backend_Src;
+         case Crypto_Backend is
+            when "libsodium" =>
+               for Source_Dirs use
+                 Crypto_Ada & Platform_Src & Crypto_Lib_Src;
+            when "libhydrogen" =>
+               for Source_Dirs use
+                 Crypto_Ada & Platform_Src & Crypto_Lib_Src & Libhydrogen_Src;
+         end case;
    end case;
 
    for Object_Dir use "obj/" & Platform & "/crypto";
@@ -91,6 +131,9 @@ library project Crypto is
                when "esp_idf" =>
                   null;
             end case;
+         when "libhydrogen" =>
+            --  libhydrogen is compiled directly (no external library needed)
+            null;
       end case;
    end Linker;
 

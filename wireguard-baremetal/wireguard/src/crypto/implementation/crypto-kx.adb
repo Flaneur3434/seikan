@@ -1,9 +1,9 @@
---  X25519 implementation using platform crypto backend
+--  Key Exchange implementation using crypto library backend
 
-with Crypto.Platform;
+with Crypto.Crypto_Lib;
 with Interfaces.C; use Interfaces.C;
 
-package body Crypto.X25519
+package body Crypto.KX
   with SPARK_Mode => Off
 is
    procedure Generate_Key_Pair (Key : out Key_Pair; Result : out Status)
@@ -11,7 +11,7 @@ is
       Ret_Val : int;
    begin
       Ret_Val :=
-        Crypto.Platform.Crypto_Box_Keypair
+        Crypto.Crypto_Lib.Generate_Keypair
           (Public_Key_Out => Key.Pub'Address,
            Secret_Key_Out => Key.Sec'Address);
 
@@ -22,13 +22,13 @@ is
       end if;
    end Generate_Key_Pair;
 
-   procedure Scalar_Mult_Base
+   procedure Derive_Public_Key
      (Pub : out Public_Key; Sec : Secret_Key; Result : out Status)
    is
       Ret_Val : int;
    begin
       Ret_Val :=
-        Crypto.Platform.Crypto_Scalarmult_Base
+        Crypto.Crypto_Lib.Derive_Public_Key
           (Public_Key_Out => Pub'Address, Secret_Key_In => Sec'Address);
 
       if Ret_Val = 0 then
@@ -36,9 +36,9 @@ is
       else
          Result := Error_Failed;
       end if;
-   end Scalar_Mult_Base;
+   end Derive_Public_Key;
 
-   procedure Scalar_Mult
+   procedure DH
      (Shared       : out Shared_Secret;
       My_Secret    : Secret_Key;
       Their_Public : Public_Key;
@@ -47,7 +47,7 @@ is
       Ret_Val : int;
    begin
       Ret_Val :=
-        Crypto.Platform.Crypto_Scalarmult
+        Crypto.Crypto_Lib.DH_Key_Exchange
           (Shared_Secret_Out   => Shared'Address,
            My_Secret_Key_In    => My_Secret'Address,
            Their_Public_Key_In => Their_Public'Address);
@@ -57,6 +57,6 @@ is
       else
          Result := Error_Failed;
       end if;
-   end Scalar_Mult;
+   end DH;
 
-end Crypto.X25519;
+end Crypto.KX;
