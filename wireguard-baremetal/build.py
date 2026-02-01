@@ -23,7 +23,7 @@ from pathlib import Path
 
 # Configuration
 SCRIPT_DIR = Path(__file__).parent.absolute()
-ADA_CRATES = ["crypto", "wireguard", "net", "bindings"]
+ADA_CRATES = ["wireguard"]  # Single consolidated crate
 VALID_COMMANDS = {"build", "clean"}
 
 
