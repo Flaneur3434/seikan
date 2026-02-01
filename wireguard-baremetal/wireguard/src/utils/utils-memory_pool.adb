@@ -1,3 +1,5 @@
+with Ada.Unchecked_Conversion;
+
 package body Utils.Memory_Pool
   with SPARK_Mode => Off  --  Body uses access types directly
 is
@@ -6,12 +8,11 @@ is
    ---------------------------------------------------------------------------
    --  Internal State
    --
-   --  Static array of buffers. Handles point directly into this array.
-   --  Free_Stack tracks which indices are available.
+   --  Static array of buffers. Each buffer stores its own index for O(1) free.
+   --  Free_Stack tracks which indices are available (LIFO).
    ---------------------------------------------------------------------------
 
-   Buffers    : array (Pool_Index) of aliased Packet_Buffer :=
-                  (others => (others => 0));
+   Buffers    : array (Pool_Index) of aliased Buffer;
    Free_Stack : array (Pool_Index) of Pool_Index;
    Free_Top   : Integer := -1;  --  -1 means empty
 
@@ -28,7 +29,8 @@ is
    procedure Initialize is
    begin
       for I in Pool_Index loop
-         Buffers (I) := (others => 0);
+         Buffers (I).Index := Null_Index;  --  Mark as not allocated
+         Buffers (I).Data := (others => 0);
          Free_Stack (I) := I;
       end loop;
       Free_Top := Pool_Size - 1;
@@ -44,25 +46,23 @@ is
 
       Idx := Free_Stack (Free_Top);
       Free_Top := Free_Top - 1;
+      Buffers (Idx).Index := Buffer_Index (Idx);  --  Mark as allocated
       Handle := Buffers (Idx)'Access;
    end Allocate;
 
    procedure Free (Handle : in out Buffer_Handle) is
+      Idx : Pool_Index;
    begin
-      --  Find index by address comparison
-      for I in Pool_Index loop
-         if Buffers (I)'Address = Handle.all'Address then
-            --  Clear sensitive data
-            Handle.all := (others => 0);
-            Handle := null;
+      --  O(1) lookup via stored index
+      Idx := Pool_Index (Handle.Index);
 
-            Free_Top := Free_Top + 1;
-            Free_Stack (Free_Top) := I;
-            return;
-         end if;
-      end loop;
-      --  Should never reach here if precondition holds
+      --  Clear sensitive data
+      Handle.Data := (others => 0);
+      Handle.Index := Null_Index;  --  Mark as not allocated
       Handle := null;
+
+      Free_Top := Free_Top + 1;
+      Free_Stack (Free_Top) := Idx;
    end Free;
 
    ---------------------------------------------------------------------------
@@ -71,11 +71,14 @@ is
 
    function Data (Handle : Buffer_Handle) return System.Address is
    begin
-      return Handle.all'Address;
+      return Handle.Data'Address;
    end Data;
 
    ---------------------------------------------------------------------------
    --  C FFI Operations
+   --
+   --  C code receives pointer to Buffer record, enabling O(1) free.
+   --  C struct layout: { int32_t index; uint8_t data[Packet_Size]; }
    ---------------------------------------------------------------------------
 
    function C_Allocate return System.Address is
@@ -87,23 +90,35 @@ is
 
       Idx := Free_Stack (Free_Top);
       Free_Top := Free_Top - 1;
-      return Buffers (Idx)'Address;
+      Buffers (Idx).Index := Buffer_Index (Idx);
+      return Buffers (Idx)'Address;  --  Return Buffer record address
    end C_Allocate;
 
-   procedure C_Free (Addr : System.Address) is
+   procedure C_Free (Buf_Addr : System.Address) is
+      type Buffer_Ptr is access all Buffer;
+      function To_Ptr is new Ada.Unchecked_Conversion
+        (System.Address, Buffer_Ptr);
+      Buf : Buffer_Ptr;
+      Idx : Pool_Index;
    begin
-      if Addr = Null_Address then
+      if Buf_Addr = Null_Address then
          return;
       end if;
 
-      for I in Pool_Index loop
-         if Buffers (I)'Address = Addr then
-            Buffers (I) := (others => 0);
-            Free_Top := Free_Top + 1;
-            Free_Stack (Free_Top) := I;
-            return;
-         end if;
-      end loop;
+      Buf := To_Ptr (Buf_Addr);
+
+      --  Validate index is in range (defensive check)
+      if Buf.Index < 0 or else Buf.Index > Pool_Index'Last then
+         return;
+      end if;
+
+      --  O(1) lookup via stored index
+      Idx := Pool_Index (Buf.Index);
+      Buf.Data := (others => 0);
+      Buf.Index := Null_Index;
+
+      Free_Top := Free_Top + 1;
+      Free_Stack (Free_Top) := Idx;
    end C_Free;
 
 end Utils.Memory_Pool;

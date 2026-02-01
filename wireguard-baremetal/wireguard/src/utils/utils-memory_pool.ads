@@ -81,7 +81,7 @@ is
           SPARK_Mode => Off;
    --  Allocate and return buffer address (null if exhausted)
 
-   procedure C_Free (Addr : System.Address)
+   procedure C_Free (Buf_Addr : System.Address)
      with Global => (In_Out => Pool_State),
           SPARK_Mode => Off;
    --  Free by address
@@ -89,8 +89,19 @@ is
 private
    pragma SPARK_Mode (Off);
 
-   type Buffer_Handle is access all Packet_Buffer;
+   --  Buffer record: index for O(1) free + aligned data
+   subtype Buffer_Index is Integer range -1 .. Pool_Size - 1;
+   Null_Index : constant Buffer_Index := -1;
 
-   function Is_Null (H : Buffer_Handle) return Boolean is (H = null);
+   type Buffer is record
+      Index : Buffer_Index := Null_Index;
+      Data  : aliased Packet_Buffer;
+   end record
+     with Convention => C;
+
+   type Buffer_Handle is access all Buffer;
+
+   function Is_Null (H : Buffer_Handle) return Boolean is
+     (H = null or else H.Index = Null_Index);
 
 end Utils.Memory_Pool;
