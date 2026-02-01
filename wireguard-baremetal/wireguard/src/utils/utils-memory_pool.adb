@@ -1,67 +1,109 @@
 package body Utils.Memory_Pool
-   with SPARK_Mode    => On,
-        Refined_State => (Pool_State => (Memory,
-                                         Free_Stack,
-                                         Free_Top))
+  with SPARK_Mode => Off  --  Body uses access types directly
 is
-   type Pool_Array is array (Pool_Index) of Packet_Buffer;
-   type Index_Stack is array (Pool_Index) of Pool_Index;
+   use System;
 
-   Memory     : Pool_Array;
-   Free_Stack : Index_Stack;
+   ---------------------------------------------------------------------------
+   --  Internal State
+   --
+   --  Static array of buffers. Handles point directly into this array.
+   --  Free_Stack tracks which indices are available.
+   ---------------------------------------------------------------------------
+
+   Buffers    : array (Pool_Index) of aliased Packet_Buffer :=
+                  (others => (others => 0));
+   Free_Stack : array (Pool_Index) of Pool_Index;
    Free_Top   : Integer := -1;  --  -1 means empty
+
+   ---------------------------------------------------------------------------
+   --  Ghost Function Bodies
+   ---------------------------------------------------------------------------
+
+   function Free_Count return Valid_Count is (Free_Top + 1);
+
+   ---------------------------------------------------------------------------
+   --  Pool Operations
+   ---------------------------------------------------------------------------
 
    procedure Initialize is
    begin
-      --  Push all indices onto free stack
       for I in Pool_Index loop
+         Buffers (I) := (others => 0);
          Free_Stack (I) := I;
       end loop;
       Free_Top := Pool_Size - 1;
-
-      --  Clear memory
-      Memory := (others => (others => 0));
    end Initialize;
 
-   procedure Allocate (Desc : out Buffer_Descriptor) is
+   procedure Allocate (Handle : out Buffer_Handle) is
       Idx : Pool_Index;
    begin
       if Free_Top < 0 then
-         Desc := Null_Descriptor;
+         Handle := null;
          return;
       end if;
 
       Idx := Free_Stack (Free_Top);
       Free_Top := Free_Top - 1;
-
-      Desc := (Idx     => Idx,
-               Address => Memory (Idx)'Address,
-               In_Use  => True);
+      Handle := Buffers (Idx)'Access;
    end Allocate;
 
-   procedure Free (Desc : in out Buffer_Descriptor) is
+   procedure Free (Handle : in out Buffer_Handle) is
    begin
-      Free_Top := Free_Top + 1;
-      Free_Stack (Free_Top) := Desc.Idx;
+      --  Find index by address comparison
+      for I in Pool_Index loop
+         if Buffers (I)'Address = Handle.all'Address then
+            --  Clear sensitive data
+            Handle.all := (others => 0);
+            Handle := null;
 
-      --  Clear buffer memory
-      Memory (Desc.Idx) := (others => 0);
-      Desc := Null_Descriptor;
+            Free_Top := Free_Top + 1;
+            Free_Stack (Free_Top) := I;
+            return;
+         end if;
+      end loop;
+      --  Should never reach here if precondition holds
+      Handle := null;
    end Free;
 
-   function Get_Buffer (Desc : Buffer_Descriptor) return Packet_Buffer is
-   begin
-      return Memory (Desc.Idx);
-   end Get_Buffer;
+   ---------------------------------------------------------------------------
+   --  Buffer Access
+   ---------------------------------------------------------------------------
 
-   procedure Set_Buffer (Desc : Buffer_Descriptor; Data : Packet_Buffer) is
+   function Data (Handle : Buffer_Handle) return System.Address is
    begin
-      Memory (Desc.Idx) := Data;
-   end Set_Buffer;
+      return Handle.all'Address;
+   end Data;
 
-   function Get_Address (Desc : Buffer_Descriptor) return System.Address is
+   ---------------------------------------------------------------------------
+   --  C FFI Operations
+   ---------------------------------------------------------------------------
+
+   function C_Allocate return System.Address is
+      Idx : Pool_Index;
    begin
-      return Memory (Desc.Idx)'Address;
-   end Get_Address;
+      if Free_Top < 0 then
+         return Null_Address;
+      end if;
+
+      Idx := Free_Stack (Free_Top);
+      Free_Top := Free_Top - 1;
+      return Buffers (Idx)'Address;
+   end C_Allocate;
+
+   procedure C_Free (Addr : System.Address) is
+   begin
+      if Addr = Null_Address then
+         return;
+      end if;
+
+      for I in Pool_Index loop
+         if Buffers (I)'Address = Addr then
+            Buffers (I) := (others => 0);
+            Free_Top := Free_Top + 1;
+            Free_Stack (Free_Top) := I;
+            return;
+         end if;
+      end loop;
+   end C_Free;
 
 end Utils.Memory_Pool;
