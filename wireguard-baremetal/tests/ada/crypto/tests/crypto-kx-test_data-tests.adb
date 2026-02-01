@@ -3,7 +3,7 @@
 --  Such changes will be kept during further regeneration of this file.
 --  All code placed outside of test routine bodies will be lost. The
 --  code intended to set up and tear down the test environment should be
---  placed into Crypto.X25519.Test_Data.
+--  placed into Crypto.KX.Test_Data.
 
 with AUnit.Assertions; use AUnit.Assertions;
 with System.Assertions;
@@ -15,16 +15,13 @@ with System.Assertions;
 --
 --  end read only
 
-with Crypto.X25519;
-with Crypto;
+with Crypto.KX;
 with Crypto.Random;
-with Interfaces; use Interfaces;
-with Utils;
-use type Utils.Status;
+with Utils; use Utils;
 
 --  begin read only
 --  end read only
-package body Crypto.X25519.Test_Data.Tests is
+package body Crypto.KX.Test_Data.Tests is
 
 --  begin read only
 --  id:2.2/01/
@@ -38,21 +35,21 @@ package body Crypto.X25519.Test_Data.Tests is
 
 --  begin read only
    procedure Test_Generate_Key_Pair (Gnattest_T : in out Test);
-   procedure Test_Generate_Key_Pair_75bb7e (Gnattest_T : in out Test) renames Test_Generate_Key_Pair;
---  id:2.2/75bb7e6a34205099/Generate_Key_Pair/1/0/
+   procedure Test_Generate_Key_Pair_09a7c3 (Gnattest_T : in out Test) renames Test_Generate_Key_Pair;
+--  id:2.2/09a7c37a7fd03237/Generate_Key_Pair/1/0/
    procedure Test_Generate_Key_Pair (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:29:4:Generate_Key_Pair
+   --  crypto-kx.ads:35:4:Generate_Key_Pair
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      Keys   : Crypto.X25519.Key_Pair;
+      Keys   : Crypto.KX.Key_Pair;
       Result : Status;
       All_Zero_Public : Boolean := True;
       All_Zero_Secret : Boolean := True;
 
    begin
-      Crypto.X25519.Generate_Key_Pair (Keys, Result);
+      Crypto.KX.Generate_Key_Pair (Keys, Result);
 
       AUnit.Assertions.Assert
         (Result = Success,
@@ -87,29 +84,28 @@ package body Crypto.X25519.Test_Data.Tests is
 
 
 --  begin read only
-   procedure Test_Scalar_Mult_Base (Gnattest_T : in out Test);
-   procedure Test_Scalar_Mult_Base_899079 (Gnattest_T : in out Test) renames Test_Scalar_Mult_Base;
---  id:2.2/8990790da6cf6dff/Scalar_Mult_Base/1/0/
-   procedure Test_Scalar_Mult_Base (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:34:4:Scalar_Mult_Base
+   procedure Test_Derive_Public_Key (Gnattest_T : in out Test);
+   procedure Test_Derive_Public_Key_2acfdb (Gnattest_T : in out Test) renames Test_Derive_Public_Key;
+--  id:2.2/2acfdbc895604f0d/Derive_Public_Key/1/0/
+   procedure Test_Derive_Public_Key (Gnattest_T : in out Test) is
+   --  crypto-kx.ads:40:4:Derive_Public_Key
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
-      --  Generate random secret key
-      Secret : Crypto.X25519.Secret_Key;
-      Public : Crypto.X25519.Public_Key;
+      Secret : Crypto.KX.Secret_Key;
+      Public : Crypto.KX.Public_Key;
       Result : Status;
 
    begin
       --  Fill secret key with random data
-      Crypto.Random.Fill_Random (Utils.Byte_Array (Secret));
+      Crypto.Random.Fill_Random (Byte_Array (Secret));
 
-      Crypto.X25519.Scalar_Mult_Base (Public, Secret, Result);
+      Crypto.KX.Derive_Public_Key (Public, Secret, Result);
 
       AUnit.Assertions.Assert
         (Result = Success,
-         "Scalar_Mult_Base failed with status: " & Result'Image);
+         "Derive_Public_Key failed with status: " & Result'Image);
 
       --  The public key should be non-zero
       declare
@@ -127,45 +123,45 @@ package body Crypto.X25519.Test_Data.Tests is
       end;
 
 --  begin read only
-   end Test_Scalar_Mult_Base;
+   end Test_Derive_Public_Key;
 --  end read only
 
 
 --  begin read only
-   procedure Test_Scalar_Mult (Gnattest_T : in out Test);
-   procedure Test_Scalar_Mult_864b3a (Gnattest_T : in out Test) renames Test_Scalar_Mult;
---  id:2.2/864b3a493d650526/Scalar_Mult/1/0/
-   procedure Test_Scalar_Mult (Gnattest_T : in out Test) is
-   --  crypto-x25519.ads:40:4:Scalar_Mult
+   procedure Test_DH (Gnattest_T : in out Test);
+   procedure Test_DH_f2f1b8 (Gnattest_T : in out Test) renames Test_DH;
+--  id:2.2/f2f1b8dff03bff33/DH/1/0/
+   procedure Test_DH (Gnattest_T : in out Test) is
+   --  crypto-kx.ads:46:4:DH
 --  end read only
 
       pragma Unreferenced (Gnattest_T);
 
       --  Test Diffie-Hellman: Alice and Bob should derive same shared secret
-      Alice_Keys : Crypto.X25519.Key_Pair;
-      Bob_Keys   : Crypto.X25519.Key_Pair;
-      Alice_Shared : Crypto.X25519.Shared_Secret;
-      Bob_Shared   : Crypto.X25519.Shared_Secret;
+      Alice_Keys : Crypto.KX.Key_Pair;
+      Bob_Keys   : Crypto.KX.Key_Pair;
+      Alice_Shared : Crypto.KX.Shared_Secret;
+      Bob_Shared   : Crypto.KX.Shared_Secret;
       Result : Status;
 
    begin
       --  Generate keypairs for Alice and Bob
-      Crypto.X25519.Generate_Key_Pair (Alice_Keys, Result);
+      Crypto.KX.Generate_Key_Pair (Alice_Keys, Result);
       AUnit.Assertions.Assert
         (Result = Success, "Alice key gen failed");
 
-      Crypto.X25519.Generate_Key_Pair (Bob_Keys, Result);
+      Crypto.KX.Generate_Key_Pair (Bob_Keys, Result);
       AUnit.Assertions.Assert
         (Result = Success, "Bob key gen failed");
 
       --  Alice computes shared secret: Alice_Secret × Bob_Public
-      Crypto.X25519.Scalar_Mult
+      Crypto.KX.DH
         (Alice_Shared, Alice_Keys.Sec, Bob_Keys.Pub, Result);
       AUnit.Assertions.Assert
         (Result = Success, "Alice DH failed");
 
       --  Bob computes shared secret: Bob_Secret × Alice_Public
-      Crypto.X25519.Scalar_Mult
+      Crypto.KX.DH
         (Bob_Shared, Bob_Keys.Sec, Alice_Keys.Pub, Result);
       AUnit.Assertions.Assert
         (Result = Success, "Bob DH failed");
@@ -178,7 +174,7 @@ package body Crypto.X25519.Test_Data.Tests is
       end loop;
 
 --  begin read only
-   end Test_Scalar_Mult;
+   end Test_DH;
 --  end read only
 
 --  begin read only
@@ -191,4 +187,4 @@ begin
    null;
 --  begin read only
 --  end read only
-end Crypto.X25519.Test_Data.Tests;
+end Crypto.KX.Test_Data.Tests;
