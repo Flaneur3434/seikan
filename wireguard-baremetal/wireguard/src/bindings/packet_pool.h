@@ -3,23 +3,21 @@
  *
  * Provides zero-copy buffer management for network packets.
  * Buffers are pre-allocated and can be efficiently allocated/freed.
+ *
+ * OWNERSHIP RULES (must be followed by caller):
+ *   1. Handles (pointers) must not be aliased/copied
+ *   2. No double-free
+ *   3. No use-after-free
  */
 
 #ifndef PACKET_POOL_H
 #define PACKET_POOL_H
 
-#include <stdint.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/** Buffer handle type. Use packet_pool_allocate() to obtain. */
-typedef int32_t packet_buffer_handle_t;
-
-/** Invalid handle constant */
-#define PACKET_BUFFER_INVALID (-1)
 
 /**
  * Initialize the packet pool.
@@ -30,25 +28,19 @@ void packet_pool_init(void);
 /**
  * Allocate a buffer from the pool.
  *
- * @return Handle to the allocated buffer, or PACKET_BUFFER_INVALID if pool exhausted.
+ * @return Pointer to the allocated buffer, or NULL if pool exhausted.
+ *         Caller receives ownership - must call packet_pool_free() when done.
  */
-packet_buffer_handle_t packet_pool_allocate(void);
+void* packet_pool_allocate(void);
 
 /**
  * Free a buffer back to the pool.
  *
- * @param handle Handle obtained from packet_pool_allocate().
- *               Safe to call with PACKET_BUFFER_INVALID (no-op).
+ * @param buf Pointer obtained from packet_pool_allocate().
+ *            Safe to call with NULL (no-op).
+ *            After this call, buf must not be used.
  */
-void packet_pool_free(packet_buffer_handle_t handle);
-
-/**
- * Get the memory address of a buffer.
- *
- * @param handle Handle obtained from packet_pool_allocate().
- * @return Pointer to the buffer memory, or NULL if handle is invalid.
- */
-void* packet_pool_get_address(packet_buffer_handle_t handle);
+void packet_pool_free(void* buf);
 
 /**
  * Get the size of each buffer in the pool.
