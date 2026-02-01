@@ -1,4 +1,4 @@
---  Random number generation using platform crypto backend
+--  Random number generation using platform-specific backend
 
 with Crypto.Platform;
 with Interfaces.C;

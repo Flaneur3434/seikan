@@ -167,11 +167,63 @@ package body Crypto.Blake2.Test_Data.Tests is
 
       pragma Unreferenced (Gnattest_T);
 
-   begin
+      Test_Data    : constant Byte_Array (0 .. 2) := (16#61#, 16#62#, 16#63#);
+      Test_Key     : constant Key_Buffer := (others => 16#42#);
+      Hash_Keyed   : Digest_Buffer;
+      Hash_Unkeyed : Digest_Buffer;
+      Result       : Status;
 
-      AUnit.Assertions.Assert
-        (Gnattest_Generated.Default_Assert_Value,
-         "Test not implemented.");
+   begin
+      --  Test keyed Blake2s (MAC mode)
+      Blake2s
+        (Data   => Test_Data,
+         Key    => Test_Key,
+         Digest => Hash_Keyed,
+         Result => Result);
+
+      Assert (Result = Success, "Keyed Blake2s should succeed");
+
+      --  Get unkeyed hash for comparison
+      Blake2s
+        (Data   => Test_Data,
+         Digest => Hash_Unkeyed,
+         Result => Result);
+
+      Assert (Result = Success, "Unkeyed Blake2s should succeed");
+
+      --  Keyed and unkeyed should differ
+      Assert (Byte_Array (Hash_Keyed) /= Byte_Array (Hash_Unkeyed),
+              "Keyed hash should differ from unkeyed hash");
+
+      --  Verify keyed hash is deterministic with same key
+      declare
+         Hash_Keyed_2 : Digest_Buffer;
+      begin
+         Blake2s
+           (Data   => Test_Data,
+            Key    => Test_Key,
+            Digest => Hash_Keyed_2,
+            Result => Result);
+
+         Assert (Hash_Keyed = Hash_Keyed_2,
+                 "Keyed Blake2s should be deterministic");
+      end;
+
+      --  Different key should produce different hash
+      declare
+         Different_Key : Key_Buffer := Test_Key;
+         Hash_Different : Digest_Buffer;
+      begin
+         Different_Key (0) := 16#43#;
+         Blake2s
+           (Data   => Test_Data,
+            Key    => Different_Key,
+            Digest => Hash_Different,
+            Result => Result);
+
+         Assert (Hash_Keyed /= Hash_Different,
+                 "Different keys should produce different hashes");
+      end;
 
 --  begin read only
    end Test_2_Blake2s;

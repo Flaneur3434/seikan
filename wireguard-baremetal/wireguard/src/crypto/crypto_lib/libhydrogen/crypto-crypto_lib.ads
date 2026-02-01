@@ -99,4 +99,12 @@ is
    function Constant_Time_Compare
      (A : System.Address; B : System.Address; Length : size_t) return int;
 
+   ---------------------
+   --  Random Number Generation
+   ---------------------
+
+   --  Fills buffer with cryptographically secure random bytes.
+   procedure Random_Bytes (Buffer : System.Address; Size : size_t)
+   with Import, Convention => C, External_Name => "hydro_random_buf";
+
 end Crypto.Crypto_Lib;
