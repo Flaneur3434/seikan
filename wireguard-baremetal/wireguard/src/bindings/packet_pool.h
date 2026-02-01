@@ -8,16 +8,34 @@
  *   1. Handles (pointers) must not be aliased/copied
  *   2. No double-free
  *   3. No use-after-free
+ *
+ * DESIGN:
+ *   packet_buffer_t contains both an index (for O(1) free) and the data.
+ *   C code receives pointer to the whole struct, uses ->data for packet I/O.
+ *   Both allocate and free are O(1) operations.
  */
 
 #ifndef PACKET_POOL_H
 #define PACKET_POOL_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * Buffer record returned by pool.
+ * Contains index for O(1) free + aligned data payload.
+ *
+ * Layout matches Ada's Utils.Memory_Pool.Buffer record exactly.
+ * Index of -1 indicates null/invalid buffer.
+ */
+typedef struct {
+    int32_t index;  /* Internal pool index; -1 = null */
+    uint8_t data[]; /* Flexible array - actual size = packet_pool_get_buffer_size() */
+} packet_buffer_t;
 
 /**
  * Initialize the packet pool.
@@ -26,21 +44,22 @@ extern "C" {
 void packet_pool_init(void);
 
 /**
- * Allocate a buffer from the pool.
+ * Allocate a buffer from the pool. O(1) operation.
  *
- * @return Pointer to the allocated buffer, or NULL if pool exhausted.
+ * @return Pointer to packet_buffer_t, or NULL if pool exhausted.
  *         Caller receives ownership - must call packet_pool_free() when done.
+ *         Use buf->data for the actual packet payload.
  */
-void* packet_pool_allocate(void);
+packet_buffer_t* packet_pool_allocate(void);
 
 /**
- * Free a buffer back to the pool.
+ * Free a buffer back to the pool. O(1) operation.
  *
  * @param buf Pointer obtained from packet_pool_allocate().
  *            Safe to call with NULL (no-op).
  *            After this call, buf must not be used.
  */
-void packet_pool_free(void* buf);
+void packet_pool_free(packet_buffer_t* buf);
 
 /**
  * Get the size of each buffer in the pool.

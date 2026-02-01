@@ -1,30 +1,20 @@
---  Packet_Pool - Concrete Memory Pool Instance with C FFI
+--  Packet_Pool - C FFI for the shared packet buffer pool
 --
---  Instantiates the generic memory pool for network packets
---  and provides C-callable interface functions.
+--  Provides C-callable interface to Wireguard.Packet_Pool.
+--  The pool itself is instantiated in wireguard.ads for use by Ada code.
 
 with System;
 with Interfaces.C;
-with Utils;
-with Utils.Memory_Pool;
+with Wireguard;
 
 package Packet_Pool
    with SPARK_Mode => On
 is
    use Interfaces.C;
 
-   --  Pool configuration
-   Packet_Size : constant := Utils.Max_Packet_Size;
-   Pool_Size   : constant := 8;
-
-   --  Instantiate the generic memory pool
-   package Pool is new Utils.Memory_Pool
-     (Packet_Size => Packet_Size,
-      Pool_Size   => Pool_Size);
-
-   --  Re-export types for Ada code
-   subtype Packet_Buffer is Pool.Packet_Buffer;
-   subtype Buffer_Handle is Pool.Buffer_Handle;
+   --  Re-export pool configuration for C
+   Packet_Size : constant := Wireguard.Packet_Size;
+   Pool_Size   : constant := Wireguard.Pool_Size;
 
    ---------------------------------------------------------------------------
    --  C FFI Functions
