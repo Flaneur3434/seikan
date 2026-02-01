@@ -13,6 +13,13 @@
 
 #include <esp_log.h>
 
+// FreeRTOS
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+// Ada memory pool for zero-copy packet buffers
+#include "packet_pool.h"
+
 #define PORT 51820
 
 static const char *TAG = "udp srv";
@@ -40,8 +47,12 @@ void udp_server_task(void *pvParameters)
 {
     (void)pvParameters;
 
-    char rx_buffer[128];
     char addr_str[128];
+
+    // Initialize Ada packet pool
+    packet_pool_init();
+    ESP_LOGI(TAG, "Packet pool initialized: %zu buffers of %zu bytes",
+             packet_pool_get_pool_size(), packet_pool_get_buffer_size());
 
     struct sockaddr_in dest_addr = {};
     dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -98,12 +109,24 @@ void udp_server_task(void *pvParameters)
     {
         ESP_LOGI(TAG, "Waiting for data");
 
-        // Haven't setup connect() yet, so can research packets from any IP
-        int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+        // Allocate buffer from Ada pool (O(1) operation)
+        packet_buffer_t *pkt = packet_pool_allocate();
+        if (pkt == NULL)
+        {
+            ESP_LOGE(TAG, "Packet pool exhausted!");
+            vTaskDelay(pdMS_TO_TICKS(100));  // Back off and retry
+            continue;
+        }
+
+        size_t buf_size = packet_pool_get_buffer_size();
+
+        // Haven't setup connect() yet, so can receive packets from any IP
+        int len = recvfrom(sock, pkt->data, buf_size, 0, (struct sockaddr *)&source_addr, &socklen);
         // Error occurred on receiving
         if (len < 0)
         {
             ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
+            packet_pool_free(pkt);  // Return buffer to pool
             break;
         }
         // Data received
@@ -117,20 +140,24 @@ void udp_server_task(void *pvParameters)
             else
             {
                 ESP_LOGE(TAG, "Haven't setup IPv6, exiting program ...");
+                packet_pool_free(pkt);
                 break;
             }
 
-            rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string ...
             ESP_LOGI(TAG, "Received %d bytes from %s:", len, addr_str);
-            ESP_LOGI(TAG, "%s", rx_buffer);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, pkt->data, len, ESP_LOG_INFO);
 
-            // Echo back packet
-            int err = sendto(sock, rx_buffer, len, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+            // Echo back packet using zero-copy buffer
+            int err = sendto(sock, pkt->data, len, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
             if (err < 0)
             {
                 ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+                packet_pool_free(pkt);
                 break;
             }
+
+            // Return buffer to pool (O(1) operation)
+            packet_pool_free(pkt);
         }
     }
 
