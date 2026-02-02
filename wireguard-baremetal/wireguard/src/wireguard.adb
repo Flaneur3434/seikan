@@ -33,8 +33,8 @@ is
    begin
       Packet_Pool.Allocate (H1);
       if not Packet_Pool.Is_Null (H1) then
-         H2 := H1;  --  Move ownership from H1 to H2
-         --  H1 is now invalid (moved)
+         Packet_Pool.Move (From => H1, To => H2);  --  Explicit ownership transfer
+         --  H1 is now null (moved)
          Packet_Pool.Free (H2);  --  Free via H2
       end if;
    end Test_Move_Ownership;
@@ -93,8 +93,8 @@ is
    begin
       Packet_Pool.Allocate (H1);
       if not Packet_Pool.Is_Null (H1) then
-         H2 := H1;  --  H1 moved to H2
-         Addr := Packet_Pool.Data (H1);  --  SPARK ERROR: H1 was moved
+         Packet_Pool.Move (From => H1, To => H2);  --  H1 moved to H2
+         Addr := Packet_Pool.Data (H1);  --  SPARK ERROR: H1 was moved (is null)
          Packet_Pool.Free (H2);
       end if;
    end Test_Use_After_Move;
@@ -106,10 +106,24 @@ is
    begin
       Packet_Pool.Allocate (H1);
       if not Packet_Pool.Is_Null (H1) then
-         H2 := H1;  --  H1 moved to H2
-         Packet_Pool.Free (H1);  --  SPARK ERROR: H1 was moved
+         Packet_Pool.Move (From => H1, To => H2);  --  H1 moved to H2
+         Packet_Pool.Free (H1);  --  SPARK ERROR: H1 was moved (is null)
          Packet_Pool.Free (H2);
       end if;
    end Test_Free_After_Move;
+
+   --  BUG: Multiple mutable borrows
+   procedure Test_Multiple_Mutable_Borrows is
+      H1 : Buffer_Handle;
+      Mut_Borrow1 : Buffer_Ref;
+      Mut_Borrow2 : Buffer_Ref;
+   begin
+      Packet_Pool.Allocate (H1);
+      if not Packet_Pool.Is_Null (H1) then
+         Packet_Pool.Borrow_Mut (Handle => H1, Ref => Mut_Borrow1);
+         Packet_Pool.Borrow_Mut (Handle => H1, Ref => Mut_Borrow2);
+         Packet_Pool.Free (H1);
+      end if;
+   end Test_Multiple_Mutable_Borrows;
 
 end Wireguard;
