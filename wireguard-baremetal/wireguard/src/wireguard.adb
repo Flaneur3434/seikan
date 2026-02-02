@@ -1,5 +1,5 @@
 package body Wireguard
-   with SPARK_Mode => On
+  with SPARK_Mode => On
 is
    ---------------------------------------------------------------------------
    --  Test procedures for SPARK ownership verification
@@ -16,8 +16,10 @@ is
       if not Packet_Pool.Is_Null (H) then
          --  Use the buffer (via Data address)
          declare
-            Addr : constant System.Address := Packet_Pool.Data (H);
+            V    : Packet_Pool.Buffer_View := Packet_Pool.Borrow (H);
+            Addr : constant System.Address := Packet_Pool.View_Data (V);
             pragma Unreferenced (Addr);
+            pragma Unreferenced (V);
          begin
             null;  --  Do something with Addr
          end;
@@ -33,9 +35,11 @@ is
    begin
       Packet_Pool.Allocate (H1);
       if not Packet_Pool.Is_Null (H1) then
-         Packet_Pool.Move (From => H1, To => H2);  --  Explicit ownership transfer
+         Packet_Pool.Move
+           (From => H1, To => H2);  --  Explicit ownership transfer
          --  H1 is now null (moved)
          Packet_Pool.Free (H2);  --  Free via H2
+
       end if;
    end Test_Move_Ownership;
 
@@ -70,31 +74,34 @@ is
       if not Packet_Pool.Is_Null (H) then
          Packet_Pool.Free (H);
          Packet_Pool.Free (H);  --  SPARK ERROR: H is null (already freed)
+
       end if;
    end Test_Double_Free;
 
    --  BUG: Use after free
    procedure Test_Use_After_Free is
-      H    : Buffer_Handle;
-      Addr : System.Address;
+      H : Buffer_Handle;
+      V : Buffer_View;
    begin
       Packet_Pool.Allocate (H);
       if not Packet_Pool.Is_Null (H) then
          Packet_Pool.Free (H);
-         Addr := Packet_Pool.Data (H);  --  SPARK ERROR: H is null
+         V := Packet_Pool.Borrow (H);  --  SPARK ERROR: H is null
+
       end if;
    end Test_Use_After_Free;
 
    --  BUG: Use after move
    procedure Test_Use_After_Move is
-      H1   : Buffer_Handle;
-      H2   : Buffer_Handle;
-      Addr : System.Address;
+      H1 : Buffer_Handle;
+      H2 : Buffer_Handle;
+      V1 : Buffer_View;
    begin
       Packet_Pool.Allocate (H1);
       if not Packet_Pool.Is_Null (H1) then
          Packet_Pool.Move (From => H1, To => H2);  --  H1 moved to H2
-         Addr := Packet_Pool.Data (H1);  --  SPARK ERROR: H1 was moved (is null)
+         V1 :=
+           Packet_Pool.Borrow (H1);  --  SPARK ERROR: H1 was moved (is null)
          Packet_Pool.Free (H2);
       end if;
    end Test_Use_After_Move;
@@ -112,18 +119,51 @@ is
       end if;
    end Test_Free_After_Move;
 
-   --  BUG: Multiple mutable borrows
-   procedure Test_Multiple_Mutable_Borrows is
-      H1 : Buffer_Handle;
-      Mut_Borrow1 : Buffer_Ref;
-      Mut_Borrow2 : Buffer_Ref;
+   ---------------------------------------------------------------------------
+   --  BORROW TRACKING TESTS
+   ---------------------------------------------------------------------------
+
+   --  CORRECT: Mutable borrow with explicit return
+   procedure Test_Correct_Mutable_Borrow is
+      H   : Buffer_Handle;
+      Ref : Buffer_Ref;
    begin
-      Packet_Pool.Allocate (H1);
-      if not Packet_Pool.Is_Null (H1) then
-         Packet_Pool.Borrow_Mut (Handle => H1, Ref => Mut_Borrow1);
-         Packet_Pool.Borrow_Mut (Handle => H1, Ref => Mut_Borrow2);
-         Packet_Pool.Free (H1);
+      Packet_Pool.Allocate (H);
+      if not Packet_Pool.Is_Null (H) then
+         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref);
+         --  ... modify buffer via Ref_Data (Ref) ...
+         Packet_Pool.Return_Ref (Handle => H, Ref => Ref);  --  Return borrow
+         Packet_Pool.Free (H);  --  OK: borrow was returned
       end if;
-   end Test_Multiple_Mutable_Borrows;
+   end Test_Correct_Mutable_Borrow;
+
+   --  BUG: Free while mutable borrow is active
+   procedure Test_Free_While_Borrowed is
+      H   : Buffer_Handle;
+      Ref : Buffer_Ref;
+   begin
+      Packet_Pool.Allocate (H);
+      if not Packet_Pool.Is_Null (H) then
+         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref);
+         --  Forgot to return the borrow!
+         Packet_Pool.Free (H);  --  SPARK ERROR: Is_Mutably_Borrowed (H)
+      end if;
+   end Test_Free_While_Borrowed;
+
+   --  BUG: Double mutable borrow
+   procedure Test_Double_Mutable_Borrow is
+      H    : Buffer_Handle;
+      Ref1 : Buffer_Ref;
+      Ref2 : Buffer_Ref;
+   begin
+      Packet_Pool.Allocate (H);
+      if not Packet_Pool.Is_Null (H) then
+         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref1);
+         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref2);  --  SPARK ERROR
+         Packet_Pool.Return_Ref (Handle => H, Ref => Ref1);
+         Packet_Pool.Return_Ref (Handle => H, Ref => Ref2);
+         Packet_Pool.Free (H);
+      end if;
+   end Test_Double_Mutable_Borrow;
 
 end Wireguard;
