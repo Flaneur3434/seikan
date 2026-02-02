@@ -9,7 +9,7 @@
 PLATFORM ?= host
 CRYPTO_BACKEND ?= libsodium
 
-TEST_ROOT := ../tests/ada
+TEST_ROOT := $(realpath ../tests/ada)
 IGNORE_FILE := $(TEST_ROOT)/gnattest.ignore
 
 # Common gnattest flags
