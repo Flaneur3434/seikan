@@ -5,7 +5,7 @@ generic
    Pool_Size   : Positive;
 package Utils.Memory_Pool
    with SPARK_Mode     => On,
-        Abstract_State => Pool_State
+        Abstract_State => (Pool_State, Borrow_State)
 is
    pragma Unevaluated_Use_Of_Old (Allow);
 
@@ -14,6 +14,18 @@ is
 
    type Packet_Buffer is new Byte_Array (0 .. Packet_Size - 1);
    for Packet_Buffer'Alignment use 16;  --  Align for DMA transfers
+
+   ---------------------------------------------------------------------------
+   --  Thread Safety
+   --
+   --  This pool is NOT thread-safe by default. For concurrent access:
+   --    1. Wrap calls in a protected type, OR
+   --    2. Use OS-level locking (mutex), OR
+   --    3. Disable interrupts during pool operations (baremetal)
+   --
+   --  The ghost state Borrow_State tracks active borrows for SPARK proof
+   --  but does NOT provide runtime synchronization.
+   ---------------------------------------------------------------------------
 
    ---------------------------------------------------------------------------
    --  Buffer Handle - Owns access to a buffer
@@ -42,8 +54,8 @@ is
    --  Buffer_View: Read-only access (multiple concurrent borrows allowed)
    --  Buffer_Ref:  Mutable access (exclusive - only one at a time)
    --
-   --  These are non-limited because they're lightweight views.
-   --  Copying a view is OK - the ownership stays with the Buffer_Handle.
+   --  IMPORTANT: Mutable borrows must be explicitly returned via Return_Ref
+   --  before the handle can be freed or mutably borrowed again.
    ---------------------------------------------------------------------------
 
    type Buffer_View is private;
@@ -51,6 +63,14 @@ is
 
    type Buffer_Ref is private;
    --  Mutable reference to buffer data (exclusive borrow)
+
+   function Is_Null_View (V : Buffer_View) return Boolean
+     with Global => null;
+   --  True if view is null (not borrowing)
+
+   function Is_Null_Ref (R : Buffer_Ref) return Boolean
+     with Global => null;
+   --  True if ref is null (not borrowing)
 
    ---------------------------------------------------------------------------
    --  Ghost Functions for Specification
@@ -60,62 +80,101 @@ is
      with Ghost, Global => Pool_State;
    --  Number of free buffers available
 
+   function Is_Mutably_Borrowed (H : Buffer_Handle) return Boolean
+     with Ghost, Global => Borrow_State;
+   --  True if this handle has an active mutable borrow (Borrow_Mut called
+   --  but Return_Ref not yet called). Used to enforce single mutable borrow.
+
    ---------------------------------------------------------------------------
    --  Pool Operations
    ---------------------------------------------------------------------------
 
    procedure Initialize
-     with Global => (Output => Pool_State),
+     with Global => (Output => (Pool_State, Borrow_State)),
           Post   => Free_Count = Pool_Size;
    --  Initialize the pool. All buffers become available.
 
    procedure Allocate (Handle : out Buffer_Handle)
-     with Global => (In_Out => Pool_State),
+     with Global => (In_Out => (Pool_State, Borrow_State)),
           Post   => (if not Is_Null (Handle)
                      then Free_Count = Free_Count'Old - 1
+                          and then not Is_Mutably_Borrowed (Handle)
                      else Free_Count = Free_Count'Old);
    --  Allocate a buffer. Handle is null if pool exhausted.
+   --  Post: Newly allocated handles are never in a borrowed state.
 
    procedure Free (Handle : in out Buffer_Handle)
-     with Global  => (In_Out => Pool_State),
+     with Global  => (In_Out => Pool_State, Proof_In => Borrow_State),
           Depends => (Pool_State =>+ Handle, Handle => null),
-          Pre     => not Is_Null (Handle),
+          Pre     => not Is_Null (Handle)
+                     and then not Is_Mutably_Borrowed (Handle),
           Post    => Is_Null (Handle)
                      and then Free_Count = Free_Count'Old + 1;
    --  Return buffer to pool. Handle becomes null.
+   --  Pre: Buffer must not have active mutable borrow.
 
    ---------------------------------------------------------------------------
    --  Ownership Transfer
    ---------------------------------------------------------------------------
 
    procedure Move (From : in out Buffer_Handle; To : out Buffer_Handle)
-     with Global  => null,
+     with Global  => (Proof_In => Borrow_State),
           Depends => (To => From, From => null),
-          Pre     => not Is_Null (From),
-          Post    => Is_Null (From) and then not Is_Null (To);
+          Pre     => not Is_Null (From)
+                     and then not Is_Mutably_Borrowed (From),
+          Post    => Is_Null (From)
+                     and then not Is_Null (To)
+                     and then not Is_Mutably_Borrowed (To);
    --  Transfer ownership from From to To. From becomes null.
+   --  Pre: Source must not have active mutable borrow.
 
    ---------------------------------------------------------------------------
    --  Borrowing Operations
    --
    --  Borrows provide temporary access without transferring ownership.
    --  The borrow is valid only while the returned view/ref is in scope.
+   --
+   --  IMPORTANT: Mutable borrows must be explicitly returned via Return_Ref
+   --  before the handle can be freed or borrowed again.
    ---------------------------------------------------------------------------
 
    function Borrow (Handle : Buffer_Handle) return Buffer_View
      with Global => null,
-          Pre    => not Is_Null (Handle);
+          Pre    => not Is_Null (Handle),
+          Post   => not Is_Null_View (Borrow'Result);
    --  Borrow read-only access to buffer data.
    --  Multiple concurrent read borrows are safe.
+   --  No need to return - view becomes invalid when Handle is freed.
 
    procedure Borrow_Mut
      (Handle : in out Buffer_Handle;
       Ref    : out Buffer_Ref)
-     with Global => null,
-          Pre    => not Is_Null (Handle),
-          Post   => not Is_Null (Handle);
+     with Global  => (In_Out => Borrow_State),
+          Pre     => not Is_Null (Handle)
+                     and then not Is_Mutably_Borrowed (Handle),
+          Post    => not Is_Null (Handle)
+                     and then not Is_Null_Ref (Ref)
+                     and then Is_Mutably_Borrowed (Handle);
    --  Borrow exclusive mutable access to buffer data.
-   --  Only one mutable borrow at a time (enforced by 'in out').
+   --  Pre: No active mutable borrow on this handle.
+   --  Post: Handle is marked as mutably borrowed.
+   --  MUST call Return_Ref before Free or another Borrow_Mut.
+
+   procedure Return_Ref
+     (Handle : in out Buffer_Handle;
+      Ref    : in out Buffer_Ref)
+     with Global  => (In_Out => Borrow_State),
+          Depends => (Borrow_State =>+ (Handle, Ref),
+                      Handle       => Handle,
+                      Ref          => null),
+          Pre     => not Is_Null (Handle)
+                     and then not Is_Null_Ref (Ref)
+                     and then Is_Mutably_Borrowed (Handle),
+          Post    => not Is_Null (Handle)
+                     and then Is_Null_Ref (Ref)
+                     and then not Is_Mutably_Borrowed (Handle);
+   --  Return mutable borrow. Ref becomes null.
+   --  After this, Handle can be freed or borrowed again.
 
    ---------------------------------------------------------------------------
    --  Borrow Accessors
@@ -128,12 +187,6 @@ is
    function Ref_Data (R : Buffer_Ref) return System.Address
      with Global => null;
    --  Get address of borrowed data (mutable intent)
-
-   function Data (Handle : Buffer_Handle) return System.Address
-     with Global => null,
-          Pre    => not Is_Null (Handle);
-   --  Get address of valid buffer data for direct read/write access.
-   --  DEPRECATED: Prefer Borrow/Borrow_Mut for explicit intent.
 
    ---------------------------------------------------------------------------
    --  C FFI Operations
@@ -185,5 +238,8 @@ private
    type Buffer_Ref is record
       Data_Ptr : access Packet_Buffer := null;
    end record;
+
+   function Is_Null_View (V : Buffer_View) return Boolean is (V.Data_Ptr = null);
+   function Is_Null_Ref (R : Buffer_Ref) return Boolean is (R.Data_Ptr = null);
 
 end Utils.Memory_Pool;

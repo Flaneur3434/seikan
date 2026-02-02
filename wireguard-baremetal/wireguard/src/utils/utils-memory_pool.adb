@@ -10,17 +10,27 @@ is
    --
    --  Static array of buffers. Each buffer stores its own index for O(1) free.
    --  Free_Stack tracks which indices are available (LIFO).
+   --  Borrow_Flags tracks which buffers have active mutable borrows.
    ---------------------------------------------------------------------------
 
-   Buffers    : array (Pool_Index) of aliased Buffer;
-   Free_Stack : array (Pool_Index) of Pool_Index;
-   Free_Top   : Integer := -1;  --  -1 means empty
+   Buffers      : array (Pool_Index) of aliased Buffer;
+   Free_Stack   : array (Pool_Index) of Pool_Index;
+   Free_Top     : Integer := -1;  --  -1 means empty
+   Borrow_Flags : array (Pool_Index) of Boolean := (others => False);
 
    ---------------------------------------------------------------------------
    --  Ghost Function Bodies
    ---------------------------------------------------------------------------
 
    function Free_Count return Valid_Count is (Free_Top + 1);
+
+   function Is_Mutably_Borrowed (H : Buffer_Handle) return Boolean is
+   begin
+      if H.Ptr = null or else H.Ptr.Index = Null_Index then
+         return False;
+      end if;
+      return Borrow_Flags (Pool_Index (H.Ptr.Index));
+   end Is_Mutably_Borrowed;
 
    ---------------------------------------------------------------------------
    --  Pool Operations
@@ -32,6 +42,7 @@ is
          Buffers (I).Index := Null_Index;  --  Mark as not allocated
          Buffers (I).Data := (others => 0);
          Free_Stack (I) := I;
+         Borrow_Flags (I) := False;
       end loop;
       Free_Top := Pool_Size - 1;
    end Initialize;
@@ -89,8 +100,18 @@ is
       Ref    : out Buffer_Ref)
    is
    begin
+      Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := True;
       Ref := (Data_Ptr => Handle.Ptr.Data'Access);
    end Borrow_Mut;
+
+   procedure Return_Ref
+     (Handle : in out Buffer_Handle;
+      Ref    : in out Buffer_Ref)
+   is
+   begin
+      Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := False;
+      Ref := (Data_Ptr => null);
+   end Return_Ref;
 
    ---------------------------------------------------------------------------
    --  Borrow Accessors
@@ -105,15 +126,6 @@ is
    begin
       return R.Data_Ptr.all'Address;
    end Ref_Data;
-
-   ---------------------------------------------------------------------------
-   --  Buffer Access (Legacy)
-   ---------------------------------------------------------------------------
-
-   function Data (Handle : Buffer_Handle) return System.Address is
-   begin
-      return Handle.Ptr.Data'Address;
-   end Data;
 
    ---------------------------------------------------------------------------
    --  C FFI Operations
