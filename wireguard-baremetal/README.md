@@ -93,10 +93,37 @@ wireguard-baremetal/
 | **Ada/SPARK** | Primary implementation language; memory safety, strong typing, contract-based verification |
 | **Alire** | Ada package manager for dependency management |
 | **ESP-IDF** | Platform layer for embedded targets (ESP32-C6) |
-| **libsodium** | Cryptographic primitives (X25519, ChaCha20-Poly1305) |
+| **libsodium** | Cryptographic backend (X25519, ChaCha20-Poly1305) - full WireGuard support |
+| **libhydrogen** | Lightweight cryptographic backend (Gimli-based AEAD) - partial support |
 | **GNATprove** | SPARK proof tool for absence of runtime errors |
 | **GNATtest** | Ada unit test harness generation |
 | **TLA+** | Formal specification of protocol state machines |
+
+## Crypto Backends
+
+The project supports two cryptographic backends, selectable at build time:
+
+| Backend | AEAD | Key Exchange | Random | Status |
+|---------|------|--------------|--------|--------|
+| **libsodium** | ChaCha20-Poly1305 | X25519 (raw DH) | randombytes_buf | ✅ Full support |
+| **libhydrogen** | Gimli secretbox | X25519 (keygen only) | hydro_random | ⚠️ Partial (no raw DH) |
+
+### Selecting a Backend
+
+```bash
+# Build with libsodium (default, full WireGuard compatibility)
+gprbuild -P crypto.gpr -XCRYPTO_BACKEND=libsodium
+
+# Build with libhydrogen (smaller footprint, limited DH)
+gprbuild -P crypto.gpr -XCRYPTO_BACKEND=libhydrogen
+```
+
+### Backend Notes
+
+- **libsodium**: Recommended for WireGuard. Provides raw X25519 scalar multiplication needed for Noise IK handshake DH operations.
+- **libhydrogen**: Smaller code size, but doesn't expose raw X25519 DH. The `Crypto.KX.DH` function uses a Blake2s-based derivation instead of true Diffie-Hellman, which is **not compatible** with the WireGuard protocol.
+
+Random number generation uses the platform's `getrandom()` syscall on Linux hosts, independent of the crypto backend.
 
 ## Trusted Computing Base
 
