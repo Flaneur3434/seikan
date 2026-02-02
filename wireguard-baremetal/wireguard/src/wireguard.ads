@@ -23,5 +23,7 @@ is
    --  Re-export commonly used types
    subtype Packet_Buffer is Packet_Pool.Packet_Buffer;
    subtype Buffer_Handle is Packet_Pool.Buffer_Handle;
+   subtype Buffer_View is Packet_Pool.Buffer_View;
+   subtype Buffer_Ref is Packet_Pool.Buffer_Ref;
 
 end Wireguard;

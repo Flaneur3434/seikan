@@ -40,38 +40,79 @@ is
       Idx : Pool_Index;
    begin
       if Free_Top < 0 then
-         Handle := null;
+         Handle.Ptr := null;
          return;
       end if;
 
       Idx := Free_Stack (Free_Top);
       Free_Top := Free_Top - 1;
       Buffers (Idx).Index := Buffer_Index (Idx);  --  Mark as allocated
-      Handle := Buffers (Idx)'Access;
+      Handle.Ptr := Buffers (Idx)'Access;
    end Allocate;
 
    procedure Free (Handle : in out Buffer_Handle) is
       Idx : Pool_Index;
    begin
       --  O(1) lookup via stored index
-      Idx := Pool_Index (Handle.Index);
+      Idx := Pool_Index (Handle.Ptr.Index);
 
       --  Clear sensitive data
-      Handle.Data := (others => 0);
-      Handle.Index := Null_Index;  --  Mark as not allocated
-      Handle := null;
+      Handle.Ptr.Data := (others => 0);
+      Handle.Ptr.Index := Null_Index;  --  Mark as not allocated
+      Handle.Ptr := null;
 
       Free_Top := Free_Top + 1;
       Free_Stack (Free_Top) := Idx;
    end Free;
 
    ---------------------------------------------------------------------------
-   --  Buffer Access
+   --  Ownership Transfer
+   ---------------------------------------------------------------------------
+
+   procedure Move (From : in out Buffer_Handle; To : out Buffer_Handle) is
+   begin
+      To.Ptr := From.Ptr;
+      From.Ptr := null;
+   end Move;
+
+   ---------------------------------------------------------------------------
+   --  Borrowing Operations
+   ---------------------------------------------------------------------------
+
+   function Borrow (Handle : Buffer_Handle) return Buffer_View is
+   begin
+      return (Data_Ptr => Handle.Ptr.Data'Access);
+   end Borrow;
+
+   procedure Borrow_Mut
+     (Handle : in out Buffer_Handle;
+      Ref    : out Buffer_Ref)
+   is
+   begin
+      Ref := (Data_Ptr => Handle.Ptr.Data'Access);
+   end Borrow_Mut;
+
+   ---------------------------------------------------------------------------
+   --  Borrow Accessors
+   ---------------------------------------------------------------------------
+
+   function View_Data (V : Buffer_View) return System.Address is
+   begin
+      return V.Data_Ptr.all'Address;
+   end View_Data;
+
+   function Ref_Data (R : Buffer_Ref) return System.Address is
+   begin
+      return R.Data_Ptr.all'Address;
+   end Ref_Data;
+
+   ---------------------------------------------------------------------------
+   --  Buffer Access (Legacy)
    ---------------------------------------------------------------------------
 
    function Data (Handle : Buffer_Handle) return System.Address is
    begin
-      return Handle.Data'Address;
+      return Handle.Ptr.Data'Address;
    end Data;
 
    ---------------------------------------------------------------------------
