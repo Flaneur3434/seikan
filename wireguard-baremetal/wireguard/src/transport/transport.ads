@@ -158,9 +158,7 @@ is
    procedure Release_To_C
      (Handle : in out Buffer_Handle;
       Length : Packet_Length;
-      Addr   : out System.Address)
-   with
-     SPARK_Mode => Off;
+      Addr   : out System.Address);
 
    --  Acquire buffer from C layer after reception
    --  Takes ownership; C must not use the buffer after this.
@@ -168,9 +166,7 @@ is
    procedure Acquire_From_C
      (Addr   : System.Address;
       Handle : out Buffer_Handle;
-      Length : out Packet_Length)
-   with
-     SPARK_Mode => Off;
+      Length : out Packet_Length);
 
    --  Note: Access buffer fields directly via Borrow/Borrow_Mut:
    --    View := Packet_Pool.Borrow (Handle);
