@@ -16,6 +16,29 @@ is
    for Packet_Buffer'Alignment use 16;  --  Align for DMA transfers
 
    ---------------------------------------------------------------------------
+   --  Buffer Record
+   --
+   --  Layout matches C struct wg_packet_t for zero-copy interop:
+   --    int32_t  index;   -- Pool index for O(1) free
+   --    uint16_t len;     -- Valid data length
+   --    uint16_t offset;  -- Start offset in data (headroom)
+   --    uint8_t  data[];  -- Packet data
+   ---------------------------------------------------------------------------
+
+   subtype Buffer_Index is Integer range -1 .. Pool_Size - 1;
+   Null_Index : constant Buffer_Index := -1;
+
+   type Buffer is limited record
+      Index  : Buffer_Index := Null_Index;
+      Len    : Interfaces.Unsigned_16 := 0;
+      Offset : Interfaces.Unsigned_16 := 0;
+      Data   : aliased Packet_Buffer;
+   end record
+     with Convention => C;
+
+   type Buffer_Ptr is access all Buffer;
+
+   ---------------------------------------------------------------------------
    --  Thread Safety
    --
    --  This pool is NOT thread-safe by default. For concurrent access:
@@ -54,21 +77,27 @@ is
    --  Buffer_View: Read-only access (multiple concurrent borrows allowed)
    --  Buffer_Ref:  Mutable access (exclusive - only one at a time)
    --
+   --  Access fields directly: V.Buf_Ptr.Len, R.Buf_Ptr.Data, etc.
+   --
    --  IMPORTANT: Mutable borrows must be explicitly returned via Return_Ref
    --  before the handle can be freed or mutably borrowed again.
    ---------------------------------------------------------------------------
 
-   type Buffer_View is private;
-   --  Read-only view into buffer data (immutable borrow)
+   type Buffer_View is record
+      Buf_Ptr : access constant Buffer := null;
+   end record;
+   --  Read-only view into buffer (immutable borrow)
 
-   type Buffer_Ref is private;
-   --  Mutable reference to buffer data (exclusive borrow)
+   type Buffer_Ref is record
+      Buf_Ptr : access Buffer := null;
+   end record;
+   --  Mutable reference to buffer (exclusive borrow)
 
-   function Is_Null_View (V : Buffer_View) return Boolean
+   function Is_Null_View (V : Buffer_View) return Boolean is (V.Buf_Ptr = null)
      with Global => null;
    --  True if view is null (not borrowing)
 
-   function Is_Null_Ref (R : Buffer_Ref) return Boolean
+   function Is_Null_Ref (R : Buffer_Ref) return Boolean is (R.Buf_Ptr = null)
      with Global => null;
    --  True if ref is null (not borrowing)
 
@@ -127,7 +156,11 @@ is
                      and then not Is_Mutably_Borrowed (To);
    --  Transfer ownership from From to To. From becomes null.
    --  Pre: Source must not have active mutable borrow.
-
+   procedure Reset_Handle (Handle : in out Buffer_Handle)
+     with SPARK_Mode => Off;
+   --  Clear handle without returning buffer to pool.
+   --  Used for C interop when ownership transfers to C layer.
+   --  WARNING: Does NOT free the buffer - caller must ensure it will be freed.
    ---------------------------------------------------------------------------
    --  Borrowing Operations
    --
@@ -182,11 +215,11 @@ is
 
    function View_Data (V : Buffer_View) return System.Address
      with Global => null;
-   --  Get address of borrowed data (read-only intent)
+   --  Get address of Data array (read-only intent)
 
    function Ref_Data (R : Buffer_Ref) return System.Address
      with Global => null;
-   --  Get address of borrowed data (mutable intent)
+   --  Get address of Data array (mutable intent)
 
    ---------------------------------------------------------------------------
    --  C FFI Operations
@@ -202,20 +235,16 @@ is
           SPARK_Mode => Off;
    --  Free by address
 
+   procedure Create_From_Address
+     (Addr   : System.Address;
+      Handle : out Buffer_Handle)
+     with SPARK_Mode => Off;
+   --  Create handle from raw buffer address (from C layer).
+   --  WARNING: Caller must ensure Addr points to valid pool buffer.
+   --  Used for acquiring buffers from C.
+
 private
    pragma SPARK_Mode (Off);
-
-   --  Buffer record: index for O(1) free + aligned data
-   subtype Buffer_Index is Integer range -1 .. Pool_Size - 1;
-   Null_Index : constant Buffer_Index := -1;
-
-   type Buffer is limited record
-      Index : Buffer_Index := Null_Index;
-      Data  : aliased Packet_Buffer;
-   end record
-     with Convention => C;
-
-   type Buffer_Ptr is access all Buffer;
 
    type Buffer_Handle is limited record
       Ptr : Buffer_Ptr := null;
@@ -223,23 +252,5 @@ private
 
    function Is_Null (H : Buffer_Handle) return Boolean is
      (H.Ptr = null or else H.Ptr.Index = Null_Index);
-
-   ---------------------------------------------------------------------------
-   --  Borrow Types Implementation
-   --
-   --  These wrap access types but enforce borrow semantics at the API level.
-   --  Non-limited because they're lightweight views (copying a view is OK).
-   ---------------------------------------------------------------------------
-
-   type Buffer_View is record
-      Data_Ptr : access constant Packet_Buffer := null;
-   end record;
-
-   type Buffer_Ref is record
-      Data_Ptr : access Packet_Buffer := null;
-   end record;
-
-   function Is_Null_View (V : Buffer_View) return Boolean is (V.Data_Ptr = null);
-   function Is_Null_Ref (R : Buffer_Ref) return Boolean is (R.Data_Ptr = null);
 
 end Utils.Memory_Pool;

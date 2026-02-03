@@ -40,6 +40,8 @@ is
    begin
       for I in Pool_Index loop
          Buffers (I).Index := Null_Index;  --  Mark as not allocated
+         Buffers (I).Len := 0;
+         Buffers (I).Offset := 0;
          Buffers (I).Data := (others => 0);
          Free_Stack (I) := I;
          Borrow_Flags (I) := False;
@@ -58,6 +60,8 @@ is
       Idx := Free_Stack (Free_Top);
       Free_Top := Free_Top - 1;
       Buffers (Idx).Index := Buffer_Index (Idx);  --  Mark as allocated
+      Buffers (Idx).Len := 0;
+      Buffers (Idx).Offset := 0;
       Handle.Ptr := Buffers (Idx)'Access;
    end Allocate;
 
@@ -67,9 +71,11 @@ is
       --  O(1) lookup via stored index
       Idx := Pool_Index (Handle.Ptr.Index);
 
-      --  Clear sensitive data
-      Handle.Ptr.Data := (others => 0);
+      --  Clear metadata and sensitive data
       Handle.Ptr.Index := Null_Index;  --  Mark as not allocated
+      Handle.Ptr.Len := 0;
+      Handle.Ptr.Offset := 0;
+      Handle.Ptr.Data := (others => 0);
       Handle.Ptr := null;
 
       Free_Top := Free_Top + 1;
@@ -86,13 +92,18 @@ is
       From.Ptr := null;
    end Move;
 
+   procedure Reset_Handle (Handle : in out Buffer_Handle) is
+   begin
+      Handle.Ptr := null;
+   end Reset_Handle;
+
    ---------------------------------------------------------------------------
    --  Borrowing Operations
    ---------------------------------------------------------------------------
 
    function Borrow (Handle : Buffer_Handle) return Buffer_View is
    begin
-      return (Data_Ptr => Handle.Ptr.Data'Access);
+      return (Buf_Ptr => Handle.Ptr);
    end Borrow;
 
    procedure Borrow_Mut
@@ -101,7 +112,7 @@ is
    is
    begin
       Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := True;
-      Ref := (Data_Ptr => Handle.Ptr.Data'Access);
+      Ref := (Buf_Ptr => Handle.Ptr);
    end Borrow_Mut;
 
    procedure Return_Ref
@@ -110,7 +121,7 @@ is
    is
    begin
       Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := False;
-      Ref := (Data_Ptr => null);
+      Ref := (Buf_Ptr => null);
    end Return_Ref;
 
    ---------------------------------------------------------------------------
@@ -119,19 +130,19 @@ is
 
    function View_Data (V : Buffer_View) return System.Address is
    begin
-      return V.Data_Ptr.all'Address;
+      return V.Buf_Ptr.Data'Address;
    end View_Data;
 
    function Ref_Data (R : Buffer_Ref) return System.Address is
    begin
-      return R.Data_Ptr.all'Address;
+      return R.Buf_Ptr.Data'Address;
    end Ref_Data;
 
    ---------------------------------------------------------------------------
    --  C FFI Operations
    --
-   --  C code receives pointer to Buffer record, enabling O(1) free.
-   --  C struct layout: { int32_t index; uint8_t data[Packet_Size]; }
+   --  C code receives pointer to wg_packet_t (Buffer record):
+   --    struct { int32_t index; uint16_t len/offset; uint8_t data[]; }
    ---------------------------------------------------------------------------
 
    function C_Allocate return System.Address is
@@ -144,6 +155,8 @@ is
       Idx := Free_Stack (Free_Top);
       Free_Top := Free_Top - 1;
       Buffers (Idx).Index := Buffer_Index (Idx);
+      Buffers (Idx).Len := 0;
+      Buffers (Idx).Offset := 0;
       return Buffers (Idx)'Address;  --  Return Buffer record address
    end C_Allocate;
 
@@ -167,11 +180,27 @@ is
 
       --  O(1) lookup via stored index
       Idx := Pool_Index (Buf.Index);
-      Buf.Data := (others => 0);
       Buf.Index := Null_Index;
+      Buf.Len := 0;
+      Buf.Offset := 0;
+      Buf.Data := (others => 0);
 
       Free_Top := Free_Top + 1;
       Free_Stack (Free_Top) := Idx;
    end C_Free;
+
+   procedure Create_From_Address
+     (Addr   : System.Address;
+      Handle : out Buffer_Handle)
+   is
+      function To_Ptr is new Ada.Unchecked_Conversion
+        (System.Address, Buffer_Ptr);
+   begin
+      if Addr = Null_Address then
+         Handle.Ptr := null;
+      else
+         Handle.Ptr := To_Ptr (Addr);
+      end if;
+   end Create_From_Address;
 
 end Utils.Memory_Pool;
