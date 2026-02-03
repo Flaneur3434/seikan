@@ -1,7 +1,7 @@
 --  Transport - WireGuard Transport Layer Implementation
 
 package body Transport
-  with SPARK_Mode => Off  --  Address arithmetic requires SPARK_Mode Off
+  with SPARK_Mode => On  --  Address arithmetic requires SPARK_Mode Off
 is
 
    ---------------------
