@@ -1,0 +1,260 @@
+--  Handshake - VeriGuard Noise IK Handshake Protocol
+--
+--  Implements the WireGuard Noise IK handshake pattern for key agreement.
+--  This module owns all handshake state and orchestrates cryptographic
+--  operations. C code never interprets handshake semantics.
+--
+--  TX Path (Initiator):
+--    1. Ada allocates buffer from packet pool
+--    2. Ada builds Message_Handshake_Initiation directly in buffer
+--    3. Ada performs crypto operations (DH, AEAD encrypt)
+--    4. Buffer is ready for transmission
+--
+--  Key Design Principles:
+--    - "Ada is the brain, C is the hands"
+--    - Zero-copy: build messages directly in pool buffers
+--    - Single ownership: buffer handle tracks ownership
+--    - SPARK-provable state transitions
+
+with Interfaces; use Interfaces;
+with Utils; use Utils;
+with Crypto.KX;
+with Crypto.Blake2;
+with Crypto.TAI64N;
+with Transport;
+
+package Handshake
+  with SPARK_Mode => On
+is
+   ---------------------
+   --  Constants
+   ---------------------
+
+   --  Noise protocol construction identifier for WireGuard
+   --  "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
+   Construction_Length : constant := 37;
+
+   --  Noise protocol identifier
+   --  "WireGuard v1 zx2c4 Jason@zx2c4.com"
+   Identifier_Length : constant := 34;
+
+   --  Label for MAC1 key derivation
+   Label_Mac1_Length : constant := 8;  --  "mac1----"
+
+   ---------------------
+   --  Handshake State
+   ---------------------
+
+   --  Chaining key for Noise protocol (32 bytes)
+   subtype Chaining_Key is
+     Byte_Array (0 .. Crypto.Blake2.BLAKE2S_OUTBYTES - 1);
+
+   --  Hash state for Noise protocol (32 bytes)
+   subtype Hash_State is
+     Byte_Array (0 .. Crypto.Blake2.BLAKE2S_OUTBYTES - 1);
+
+   --  Sender/Receiver index (local session identifier)
+   subtype Session_Index is Unsigned_32;
+
+   --  Handshake state machine
+   type Handshake_Role is (Role_Initiator, Role_Responder);
+
+   type Handshake_State_Kind is
+     (State_Empty,            --  No handshake in progress
+      State_Initiator_Sent,   --  Initiation sent, waiting for response
+      State_Responder_Sent,   --  Response sent, waiting for first data
+      State_Established);     --  Handshake complete, session keys derived
+
+   --  Full handshake state
+   --  Contains all ephemeral data needed during handshake
+   type Handshake_State is record
+      --  State machine
+      Kind : Handshake_State_Kind;
+      Role : Handshake_Role;
+
+      --  Noise protocol state
+      Chaining    : Chaining_Key;
+      Hash        : Hash_State;
+
+      --  Our ephemeral keypair (generated per handshake)
+      Ephemeral   : Crypto.KX.Key_Pair;
+
+      --  Remote peer's ephemeral public key (received in initiation/response)
+      Remote_Ephemeral : Crypto.KX.Public_Key;
+
+      --  Remote peer's static public key (decrypted from initiation)
+      Remote_Static : Crypto.KX.Public_Key;
+
+      --  Local sender index (identifies this session)
+      Local_Index : Session_Index;
+
+      --  Remote sender index (received in initiation/response)
+      Remote_Index : Session_Index;
+
+      --  Timestamp for replay protection
+      Last_Timestamp : Crypto.TAI64N.Timestamp;
+   end record;
+
+   --  Initial (empty) handshake state
+   Empty_Handshake : constant Handshake_State;
+
+   ---------------------
+   --  Static Identity
+   ---------------------
+
+   --  Our long-term static identity keypair
+   --  This persists across handshakes
+   type Static_Identity is record
+      Key_Pair : Crypto.KX.Key_Pair;
+      --  Pre-computed MAC1 key = HASH(LABEL_MAC1 || static_public)
+      Mac1_Key : Crypto.Blake2.Key_Buffer;
+   end record;
+
+   ---------------------
+   --  Peer Configuration
+   ---------------------
+
+   --  Remote peer's static public key
+   type Peer_Config is record
+      Static_Public : Crypto.KX.Public_Key;
+      --  Pre-computed MAC1 key for this peer = HASH(LABEL_MAC1 || peer_public)
+      Mac1_Key      : Crypto.Blake2.Key_Buffer;
+   end record;
+
+   ---------------------
+   --  Handshake Initiation Result
+   ---------------------
+
+   --  Result of building a handshake initiation message
+   type Initiation_Result is record
+      Success : Boolean;
+      --  On success: length of message in buffer
+      --  Message starts at buffer offset 0
+      Length  : Natural;
+   end record;
+
+   --  Result of building a handshake response message
+   type Response_Result is record
+      Success : Boolean;
+      --  On success: length of message in buffer
+      Length  : Natural;
+   end record;
+
+   ---------------------
+   --  Procedures
+   ---------------------
+
+   --  Initialize static identity with a keypair
+   --  Computes MAC1 key from static public key
+   procedure Initialize_Identity
+     (Identity : out Static_Identity;
+      Key_Pair : Crypto.KX.Key_Pair;
+      Result   : out Status)
+   with Global => null;
+
+   --  Initialize peer configuration
+   --  Computes MAC1 key for the peer
+   procedure Initialize_Peer
+     (Peer        : out Peer_Config;
+      Peer_Public : Crypto.KX.Public_Key;
+      Result      : out Status)
+   with Global => null;
+
+   --  Create a new handshake initiation message (TX path)
+   --
+   --  This is the first step of the handshake from the Initiator side.
+   --  The message is built directly into the provided buffer for zero-copy.
+   --
+   --  Buffer must be at least Handshake_Init_Size bytes.
+   --
+   --  On success:
+   --    - Buffer contains the complete Message_Handshake_Initiation
+   --    - State is updated to State_Initiator_Sent
+   --    - Result.Length contains the message length
+   --
+   --  Noise IK pattern (Initiator side, first message):
+   --    -> e, es, s, ss
+   --    e:  Generate ephemeral keypair
+   --    es: DH(ephemeral_secret, responder_static)
+   --    s:  Encrypt initiator static with current key
+   --    ss: DH(initiator_static_secret, responder_static)
+   procedure Create_Initiation
+     (Buffer   : in out Byte_Array;
+      State    : in out Handshake_State;
+      Identity : Static_Identity;
+      Peer     : Peer_Config;
+      Result   : out Initiation_Result)
+   with
+     Global => null,
+     Pre    => Buffer'Length >= Transport.Handshake_Init_Size
+               and then State.Kind = State_Empty,
+     Post   => (if Result.Success
+                then State.Kind = State_Initiator_Sent
+                     and then Result.Length = Transport.Handshake_Init_Size
+                else State.Kind = State_Empty);
+
+   --  Process a received handshake initiation message (RX path, Responder)
+   --
+   --  Validates and decrypts an incoming initiation message.
+   --  On success, State contains the Noise protocol state needed to
+   --  create a response.
+   --
+   --  Noise IK pattern (Responder side, receiving first message):
+   --    <- e, es, s, ss
+   --    e:  Read initiator ephemeral
+   --    es: DH(responder_static_secret, initiator_ephemeral)
+   --    s:  Decrypt initiator static
+   --    ss: DH(responder_static_secret, initiator_static)
+   procedure Process_Initiation
+     (Buffer   : Byte_Array;
+      State    : out Handshake_State;
+      Identity : Static_Identity;
+      Result   : out Boolean)
+   with
+     Global => null,
+     Pre    => Buffer'Length >= Transport.Handshake_Init_Size,
+     Post   => (if Result
+                then State.Kind = State_Empty  --  Ready for Create_Response
+                else State.Kind = State_Empty);
+
+   --  Create a handshake response message (TX path, Responder)
+   --
+   --  Builds the response message directly into the provided buffer.
+   --  Must be called after successful Process_Initiation.
+   --
+   --  Noise IK pattern (Responder side, second message):
+   --    -> e, ee, se
+   --    e:  Generate responder ephemeral
+   --    ee: DH(responder_ephemeral_secret, initiator_ephemeral)
+   --    se: DH(responder_ephemeral_secret, initiator_static)
+   procedure Create_Response
+     (Buffer   : in out Byte_Array;
+      State    : in out Handshake_State;
+      Identity : Static_Identity;
+      Result   : out Response_Result)
+   with
+     Global => null,
+     Pre    => Buffer'Length >= Transport.Handshake_Response_Size
+               and then State.Kind = State_Empty,
+     Post   => (if Result.Success
+                then State.Kind = State_Responder_Sent
+                     and then Result.Length = Transport.Handshake_Response_Size
+                else State.Kind = State_Empty);
+
+private
+
+   Empty_Handshake : constant Handshake_State :=
+     (Kind             => State_Empty,
+      Role             => Role_Initiator,
+      Chaining         => (others => 0),
+      Hash             => (others => 0),
+      Ephemeral        =>
+        (Pub => (others => 0),
+         Sec => (others => 0)),
+      Remote_Ephemeral => (others => 0),
+      Remote_Static    => (others => 0),
+      Local_Index      => 0,
+      Remote_Index     => 0,
+      Last_Timestamp   => Crypto.TAI64N.Zero);
+
+end Handshake;
