@@ -28,4 +28,52 @@ is
       end case;
    end Get_Message_Kind;
 
+   ---------------------
+   --  C Interop Implementation
+   ---------------------
+
+   procedure Release_To_C
+     (Handle : in out Buffer_Handle;
+      Length : Packet_Length;
+      Addr   : out System.Address)
+   is
+      Ref : Buffer_Ref;
+   begin
+      if Packet_Pool.Is_Null (Handle) then
+         Addr := System.Null_Address;
+         return;
+      end if;
+
+      --  Borrow mutably to set length and get address
+      Packet_Pool.Borrow_Mut (Handle, Ref);
+      Ref.Buf_Ptr.Len := Length;
+      Addr := Ref.Buf_Ptr.all'Address;
+      Packet_Pool.Return_Ref (Handle, Ref);
+
+      --  Null out the handle - C now owns the buffer
+      Packet_Pool.Reset_Handle (Handle);
+   end Release_To_C;
+
+   procedure Acquire_From_C
+     (Addr   : System.Address;
+      Handle : out Buffer_Handle;
+      Length : out Packet_Length)
+   is
+      use System;
+      View : Buffer_View;
+   begin
+      if Addr = Null_Address then
+         Packet_Pool.Create_From_Address (Addr, Handle);
+         Length := 0;
+         return;
+      end if;
+
+      --  Create handle pointing to this buffer
+      Packet_Pool.Create_From_Address (Addr, Handle);
+
+      --  Read length directly
+      View := Packet_Pool.Borrow (Handle);
+      Length := View.Buf_Ptr.Len;
+   end Acquire_From_C;
+
 end Transport;
