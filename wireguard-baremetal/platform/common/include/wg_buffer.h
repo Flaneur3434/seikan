@@ -47,11 +47,37 @@ extern "C" {
 #endif
 
 /**
- * @brief Buffer descriptor returned by dequeue operations
+ * @brief Packet buffer with metadata
+ *
+ * Layout matches Ada Buffer record for zero-copy interop.
+ * All buffers are fixed-size (WG_PACKET_SIZE) but len/offset
+ * describe the valid data region.
+ *
+ * Usage:
+ *   RX: Driver writes at data+offset, sets len
+ *   TX: Ada builds at data[0], sets len. Driver sends data[0..len-1]
+ *   Headroom: Set offset > 0 if driver needs to prepend headers
  */
 typedef struct {
-    void*  ptr;  /**< Pointer to buffer data, NULL if queue empty */
-    size_t len;  /**< Length of valid data in buffer */
+    int32_t  index;     /**< Pool index for O(1) free (-1 = invalid) */
+    uint16_t len;       /**< Valid data length in bytes */
+    uint16_t offset;    /**< Start offset of data (headroom) */
+    uint8_t  data[];    /**< Packet data (flexible array member) */
+} wg_packet_t;
+
+/**
+ * @brief Get data pointer accounting for offset
+ */
+static inline uint8_t* wg_packet_data(wg_packet_t* pkt) {
+    return pkt->data + pkt->offset;
+}
+
+/**
+ * @brief Buffer descriptor for legacy API compatibility
+ */
+typedef struct {
+    wg_packet_t* pkt;   /**< Packet pointer, NULL if queue empty */
+    size_t       len;   /**< Length of valid data (same as pkt->len) */
 } wg_buffer_t;
 
 /**
@@ -63,28 +89,29 @@ typedef struct {
 void wg_buf_init(void);
 
 /**
- * @brief Allocate a buffer from the pool
+ * @brief Allocate a packet buffer from the pool
  *
- * @param capacity Requested capacity (ignored - all buffers are max size)
- * @return Pointer to buffer, or NULL if pool exhausted
+ * @return Packet pointer with len=0, offset=0, or NULL if pool exhausted
  *
  * Caller owns the returned buffer and must either:
  * - Free it with wg_buf_free()
  * - Transfer ownership via wg_rx_enqueue() or wg_tx_enqueue()
  */
-void* wg_buf_alloc(size_t capacity);
+wg_packet_t* wg_buf_alloc(void);
 
 /**
- * @brief Return a buffer to the pool
+ * @brief Return a packet buffer to the pool
  *
- * @param ptr Buffer pointer (NULL is safely ignored)
+ * @param pkt Packet pointer (NULL is safely ignored)
+ *
+ * Clears len/offset and returns buffer to pool.
  */
-void wg_buf_free(void* ptr);
+void wg_buf_free(wg_packet_t* pkt);
 
 /**
- * @brief Get the capacity of each buffer
+ * @brief Get the data capacity of each buffer
  *
- * @return Buffer capacity in bytes
+ * @return Buffer data capacity in bytes
  */
 size_t wg_buf_capacity(void);
 
@@ -98,40 +125,38 @@ size_t wg_buf_free_count(void);
 /**
  * @brief Enqueue a received packet for processing
  *
- * @param ptr Buffer containing received data (ownership transferred)
- * @param len Length of received data
+ * @param pkt Packet with len/offset set by driver (ownership transferred)
  *
  * If queue is full, buffer is freed and packet is dropped.
  */
-void wg_rx_enqueue(void* ptr, size_t len);
+void wg_rx_enqueue(wg_packet_t* pkt);
 
 /**
  * @brief Dequeue a received packet for processing
  *
- * @return Buffer descriptor (ptr is NULL if queue empty)
+ * @return Packet pointer, or NULL if queue empty
  *
  * Caller owns the returned buffer and must free it after processing.
  */
-wg_buffer_t wg_rx_dequeue(void);
+wg_packet_t* wg_rx_dequeue(void);
 
 /**
  * @brief Enqueue a packet for transmission
  *
- * @param ptr Buffer containing data to transmit (ownership transferred)
- * @param len Length of data to transmit
+ * @param pkt Packet with len set (ownership transferred)
  *
  * If queue is full, buffer is freed and packet is dropped.
  */
-void wg_tx_enqueue(void* ptr, size_t len);
+void wg_tx_enqueue(wg_packet_t* pkt);
 
 /**
  * @brief Dequeue a packet for transmission
  *
- * @return Buffer descriptor (ptr is NULL if queue empty)
+ * @return Packet pointer, or NULL if queue empty
  *
  * Caller owns the returned buffer and must free it after sending.
  */
-wg_buffer_t wg_tx_dequeue(void);
+wg_packet_t* wg_tx_dequeue(void);
 
 #ifdef __cplusplus
 }

@@ -1,11 +1,11 @@
 --  Packet_Pool - C FFI for the shared packet buffer pool
 --
---  Provides C-callable interface to Wireguard.Packet_Pool.
---  The pool itself is instantiated in wireguard.ads for use by Ada code.
+--  Provides C-callable interface to Transport.Packet_Pool.
+--  The pool itself is instantiated in transport.ads for use by Ada code.
 
 with System;
 with Interfaces.C;
-with Wireguard;
+with Transport;
 
 package Packet_Pool
    with SPARK_Mode => On
@@ -13,8 +13,8 @@ is
    use Interfaces.C;
 
    --  Re-export pool configuration for C
-   Packet_Size : constant := Wireguard.Packet_Size;
-   Pool_Size   : constant := Wireguard.Pool_Size;
+   Packet_Size : constant := Transport.Packet_Size;
+   Pool_Size   : constant := Transport.Pool_Size;
 
    ---------------------------------------------------------------------------
    --  C FFI Functions

@@ -9,17 +9,17 @@ is
 
    procedure C_Pool_Init is
    begin
-      Wireguard.Packet_Pool.Initialize;
+      Transport.Packet_Pool.Initialize;
    end C_Pool_Init;
 
    function C_Pool_Allocate return System.Address is
    begin
-      return Wireguard.Packet_Pool.C_Allocate;
+      return Transport.Packet_Pool.C_Allocate;
    end C_Pool_Allocate;
 
    procedure C_Pool_Free (Addr : System.Address) is
    begin
-      Wireguard.Packet_Pool.C_Free (Addr);
+      Transport.Packet_Pool.C_Free (Addr);
    end C_Pool_Free;
 
    function C_Pool_Get_Size return size_t is
