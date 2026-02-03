@@ -1,3 +1,5 @@
+with System;
+
 package body Wireguard
   with SPARK_Mode => On
 is
