@@ -13,7 +13,7 @@ with "config/wireguard_config.gpr";
 with "utils.gpr";
 with "crypto.gpr";
 with "transport.gpr";
---  with "handshake.gpr";  --  TODO: empty for now
+with "handshake.gpr";
 with "net.gpr";
 --  with "core.gpr";       --  TODO: empty for now
 
