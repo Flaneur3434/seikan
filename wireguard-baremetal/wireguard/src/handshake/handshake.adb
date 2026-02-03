@@ -57,13 +57,14 @@ is
    --  Embedded devices will reboot long before that.
    Next_Local_Index : Session_Index := 1;
 
-   function Allocate_Local_Index return Session_Index
-     with SPARK_Mode => Off
-   is
-      Result : constant Session_Index := Next_Local_Index;
+   procedure Allocate_Local_Index (Index : out Session_Index)
+     with Global => (In_Out => Next_Local_Index);
+   --  Allocates and returns next session index, incrementing the counter.
+
+   procedure Allocate_Local_Index (Index : out Session_Index) is
    begin
+      Index := Next_Local_Index;
       Next_Local_Index := Next_Local_Index + 1;
-      return Result;
    end Allocate_Local_Index;
 
    ---------------------
@@ -260,7 +261,8 @@ is
       Result   : out Status)
    is
       Label_And_Public : Byte_Array
-        (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1);
+        (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1) :=
+        (others => 0);
    begin
       Identity.Key_Pair := Key_Pair;
 
@@ -282,7 +284,8 @@ is
       Result      : out Status)
    is
       Label_And_Public : Byte_Array
-        (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1);
+        (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1) :=
+        (others => 0);
    begin
       Peer.Static_Public := Peer_Public;
 
@@ -342,7 +345,7 @@ is
       end if;
 
       --  Allocate local session index
-      Local_Index := Allocate_Local_Index;
+      Allocate_Local_Index (Local_Index);
       State.Local_Index := Local_Index;
 
       --  Initialize Noise protocol state
@@ -707,16 +710,14 @@ is
 
       --  Store timestamp for replay protection
       --  TODO: Actually verify timestamp is newer than last seen
-      --  Note: Timestamp is a private type matching the array layout,
-      --  so we can use Unchecked_Conversion for zero-copy assignment.
+      --  Copy decrypted timestamp bytes into state
       declare
+         subtype Timestamp_Bytes is Byte_Array
+           (0 .. Crypto.TAI64N.Timestamp_Bytes_Length - 1);
          function To_Timestamp is new Ada.Unchecked_Conversion
-           (Source => Byte_Array, Target => Crypto.TAI64N.Timestamp);
-         Temp : constant Byte_Array
-           (0 .. Crypto.TAI64N.Timestamp_Bytes_Length - 1) :=
-           Decrypted_Timestamp;
+           (Source => Timestamp_Bytes, Target => Crypto.TAI64N.Timestamp);
       begin
-         State.Last_Timestamp := To_Timestamp (Temp);
+         State.Last_Timestamp := To_Timestamp (Decrypted_Timestamp);
       end;
 
       --  H = HASH(H || encrypted_timestamp)
@@ -798,7 +799,7 @@ is
       end if;
 
       --  Allocate local session index
-      Local_Index := Allocate_Local_Index;
+      Allocate_Local_Index (Local_Index);
       State.Local_Index := Local_Index;
 
       --  Build message header
