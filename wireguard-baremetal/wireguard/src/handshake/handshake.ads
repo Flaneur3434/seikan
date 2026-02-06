@@ -17,7 +17,7 @@
 --    - SPARK-provable state transitions
 
 with Interfaces; use Interfaces;
-with Utils; use Utils;
+with Utils;      use Utils;
 with Crypto.KX;
 with Crypto.Blake2;
 with Crypto.TAI64N;
@@ -26,6 +26,9 @@ with Transport;
 package Handshake
   with SPARK_Mode => On
 is
+   use type Crypto.KX.Key_Pair;
+   use type Crypto.KX.Public_Key;
+
    ---------------------
    --  Constants
    ---------------------
@@ -50,8 +53,7 @@ is
      Byte_Array (0 .. Crypto.Blake2.BLAKE2S_OUTBYTES - 1);
 
    --  Hash state for Noise protocol (32 bytes)
-   subtype Hash_State is
-     Byte_Array (0 .. Crypto.Blake2.BLAKE2S_OUTBYTES - 1);
+   subtype Hash_State is Byte_Array (0 .. Crypto.Blake2.BLAKE2S_OUTBYTES - 1);
 
    --  Sender/Receiver index (local session identifier)
    subtype Session_Index is Unsigned_32;
@@ -73,11 +75,11 @@ is
       Role : Handshake_Role;
 
       --  Noise protocol state
-      Chaining    : Chaining_Key;
-      Hash        : Hash_State;
+      Chaining : Chaining_Key;
+      Hash     : Hash_State;
 
       --  Our ephemeral keypair (generated per handshake)
-      Ephemeral   : Crypto.KX.Key_Pair;
+      Ephemeral : Crypto.KX.Key_Pair;
 
       --  Remote peer's ephemeral public key (received in initiation/response)
       Remote_Ephemeral : Crypto.KX.Public_Key;
@@ -150,7 +152,9 @@ is
      (Identity : out Static_Identity;
       Key_Pair : Crypto.KX.Key_Pair;
       Result   : out Status)
-   with Global => null;
+   with
+     Global => null,
+     Post   => (if Is_Success (Result) then Identity.Key_Pair = Key_Pair);
 
    --  Initialize peer configuration
    --  Computes MAC1 key for the peer
@@ -158,7 +162,9 @@ is
      (Peer        : out Peer_Config;
       Peer_Public : Crypto.KX.Public_Key;
       Result      : out Status)
-   with Global => null;
+   with
+     Global => null,
+     Post   => (if Is_Success (Result) then Peer.Static_Public = Peer_Public);
 
    --  Create a new handshake initiation message (TX path)
    --
@@ -179,14 +185,18 @@ is
    --    s:  Encrypt initiator static with current key
    --    ss: DH(initiator_static_secret, responder_static)
    procedure Create_Initiation
-     (Buffer   : in out Byte_Array;
+     (Msg      : out Transport.Message_Handshake_Initiation;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
       Result   : out Initiation_Result)
    with
-     Annotate => (GNATprove, Skip_Proof);
-   --  Skip proof: uses internal global counter for session index
+     Post =>
+       (if Result.Success
+        then
+          State.Kind = State_Initiator_Sent
+          and then State.Role = Role_Initiator
+          and then Result.Length = Transport.Handshake_Init_Size);
 
    --  Process a received handshake initiation message (RX path, Responder)
    --
@@ -201,16 +211,16 @@ is
    --    s:  Decrypt initiator static
    --    ss: DH(responder_static_secret, initiator_static)
    procedure Process_Initiation
-     (Buffer   : Byte_Array;
+     (Msg      : Transport.Message_Handshake_Initiation;
       State    : out Handshake_State;
       Identity : Static_Identity;
       Result   : out Boolean)
    with
      Global => null,
-     Pre    => Buffer'Length >= Transport.Handshake_Init_Size,
-     Post   => (if Result
-                then State.Kind = State_Empty  --  Ready for Create_Response
-                else State.Kind = State_Empty);
+     Post   =>
+       (if Result
+        then State.Role = Role_Responder
+        else State.Kind = State_Empty);
 
    --  Create a handshake response message (TX path, Responder)
    --
@@ -223,13 +233,16 @@ is
    --    ee: DH(responder_ephemeral_secret, initiator_ephemeral)
    --    se: DH(responder_ephemeral_secret, initiator_static)
    procedure Create_Response
-     (Buffer   : in out Byte_Array;
+     (Msg      : out Transport.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Result   : out Response_Result)
    with
-     Annotate => (GNATprove, Skip_Proof);
-   --  Skip proof: uses internal global counter for session index
+     Post =>
+       (if Result.Success
+        then
+          State.Kind = State_Responder_Sent
+          and then Result.Length = Transport.Handshake_Response_Size);
 
 private
 
@@ -238,9 +251,7 @@ private
       Role             => Role_Initiator,
       Chaining         => (others => 0),
       Hash             => (others => 0),
-      Ephemeral        =>
-        (Pub => (others => 0),
-         Sec => (others => 0)),
+      Ephemeral        => (Pub => (others => 0), Sec => (others => 0)),
       Remote_Ephemeral => (others => 0),
       Remote_Static    => (others => 0),
       Local_Index      => 0,

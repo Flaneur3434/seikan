@@ -16,6 +16,8 @@ is
    --  Protocol Constants
    ---------------------
 
+   --!format off
+
    --  Noise protocol construction string
    --  "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
    Construction : constant Byte_Array (0 .. Construction_Length - 1) :=
@@ -44,6 +46,8 @@ is
 
    --  Reserved bytes (3 zeros)
    Reserved_Zero : constant Transport.Reserved_Bytes := (others => 0);
+
+   --!format on
 
    ---------------------
    --  Local Session Index Counter (monotonic)
@@ -77,7 +81,9 @@ is
      (H      : in out Hash_State;
       Data   : Byte_Array;
       Result : out Status)
-   with SPARK_Mode => On
+   with
+     SPARK_Mode => On,
+     Global     => null
    is
       State       : aliased Crypto.Blake2.Blake2s_State;
       Local_Result : Status;
@@ -137,7 +143,9 @@ is
       Input  : Byte_Array;
       K      : out Crypto.AEAD.Key_Buffer;
       Result : out Status)
-   with SPARK_Mode => On
+   with
+     SPARK_Mode => On,
+     Global     => null
    is
       Temp         : Chaining_Key;
       State        : aliased Crypto.Blake2.Blake2s_State;
@@ -232,7 +240,9 @@ is
       Message : Byte_Array;
       Mac     : out Transport.Mac_Bytes;
       Result  : out Status)
-   with SPARK_Mode => On
+   with
+     SPARK_Mode => On,
+     Global     => null
    is
       Full_Hash : Crypto.Blake2.Digest_Buffer;
    begin
@@ -302,40 +312,36 @@ is
    end Initialize_Peer;
 
    procedure Create_Initiation
-     (Buffer   : in out Byte_Array;
+     (Msg      : out Transport.Message_Handshake_Initiation;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
       Result   : out Initiation_Result)
    is
-      Local_Status     : Status;
-      Temp_Key         : Crypto.AEAD.Key_Buffer;
-      Shared           : Crypto.KX.Shared_Secret;
-      Timestamp        : aliased Crypto.TAI64N.Timestamp;
+      Local_Status   : Status;
+      Temp_Key       : Crypto.AEAD.Key_Buffer;
+      Shared         : Crypto.KX.Shared_Secret;
+      Timestamp      : aliased Crypto.TAI64N.Timestamp;
+      Local_Chaining : Chaining_Key;
+      Local_Hash     : Hash_State;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
-      --  Safety: each encryption uses a fresh key derived via Mix_Key,
-      --  so (key, nonce) pairs are never reused.
-      Nonce            : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
+      Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
 
-      --  Message field offsets (computed from message structure)
-      Msg_Type_Offset            : constant Natural := 0;
-      Reserved_Offset            : constant Natural := 1;
-      Sender_Offset              : constant Natural := 4;
-      Ephemeral_Offset           : constant Natural := 8;
-      Encrypted_Static_Offset    : constant Natural :=
-        Ephemeral_Offset + Transport.Key_Size;
-      Encrypted_Timestamp_Offset : constant Natural :=
-        Encrypted_Static_Offset + Transport.Encrypted_Static_Size;
-      Mac1_Offset                : constant Natural :=
-        Encrypted_Timestamp_Offset + Transport.Encrypted_Timestamp_Size;
-      Mac2_Offset                : constant Natural :=
-        Mac1_Offset + Transport.Mac_Size;
+      --  MAC1 byte offset within the initiation message (from rep clause)
+      Mac1_Offset : constant := 116;
 
-      --  Local Index
       Local_Index : Session_Index;
    begin
-      --  Initialize result
+      --  Initialize outputs
+      Msg := (Msg_Type            => 0,
+              Reserved            => (others => 0),
+              Sender              => (others => 0),
+              Ephemeral           => (others => 0),
+              Encrypted_Static    => (others => 0),
+              Encrypted_Timestamp => (others => 0),
+              Mac1                => (others => 0),
+              Mac2                => (others => 0));
       Result := (Success => False, Length => 0);
 
       --  Generate ephemeral keypair
@@ -352,54 +358,41 @@ is
       --  C = HASH(Construction)
       Crypto.Blake2.Blake2s
         (Data   => Construction,
-         Digest => State.Chaining,
+         Digest => Local_Chaining,
          Result => Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(C || Identifier)
-      Mix_Hash (State.Chaining, Identifier, Local_Status);
+      Mix_Hash (Local_Chaining, Identifier, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
-      --  Copy to Hash state (H starts as C mixed with identifier)
-      State.Hash := State.Chaining;
+      Local_Hash := Local_Chaining;
 
       --  H = HASH(H || responder_static_public)
-      Mix_Hash (State.Hash, Byte_Array (Peer.Static_Public), Local_Status);
+      Mix_Hash (Local_Hash, Byte_Array (Peer.Static_Public), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Build message header
-      --  msg.type = 1 (handshake initiation)
-      Buffer (Buffer'First + Msg_Type_Offset) :=
-        Transport.Msg_Type_Handshake_Initiation;
-
-      --  msg.reserved = 0
-      Buffer (Buffer'First + Reserved_Offset ..
-              Buffer'First + Reserved_Offset + 2) := Reserved_Zero;
-
-      --  msg.sender = local_index (little-endian)
-      Buffer (Buffer'First + Sender_Offset ..
-              Buffer'First + Sender_Offset + 3) := From_U32 (Local_Index);
-
-      --  msg.ephemeral = ephemeral_public
-      Buffer (Buffer'First + Ephemeral_Offset ..
-              Buffer'First + Ephemeral_Offset + Transport.Key_Size - 1) :=
-        Byte_Array (State.Ephemeral.Pub);
+      Msg.Msg_Type  := Transport.Msg_Type_Handshake_Initiation;
+      Msg.Reserved  := Reserved_Zero;
+      Msg.Sender    := From_U32 (Local_Index);
+      Msg.Ephemeral := State.Ephemeral.Pub;
 
       --  C = KDF(C, ephemeral_public)
-      --  H = HASH(H || ephemeral_public)
-      Mix_Key (State.Chaining, Byte_Array (State.Ephemeral.Pub),
+      Mix_Key (Local_Chaining, Byte_Array (State.Ephemeral.Pub),
                Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
-      Mix_Hash (State.Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
+      --  H = HASH(H || ephemeral_public)
+      Mix_Hash (Local_Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -415,43 +408,28 @@ is
       end if;
 
       --  C, K = KDF(C, es)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Encrypt static public key: encrypted_static = AEAD(K, 0, s, H)
-      --  Ciphertext goes into the buffer
-      declare
-         Static_Pub_Bytes : constant Byte_Array :=
-           Byte_Array (Identity.Key_Pair.Pub);
-         Ciphertext : Byte_Array
-           (0 .. Transport.Encrypted_Static_Size - 1);
-      begin
-         Crypto.AEAD.Encrypt
-           (Plaintext  => Static_Pub_Bytes,
-            Ad         => State.Hash,
-            Nonce      => Nonce,
-            Key        => Temp_Key,
-            Ciphertext => Ciphertext,
-            Result     => Local_Status);
-
-         if not Is_Success (Local_Status) then
-            return;
-         end if;
-
-         Buffer (Buffer'First + Encrypted_Static_Offset ..
-                 Buffer'First + Encrypted_Static_Offset +
-                 Transport.Encrypted_Static_Size - 1) := Ciphertext;
-      end;
+      pragma Assert
+        (Crypto.KX.Public_Key_Bytes
+         <= Crypto.AEAD.Max_Buffer_Size);
+      Crypto.AEAD.Encrypt
+        (Plaintext  => Byte_Array (Identity.Key_Pair.Pub),
+         Ad         => Local_Hash,
+         Nonce      => Nonce,
+         Key        => Temp_Key,
+         Ciphertext => Msg.Encrypted_Static,
+         Result     => Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
 
       --  H = HASH(H || encrypted_static)
-      Mix_Hash
-        (State.Hash,
-         Buffer (Buffer'First + Encrypted_Static_Offset ..
-                 Buffer'First + Encrypted_Static_Offset +
-                 Transport.Encrypted_Static_Size - 1),
-         Local_Status);
+      Mix_Hash (Local_Hash, Msg.Encrypted_Static, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -467,7 +445,7 @@ is
       end if;
 
       --  C, K = KDF(C, ss)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -478,73 +456,68 @@ is
 
       --  Encrypt timestamp: encrypted_timestamp = AEAD(K, 0, timestamp, H)
       declare
-         --  Get zero-copy access to timestamp bytes
-         Timestamp_Ptr : constant Crypto.TAI64N.Timestamp_Bytes_Const_Access :=
+         use type Crypto.TAI64N.Timestamp_Bytes_Const_Access;
+         Timestamp_Ptr : constant
+           Crypto.TAI64N.Timestamp_Bytes_Const_Access :=
            Crypto.TAI64N.To_Bytes (Timestamp);
-         Ciphertext : Byte_Array
-           (0 .. Transport.Encrypted_Timestamp_Size - 1);
       begin
+         pragma Assume (Timestamp_Ptr /= null);
+         pragma Assert
+           (Crypto.TAI64N.Timestamp_Bytes_Length
+            <= Crypto.AEAD.Max_Buffer_Size);
          Crypto.AEAD.Encrypt
            (Plaintext  => Timestamp_Ptr.all,
-            Ad         => State.Hash,
+            Ad         => Local_Hash,
             Nonce      => Nonce,
             Key        => Temp_Key,
-            Ciphertext => Ciphertext,
+            Ciphertext => Msg.Encrypted_Timestamp,
             Result     => Local_Status);
 
          if not Is_Success (Local_Status) then
             return;
          end if;
-
-         Buffer (Buffer'First + Encrypted_Timestamp_Offset ..
-                 Buffer'First + Encrypted_Timestamp_Offset +
-                 Transport.Encrypted_Timestamp_Size - 1) := Ciphertext;
       end;
 
       --  H = HASH(H || encrypted_timestamp)
-      Mix_Hash
-        (State.Hash,
-         Buffer (Buffer'First + Encrypted_Timestamp_Offset ..
-                 Buffer'First + Encrypted_Timestamp_Offset +
-                 Transport.Encrypted_Timestamp_Size - 1),
-         Local_Status);
+      Mix_Hash (Local_Hash, Msg.Encrypted_Timestamp, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Compute MAC1 = HASH(peer_mac1_key || msg[0..mac1_offset-1])
       declare
-         Mac1 : Transport.Mac_Bytes;
+         Mac1_Prefix : Byte_Array (0 .. Mac1_Offset - 1);
       begin
+         Mac1_Prefix (0) := Msg.Msg_Type;
+         Mac1_Prefix (1 .. 3) := Msg.Reserved;
+         Mac1_Prefix (4 .. 7) := Msg.Sender;
+         Mac1_Prefix (8 .. 39) := Byte_Array (Msg.Ephemeral);
+         Mac1_Prefix (40 .. 87) := Msg.Encrypted_Static;
+         Mac1_Prefix (88 .. 115) := Msg.Encrypted_Timestamp;
+
          Compute_Mac
            (Key     => Peer.Mac1_Key,
-            Message => Buffer (Buffer'First .. Buffer'First + Mac1_Offset - 1),
-            Mac     => Mac1,
+            Message => Mac1_Prefix,
+            Mac     => Msg.Mac1,
             Result  => Local_Status);
-
          if not Is_Success (Local_Status) then
             return;
          end if;
-
-         Buffer (Buffer'First + Mac1_Offset ..
-                 Buffer'First + Mac1_Offset + Transport.Mac_Size - 1) := Mac1;
       end;
 
-      --  MAC2 = 0 (no cookie present)
-      Buffer (Buffer'First + Mac2_Offset ..
-              Buffer'First + Mac2_Offset + Transport.Mac_Size - 1) :=
-        (others => 0);
+      --  MAC2 = 0 (no cookie present, already zeroed)
 
-      --  Update state
+      --  Copy back local noise state and update state machine
+      State.Chaining := Local_Chaining;
+      State.Hash := Local_Hash;
       State.Kind := State_Initiator_Sent;
       State.Role := Role_Initiator;
 
-      --  Success!
       Result := (Success => True, Length => Transport.Handshake_Init_Size);
    end Create_Initiation;
 
    procedure Process_Initiation
-     (Buffer   : Byte_Array;
+     (Msg      : Transport.Message_Handshake_Initiation;
       State    : out Handshake_State;
       Identity : Static_Identity;
       Result   : out Boolean)
@@ -553,19 +526,15 @@ is
       Temp_Key     : Crypto.AEAD.Key_Buffer;
       Shared       : Crypto.KX.Shared_Secret;
 
+      --  Local copies of chaining and hash to keep State.Kind provable
+      Local_Chaining : Chaining_Key;
+      Local_Hash     : Hash_State;
+
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
 
-      --  Message field offsets (same as Create_Initiation)
-      Msg_Type_Offset            : constant Natural := 0;
-      Sender_Offset              : constant Natural := 4;
-      Ephemeral_Offset           : constant Natural := 8;
-      Encrypted_Static_Offset    : constant Natural :=
-        Ephemeral_Offset + Transport.Key_Size;
-      Encrypted_Timestamp_Offset : constant Natural :=
-        Encrypted_Static_Offset + Transport.Encrypted_Static_Size;
-      Mac1_Offset                : constant Natural :=
-        Encrypted_Timestamp_Offset + Transport.Encrypted_Timestamp_Size;
+      --  MAC1 byte offset within the initiation message (from rep clause)
+      Mac1_Offset : constant := 116;
 
       --  Decrypted values
       Decrypted_Static    : Byte_Array (0 .. Crypto.KX.Public_Key_Bytes - 1);
@@ -578,62 +547,53 @@ is
       Result := False;
 
       --  Verify message type
-      if Buffer (Buffer'First + Msg_Type_Offset) /=
-         Transport.Msg_Type_Handshake_Initiation
-      then
+      if Msg.Msg_Type /= Transport.Msg_Type_Handshake_Initiation then
          return;
       end if;
 
       --  Extract sender index
-      State.Remote_Index := To_U32
-        (Buffer (Buffer'First + Sender_Offset ..
-                 Buffer'First + Sender_Offset + 3));
+      State.Remote_Index := To_U32 (Msg.Sender);
 
       --  Extract initiator's ephemeral public key
-      State.Remote_Ephemeral := Crypto.KX.Public_Key
-        (Buffer (Buffer'First + Ephemeral_Offset ..
-                 Buffer'First + Ephemeral_Offset + Transport.Key_Size - 1));
+      State.Remote_Ephemeral := Msg.Ephemeral;
 
-      --  Initialize Noise protocol state (same as initiator)
-      --  C = HASH(Construction)
+      --  Initialize Noise protocol state into locals
       Crypto.Blake2.Blake2s
         (Data   => Construction,
-         Digest => State.Chaining,
+         Digest => Local_Chaining,
          Result => Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(C || Identifier)
-      Mix_Hash (State.Chaining, Identifier, Local_Status);
+      Mix_Hash (Local_Chaining, Identifier, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
-      State.Hash := State.Chaining;
+      Local_Hash := Local_Chaining;
 
       --  H = HASH(H || responder_static_public)
-      --  Note: We are the responder, so this is OUR static public
-      Mix_Hash (State.Hash, Byte_Array (Identity.Key_Pair.Pub), Local_Status);
+      Mix_Hash (Local_Hash, Byte_Array (Identity.Key_Pair.Pub), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  C = KDF(C, initiator_ephemeral)
-      Mix_Key (State.Chaining, Byte_Array (State.Remote_Ephemeral),
+      Mix_Key (Local_Chaining, Byte_Array (State.Remote_Ephemeral),
                Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(H || initiator_ephemeral)
-      Mix_Hash (State.Hash, Byte_Array (State.Remote_Ephemeral), Local_Status);
+      Mix_Hash (Local_Hash, Byte_Array (State.Remote_Ephemeral), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  DH: es = DH(responder_static_secret, initiator_ephemeral)
-      --  Note: We are responder, so we use OUR static secret
       Crypto.KX.DH
         (Shared       => Shared,
          My_Secret    => Identity.Key_Pair.Sec,
@@ -644,35 +604,31 @@ is
       end if;
 
       --  C, K = KDF(C, es)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Decrypt initiator's static public key
+      pragma Assert
+        (Crypto.KX.Public_Key_Bytes <= Crypto.AEAD.Max_Buffer_Size);
+      pragma Assert
+        (Transport.Encrypted_Static_Size <= Crypto.AEAD.Max_Buffer_Size);
       Crypto.AEAD.Decrypt
-        (Ciphertext => Buffer (Buffer'First + Encrypted_Static_Offset ..
-                               Buffer'First + Encrypted_Static_Offset +
-                               Transport.Encrypted_Static_Size - 1),
-         Ad         => State.Hash,
+        (Ciphertext => Msg.Encrypted_Static,
+         Ad         => Local_Hash,
          Nonce      => Nonce,
          Key        => Temp_Key,
          Plaintext  => Decrypted_Static,
          Result     => Local_Status);
       if not Is_Success (Local_Status) then
-         --  AEAD authentication failed - invalid message
          return;
       end if;
 
       State.Remote_Static := Crypto.KX.Public_Key (Decrypted_Static);
 
       --  H = HASH(H || encrypted_static)
-      Mix_Hash
-        (State.Hash,
-         Buffer (Buffer'First + Encrypted_Static_Offset ..
-                 Buffer'First + Encrypted_Static_Offset +
-                 Transport.Encrypted_Static_Size - 1),
-         Local_Status);
+      Mix_Hash (Local_Hash, Msg.Encrypted_Static, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -688,29 +644,28 @@ is
       end if;
 
       --  C, K = KDF(C, ss)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Decrypt timestamp
+      pragma Assert
+        (Crypto.TAI64N.Timestamp_Bytes_Length <= Crypto.AEAD.Max_Buffer_Size);
+      pragma Assert
+        (Transport.Encrypted_Timestamp_Size <= Crypto.AEAD.Max_Buffer_Size);
       Crypto.AEAD.Decrypt
-        (Ciphertext => Buffer (Buffer'First + Encrypted_Timestamp_Offset ..
-                               Buffer'First + Encrypted_Timestamp_Offset +
-                               Transport.Encrypted_Timestamp_Size - 1),
-         Ad         => State.Hash,
+        (Ciphertext => Msg.Encrypted_Timestamp,
+         Ad         => Local_Hash,
          Nonce      => Nonce,
          Key        => Temp_Key,
          Plaintext  => Decrypted_Timestamp,
          Result     => Local_Status);
       if not Is_Success (Local_Status) then
-         --  AEAD authentication failed
          return;
       end if;
 
       --  Store timestamp for replay protection
-      --  TODO: Actually verify timestamp is newer than last seen
-      --  Copy decrypted timestamp bytes into state
       declare
          subtype Timestamp_Bytes is Byte_Array
            (0 .. Crypto.TAI64N.Timestamp_Bytes_Length - 1);
@@ -721,75 +676,79 @@ is
       end;
 
       --  H = HASH(H || encrypted_timestamp)
-      Mix_Hash
-        (State.Hash,
-         Buffer (Buffer'First + Encrypted_Timestamp_Offset ..
-                 Buffer'First + Encrypted_Timestamp_Offset +
-                 Transport.Encrypted_Timestamp_Size - 1),
-         Local_Status);
+      Mix_Hash (Local_Hash, Msg.Encrypted_Timestamp, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Verify MAC1
-      --  MAC1 = HASH(our_mac1_key || msg[0..mac1_offset-1])
-      Compute_Mac
-        (Key     => Identity.Mac1_Key,
-         Message => Buffer (Buffer'First .. Buffer'First + Mac1_Offset - 1),
-         Mac     => Computed_Mac,
-         Result  => Local_Status);
-      if not Is_Success (Local_Status) then
-         return;
-      end if;
+      declare
+         Mac1_Prefix : Byte_Array (0 .. Mac1_Offset - 1);
+      begin
+         Mac1_Prefix (0) := Msg.Msg_Type;
+         Mac1_Prefix (1 .. 3) := Msg.Reserved;
+         Mac1_Prefix (4 .. 7) := Msg.Sender;
+         Mac1_Prefix (8 .. 39) := Byte_Array (Msg.Ephemeral);
+         Mac1_Prefix (40 .. 87) := Msg.Encrypted_Static;
+         Mac1_Prefix (88 .. 115) := Msg.Encrypted_Timestamp;
 
-      --  Compare MACs (constant-time comparison would be better)
-      if Computed_Mac /= Buffer (Buffer'First + Mac1_Offset ..
-                                  Buffer'First + Mac1_Offset +
-                                  Transport.Mac_Size - 1)
-      then
+         Compute_Mac
+           (Key     => Identity.Mac1_Key,
+            Message => Mac1_Prefix,
+            Mac     => Computed_Mac,
+            Result  => Local_Status);
+         if not Is_Success (Local_Status) then
+            return;
+         end if;
+      end;
+
+      if Computed_Mac /= Msg.Mac1 then
          return;
       end if;
 
       --  MAC2 verification skipped (cookie system not implemented)
 
-      --  Success - state is ready for Create_Response
+      --  Success - copy back local chaining/hash and set role
+      State.Chaining := Local_Chaining;
+      State.Hash := Local_Hash;
+
       State.Role := Role_Responder;
       Result := True;
    end Process_Initiation;
 
    procedure Create_Response
-     (Buffer   : in out Byte_Array;
+     (Msg      : out Transport.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Result   : out Response_Result)
    is
-      pragma Unreferenced (Identity);  --  Not needed for Noise IK (no PSK)
+      pragma Unreferenced (Identity);
 
-      Local_Status : Status;
-      Temp_Key     : Crypto.AEAD.Key_Buffer;
-      Shared       : Crypto.KX.Shared_Secret;
-      Local_Index  : Session_Index;
+      Local_Status   : Status;
+      Temp_Key       : Crypto.AEAD.Key_Buffer;
+      Shared         : Crypto.KX.Shared_Secret;
+      Local_Index    : Session_Index;
+      Local_Chaining : Chaining_Key;
+      Local_Hash     : Hash_State;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
 
-      --  Message field offsets for response message
-      Msg_Type_Offset         : constant Natural := 0;
-      Reserved_Offset         : constant Natural := 1;
-      Sender_Offset           : constant Natural := 4;
-      Receiver_Offset         : constant Natural := 8;
-      Ephemeral_Offset        : constant Natural := 12;
-      Encrypted_Empty_Offset  : constant Natural :=
-        Ephemeral_Offset + Transport.Key_Size;
-      Mac1_Offset             : constant Natural :=
-        Encrypted_Empty_Offset + Transport.Encrypted_Empty_Size;
-      Mac2_Offset             : constant Natural :=
-        Mac1_Offset + Transport.Mac_Size;
+      --  MAC1 byte offset within the response message (from rep clause)
+      Mac1_Offset : constant := 60;
 
       --  Empty payload for AEAD (Noise "empty" encryption)
       Empty_Payload : constant Byte_Array (1 .. 0) := (others => 0);
    begin
-      --  Initialize result
+      --  Initialize outputs
+      Msg := (Msg_Type        => 0,
+              Reserved        => (others => 0),
+              Sender          => (others => 0),
+              Receiver        => (others => 0),
+              Ephemeral       => (others => 0),
+              Encrypted_Empty => (others => 0),
+              Mac1            => (others => 0),
+              Mac2            => (others => 0));
       Result := (Success => False, Length => 0);
 
       --  Generate responder ephemeral keypair
@@ -803,37 +762,25 @@ is
       State.Local_Index := Local_Index;
 
       --  Build message header
-      --  msg.type = 2 (handshake response)
-      Buffer (Buffer'First + Msg_Type_Offset) :=
-        Transport.Msg_Type_Handshake_Response;
+      Msg.Msg_Type  := Transport.Msg_Type_Handshake_Response;
+      Msg.Reserved  := Reserved_Zero;
+      Msg.Sender    := From_U32 (Local_Index);
+      Msg.Receiver  := From_U32 (State.Remote_Index);
+      Msg.Ephemeral := State.Ephemeral.Pub;
 
-      --  msg.reserved = 0
-      Buffer (Buffer'First + Reserved_Offset ..
-              Buffer'First + Reserved_Offset + 2) := Reserved_Zero;
-
-      --  msg.sender = our local_index (little-endian)
-      Buffer (Buffer'First + Sender_Offset ..
-              Buffer'First + Sender_Offset + 3) := From_U32 (Local_Index);
-
-      --  msg.receiver = initiator's sender index
-      Buffer (Buffer'First + Receiver_Offset ..
-              Buffer'First + Receiver_Offset + 3) :=
-        From_U32 (State.Remote_Index);
-
-      --  msg.ephemeral = responder_ephemeral_public
-      Buffer (Buffer'First + Ephemeral_Offset ..
-              Buffer'First + Ephemeral_Offset + Transport.Key_Size - 1) :=
-        Byte_Array (State.Ephemeral.Pub);
+      --  Copy chaining/hash into locals to preserve State.Kind for prover
+      Local_Chaining := State.Chaining;
+      Local_Hash := State.Hash;
 
       --  C = KDF(C, responder_ephemeral)
-      Mix_Key (State.Chaining, Byte_Array (State.Ephemeral.Pub),
+      Mix_Key (Local_Chaining, Byte_Array (State.Ephemeral.Pub),
                Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(H || responder_ephemeral)
-      Mix_Hash (State.Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
+      Mix_Hash (Local_Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -849,7 +796,7 @@ is
       end if;
 
       --  C, K = KDF(C, ee)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -865,51 +812,38 @@ is
       end if;
 
       --  C, K = KDF(C, se)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Encrypt empty payload: encrypted_empty = AEAD(K, 0, empty, H)
-      --  This authenticates the handshake without sending additional data
-      declare
-         Ciphertext : Byte_Array (0 .. Transport.Encrypted_Empty_Size - 1);
-      begin
-         Crypto.AEAD.Encrypt
-           (Plaintext  => Empty_Payload,
-            Ad         => State.Hash,
-            Nonce      => Nonce,
-            Key        => Temp_Key,
-            Ciphertext => Ciphertext,
-            Result     => Local_Status);
-
-         if not Is_Success (Local_Status) then
-            return;
-         end if;
-
-         Buffer (Buffer'First + Encrypted_Empty_Offset ..
-                 Buffer'First + Encrypted_Empty_Offset +
-                 Transport.Encrypted_Empty_Size - 1) := Ciphertext;
-      end;
+      pragma Assert
+        (Transport.Encrypted_Empty_Size <= Crypto.AEAD.Max_Buffer_Size);
+      Crypto.AEAD.Encrypt
+        (Plaintext  => Empty_Payload,
+         Ad         => Local_Hash,
+         Nonce      => Nonce,
+         Key        => Temp_Key,
+         Ciphertext => Msg.Encrypted_Empty,
+         Result     => Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
 
       --  H = HASH(H || encrypted_empty)
-      Mix_Hash
-        (State.Hash,
-         Buffer (Buffer'First + Encrypted_Empty_Offset ..
-                 Buffer'First + Encrypted_Empty_Offset +
-                 Transport.Encrypted_Empty_Size - 1),
-         Local_Status);
+      Mix_Hash (Local_Hash, Msg.Encrypted_Empty, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Compute MAC1 using initiator's static public key
-      --  We need to compute the MAC1 key for the initiator
       declare
          Label_And_Public : Byte_Array
-           (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1);
+           (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1)
+           := (others => 0);
          Initiator_Mac1_Key : Crypto.Blake2.Key_Buffer;
-         Mac1 : Transport.Mac_Bytes;
+         Mac1_Prefix : Byte_Array (0 .. Mac1_Offset - 1);
       begin
          --  Compute initiator's MAC1 key: HASH(LABEL_MAC1 || initiator_static)
          Label_And_Public (0 .. Label_Mac1_Length - 1) := Label_Mac1;
@@ -925,30 +859,30 @@ is
             return;
          end if;
 
+         Mac1_Prefix (0) := Msg.Msg_Type;
+         Mac1_Prefix (1 .. 3) := Msg.Reserved;
+         Mac1_Prefix (4 .. 7) := Msg.Sender;
+         Mac1_Prefix (8 .. 11) := Msg.Receiver;
+         Mac1_Prefix (12 .. 43) := Byte_Array (Msg.Ephemeral);
+         Mac1_Prefix (44 .. 59) := Msg.Encrypted_Empty;
+
          Compute_Mac
            (Key     => Initiator_Mac1_Key,
-            Message => Buffer (Buffer'First ..
-                               Buffer'First + Mac1_Offset - 1),
-            Mac     => Mac1,
+            Message => Mac1_Prefix,
+            Mac     => Msg.Mac1,
             Result  => Local_Status);
-
          if not Is_Success (Local_Status) then
             return;
          end if;
-
-         Buffer (Buffer'First + Mac1_Offset ..
-                 Buffer'First + Mac1_Offset + Transport.Mac_Size - 1) := Mac1;
       end;
 
-      --  MAC2 = 0 (no cookie present)
-      Buffer (Buffer'First + Mac2_Offset ..
-              Buffer'First + Mac2_Offset + Transport.Mac_Size - 1) :=
-        (others => 0);
+      --  MAC2 = 0 (already zeroed)
 
-      --  Update state
+      --  Copy back local noise state and update state machine
+      State.Chaining := Local_Chaining;
+      State.Hash := Local_Hash;
       State.Kind := State_Responder_Sent;
 
-      --  Success!
       Result := (Success => True, Length => Transport.Handshake_Response_Size);
    end Create_Response;
 
