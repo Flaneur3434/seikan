@@ -129,6 +129,30 @@ is
      Transport_Messages.Message_Transport_Header;
 
    ---------------------
+   --  MAC1 Prefix Types (re-exported from backend-specific package)
+   ---------------------
+
+   Mac1_Initiation_Offset : constant :=
+     Transport_Messages.Mac1_Initiation_Offset;
+   Mac1_Response_Offset : constant :=
+     Transport_Messages.Mac1_Response_Offset;
+
+   subtype Initiation_Mac1_Prefix_Bytes is
+     Transport_Messages.Initiation_Mac1_Prefix_Bytes;
+   subtype Response_Mac1_Prefix_Bytes is
+     Transport_Messages.Response_Mac1_Prefix_Bytes;
+
+   function To_Mac1_Prefix
+     (Msg : Message_Handshake_Initiation)
+      return Initiation_Mac1_Prefix_Bytes
+      renames Transport_Messages.To_Mac1_Prefix;
+
+   function To_Mac1_Prefix
+     (Msg : Message_Handshake_Response)
+      return Response_Mac1_Prefix_Bytes
+      renames Transport_Messages.To_Mac1_Prefix;
+
+   ---------------------
    --  Message Kind Detection
    ---------------------
 
