@@ -22,8 +22,21 @@ package Crypto.TAI64N
 is
    use Interfaces;
 
-   --  TAI64N timestamp (opaque, 12 bytes big-endian)
-   type Timestamp is private;
+   --  TAI64N timestamp (12 bytes big-endian, network byte order)
+   --  Public so the SPARK prover can see the size across packages.
+   Timestamp_Bytes_Length : constant := 12;  --  8 bytes TAI64 + 4 bytes nanos
+   type Timestamp is array (0 .. Timestamp_Bytes_Length - 1) of Unsigned_8;
+
+   --  Byte_Array overlay for network I/O and AEAD encrypt/decrypt
+   subtype Timestamp_Bytes is Byte_Array (0 .. Timestamp_Bytes_Length - 1);
+
+   --  Non-nullable access for zero-copy byte access.
+   --  The type itself guarantees non-null; no postcondition needed.
+   type Timestamp_Bytes_Const_Access is
+     not null access constant Timestamp_Bytes;
+
+   --  Zero timestamp (useful for initialization)
+   Zero : constant Timestamp := (others => 0);
 
    --  Get next monotonically increasing TAI64N timestamp
    --  Each call returns a value strictly greater than the previous
@@ -40,24 +53,15 @@ is
    function Is_After_Or_Equal (A, B : Timestamp) return Boolean
    with Global => null;
 
-   --  Convert timestamp to byte array for network transmission (zero-copy)
-   Timestamp_Bytes_Length : constant := 12;  --  8 bytes TAI64 + 4 bytes nanos
-   subtype Timestamp_Bytes is Byte_Array (0 .. Timestamp_Bytes_Length - 1);
-   type Timestamp_Bytes_Const_Access is access constant Timestamp_Bytes;
-
    --  Returns read-only access to the timestamp's internal bytes.
    --  The returned pointer is valid only while T remains in scope.
    function To_Bytes
      (T : aliased Timestamp) return Timestamp_Bytes_Const_Access
    with Global => null;
 
-   --  Zero timestamp (useful for initialization)
-   Zero : constant Timestamp;
-
-private
-   --  TAI64N timestamp type (big-endian format, suitable for network)
-   type Timestamp is array (0 .. Timestamp_Bytes_Length - 1) of Unsigned_8;
-
-   Zero : constant Timestamp := (others => 0);
+   --  Convert a Byte_Array (e.g. from AEAD decrypt) back to Timestamp.
+   --  Eliminates the need for Unchecked_Conversion across packages.
+   function From_Bytes (B : Timestamp_Bytes) return Timestamp
+   with Global => null;
 
 end Crypto.TAI64N;

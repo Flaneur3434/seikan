@@ -66,6 +66,15 @@ is
       return Convert (T'Address);
    end To_Bytes;
 
+   function From_Bytes (B : Timestamp_Bytes) return Timestamp is
+      Result : Timestamp;
+   begin
+      for I in Timestamp'Range loop
+         Result (I) := B (I);
+      end loop;
+      return Result;
+   end From_Bytes;
+
 begin
    --  Initialize counter with random seed at elaboration
    declare
