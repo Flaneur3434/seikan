@@ -2,7 +2,6 @@
 --
 --  Implements Noise IK handshake pattern for WireGuard-style key agreement.
 
-with Ada.Unchecked_Conversion;
 with Crypto.Random;
 with Crypto.AEAD;
 with Transport_Messages;
@@ -321,17 +320,15 @@ is
       Local_Status   : Status;
       Temp_Key       : Crypto.AEAD.Key_Buffer;
       Shared         : Crypto.KX.Shared_Secret;
-      Timestamp      : aliased Crypto.TAI64N.Timestamp;
+      Timestamp      : Crypto.TAI64N.Timestamp;
       Local_Chaining : Chaining_Key;
       Local_Hash     : Hash_State;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
 
-      --  MAC1 byte offset within the initiation message (from rep clause)
-      Mac1_Offset : constant := 116;
-
-      Local_Index : Session_Index;
+      Local_Index    : Session_Index;
+      Local_Ephemeral : Crypto.KX.Key_Pair;
    begin
       --  Initialize outputs
       Msg := (Msg_Type            => 0,
@@ -344,11 +341,12 @@ is
               Mac2                => (others => 0));
       Result := (Success => False, Length => 0);
 
-      --  Generate ephemeral keypair
-      Crypto.KX.Generate_Key_Pair (State.Ephemeral, Local_Status);
+      --  Generate ephemeral keypair into local to preserve State for prover
+      Crypto.KX.Generate_Key_Pair (Local_Ephemeral, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
+      State.Ephemeral := Local_Ephemeral;
 
       --  Allocate local session index
       Allocate_Local_Index (Local_Index);
@@ -414,16 +412,19 @@ is
       end if;
 
       --  Encrypt static public key: encrypted_static = AEAD(K, 0, s, H)
-      pragma Assert
-        (Crypto.KX.Public_Key_Bytes
-         <= Crypto.AEAD.Max_Buffer_Size);
-      Crypto.AEAD.Encrypt
-        (Plaintext  => Byte_Array (Identity.Key_Pair.Pub),
-         Ad         => Local_Hash,
-         Nonce      => Nonce,
-         Key        => Temp_Key,
-         Ciphertext => Msg.Encrypted_Static,
-         Result     => Local_Status);
+      declare
+         Static_Pub : constant Byte_Array
+           (0 .. Crypto.KX.Public_Key_Bytes - 1) :=
+           Byte_Array (Identity.Key_Pair.Pub);
+      begin
+         Crypto.AEAD.Encrypt
+           (Plaintext  => Static_Pub,
+            Ad         => Local_Hash,
+            Nonce      => Nonce,
+            Key        => Temp_Key,
+            Ciphertext => Msg.Encrypted_Static,
+            Result     => Local_Status);
+      end;
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -455,28 +456,22 @@ is
       State.Last_Timestamp := Timestamp;
 
       --  Encrypt timestamp: encrypted_timestamp = AEAD(K, 0, timestamp, H)
+      --  Timestamp is now a public type; direct conversion avoids access.
       declare
-         use type Crypto.TAI64N.Timestamp_Bytes_Const_Access;
-         Timestamp_Ptr : constant
-           Crypto.TAI64N.Timestamp_Bytes_Const_Access :=
-           Crypto.TAI64N.To_Bytes (Timestamp);
+         TS_Bytes : constant Crypto.TAI64N.Timestamp_Bytes :=
+           Byte_Array (Timestamp);
       begin
-         pragma Assume (Timestamp_Ptr /= null);
-         pragma Assert
-           (Crypto.TAI64N.Timestamp_Bytes_Length
-            <= Crypto.AEAD.Max_Buffer_Size);
          Crypto.AEAD.Encrypt
-           (Plaintext  => Timestamp_Ptr.all,
+           (Plaintext  => TS_Bytes,
             Ad         => Local_Hash,
             Nonce      => Nonce,
             Key        => Temp_Key,
             Ciphertext => Msg.Encrypted_Timestamp,
             Result     => Local_Status);
-
-         if not Is_Success (Local_Status) then
-            return;
-         end if;
       end;
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
 
       --  H = HASH(H || encrypted_timestamp)
       Mix_Hash (Local_Hash, Msg.Encrypted_Timestamp, Local_Status);
@@ -485,25 +480,14 @@ is
       end if;
 
       --  Compute MAC1 = HASH(peer_mac1_key || msg[0..mac1_offset-1])
-      declare
-         Mac1_Prefix : Byte_Array (0 .. Mac1_Offset - 1);
-      begin
-         Mac1_Prefix (0) := Msg.Msg_Type;
-         Mac1_Prefix (1 .. 3) := Msg.Reserved;
-         Mac1_Prefix (4 .. 7) := Msg.Sender;
-         Mac1_Prefix (8 .. 39) := Byte_Array (Msg.Ephemeral);
-         Mac1_Prefix (40 .. 87) := Msg.Encrypted_Static;
-         Mac1_Prefix (88 .. 115) := Msg.Encrypted_Timestamp;
-
-         Compute_Mac
-           (Key     => Peer.Mac1_Key,
-            Message => Mac1_Prefix,
-            Mac     => Msg.Mac1,
-            Result  => Local_Status);
-         if not Is_Success (Local_Status) then
-            return;
-         end if;
-      end;
+      Compute_Mac
+        (Key     => Peer.Mac1_Key,
+         Message => Transport.To_Mac1_Prefix (Msg),
+         Mac     => Msg.Mac1,
+         Result  => Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
 
       --  MAC2 = 0 (no cookie present, already zeroed)
 
@@ -533,13 +517,9 @@ is
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
 
-      --  MAC1 byte offset within the initiation message (from rep clause)
-      Mac1_Offset : constant := 116;
-
       --  Decrypted values
       Decrypted_Static    : Byte_Array (0 .. Crypto.KX.Public_Key_Bytes - 1);
-      Decrypted_Timestamp : Byte_Array
-        (0 .. Crypto.TAI64N.Timestamp_Bytes_Length - 1);
+      Decrypted_Timestamp : Crypto.TAI64N.Timestamp_Bytes;
       Computed_Mac        : Transport.Mac_Bytes;
    begin
       --  Initialize output
@@ -610,10 +590,13 @@ is
       end if;
 
       --  Decrypt initiator's static public key
+      pragma Assert (Decrypted_Static'Length <= Crypto.AEAD.Max_Buffer_Size);
       pragma Assert
-        (Crypto.KX.Public_Key_Bytes <= Crypto.AEAD.Max_Buffer_Size);
+        (Msg.Encrypted_Static'Length <= Crypto.AEAD.Max_Buffer_Size);
+      pragma Assert (Msg.Encrypted_Static'Length >= Crypto.AEAD.Tag_Bytes);
       pragma Assert
-        (Transport.Encrypted_Static_Size <= Crypto.AEAD.Max_Buffer_Size);
+        (Decrypted_Static'Length
+         >= Msg.Encrypted_Static'Length - Crypto.AEAD.Tag_Bytes);
       Crypto.AEAD.Decrypt
         (Ciphertext => Msg.Encrypted_Static,
          Ad         => Local_Hash,
@@ -651,9 +634,15 @@ is
 
       --  Decrypt timestamp
       pragma Assert
-        (Crypto.TAI64N.Timestamp_Bytes_Length <= Crypto.AEAD.Max_Buffer_Size);
+        (Decrypted_Timestamp'Length <= Crypto.AEAD.Max_Buffer_Size);
       pragma Assert
-        (Transport.Encrypted_Timestamp_Size <= Crypto.AEAD.Max_Buffer_Size);
+        (Msg.Encrypted_Timestamp'Length
+         <= Crypto.AEAD.Max_Buffer_Size);
+      pragma Assert
+        (Msg.Encrypted_Timestamp'Length >= Crypto.AEAD.Tag_Bytes);
+      pragma Assert
+        (Decrypted_Timestamp'Length
+         >= Msg.Encrypted_Timestamp'Length - Crypto.AEAD.Tag_Bytes);
       Crypto.AEAD.Decrypt
         (Ciphertext => Msg.Encrypted_Timestamp,
          Ad         => Local_Hash,
@@ -666,14 +655,8 @@ is
       end if;
 
       --  Store timestamp for replay protection
-      declare
-         subtype Timestamp_Bytes is Byte_Array
-           (0 .. Crypto.TAI64N.Timestamp_Bytes_Length - 1);
-         function To_Timestamp is new Ada.Unchecked_Conversion
-           (Source => Timestamp_Bytes, Target => Crypto.TAI64N.Timestamp);
-      begin
-         State.Last_Timestamp := To_Timestamp (Decrypted_Timestamp);
-      end;
+      State.Last_Timestamp :=
+        Crypto.TAI64N.From_Bytes (Decrypted_Timestamp);
 
       --  H = HASH(H || encrypted_timestamp)
       Mix_Hash (Local_Hash, Msg.Encrypted_Timestamp, Local_Status);
@@ -682,25 +665,14 @@ is
       end if;
 
       --  Verify MAC1
-      declare
-         Mac1_Prefix : Byte_Array (0 .. Mac1_Offset - 1);
-      begin
-         Mac1_Prefix (0) := Msg.Msg_Type;
-         Mac1_Prefix (1 .. 3) := Msg.Reserved;
-         Mac1_Prefix (4 .. 7) := Msg.Sender;
-         Mac1_Prefix (8 .. 39) := Byte_Array (Msg.Ephemeral);
-         Mac1_Prefix (40 .. 87) := Msg.Encrypted_Static;
-         Mac1_Prefix (88 .. 115) := Msg.Encrypted_Timestamp;
-
-         Compute_Mac
-           (Key     => Identity.Mac1_Key,
-            Message => Mac1_Prefix,
-            Mac     => Computed_Mac,
-            Result  => Local_Status);
-         if not Is_Success (Local_Status) then
-            return;
-         end if;
-      end;
+      Compute_Mac
+        (Key     => Identity.Mac1_Key,
+         Message => Transport.To_Mac1_Prefix (Msg),
+         Mac     => Computed_Mac,
+         Result  => Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
 
       if Computed_Mac /= Msg.Mac1 then
          return;
@@ -709,10 +681,12 @@ is
       --  MAC2 verification skipped (cookie system not implemented)
 
       --  Success - copy back local chaining/hash and set role
+      --  Assert Kind is preserved from initialization for postcondition proof
+      pragma Assert (State.Kind = State_Empty);
       State.Chaining := Local_Chaining;
       State.Hash := Local_Hash;
-
       State.Role := Role_Responder;
+      pragma Assert (State.Role = Role_Responder);
       Result := True;
    end Process_Initiation;
 
@@ -724,18 +698,16 @@ is
    is
       pragma Unreferenced (Identity);
 
-      Local_Status   : Status;
-      Temp_Key       : Crypto.AEAD.Key_Buffer;
-      Shared         : Crypto.KX.Shared_Secret;
-      Local_Index    : Session_Index;
-      Local_Chaining : Chaining_Key;
-      Local_Hash     : Hash_State;
+      Local_Status    : Status;
+      Temp_Key        : Crypto.AEAD.Key_Buffer;
+      Shared          : Crypto.KX.Shared_Secret;
+      Local_Index     : Session_Index;
+      Local_Chaining  : Chaining_Key;
+      Local_Hash      : Hash_State;
+      Local_Ephemeral : Crypto.KX.Key_Pair;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
-
-      --  MAC1 byte offset within the response message (from rep clause)
-      Mac1_Offset : constant := 60;
 
       --  Empty payload for AEAD (Noise "empty" encryption)
       Empty_Payload : constant Byte_Array (1 .. 0) := (others => 0);
@@ -751,11 +723,12 @@ is
               Mac2            => (others => 0));
       Result := (Success => False, Length => 0);
 
-      --  Generate responder ephemeral keypair
-      Crypto.KX.Generate_Key_Pair (State.Ephemeral, Local_Status);
+      --  Generate responder ephemeral keypair into local to preserve State
+      Crypto.KX.Generate_Key_Pair (Local_Ephemeral, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
+      State.Ephemeral := Local_Ephemeral;
 
       --  Allocate local session index
       Allocate_Local_Index (Local_Index);
@@ -843,7 +816,6 @@ is
            (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1)
            := (others => 0);
          Initiator_Mac1_Key : Crypto.Blake2.Key_Buffer;
-         Mac1_Prefix : Byte_Array (0 .. Mac1_Offset - 1);
       begin
          --  Compute initiator's MAC1 key: HASH(LABEL_MAC1 || initiator_static)
          Label_And_Public (0 .. Label_Mac1_Length - 1) := Label_Mac1;
@@ -859,16 +831,9 @@ is
             return;
          end if;
 
-         Mac1_Prefix (0) := Msg.Msg_Type;
-         Mac1_Prefix (1 .. 3) := Msg.Reserved;
-         Mac1_Prefix (4 .. 7) := Msg.Sender;
-         Mac1_Prefix (8 .. 11) := Msg.Receiver;
-         Mac1_Prefix (12 .. 43) := Byte_Array (Msg.Ephemeral);
-         Mac1_Prefix (44 .. 59) := Msg.Encrypted_Empty;
-
          Compute_Mac
            (Key     => Initiator_Mac1_Key,
-            Message => Mac1_Prefix,
+            Message => Transport.To_Mac1_Prefix (Msg),
             Mac     => Msg.Mac1,
             Result  => Local_Status);
          if not Is_Success (Local_Status) then
