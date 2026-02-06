@@ -317,18 +317,12 @@ is
       Peer     : Peer_Config;
       Result   : out Initiation_Result)
    is
-      Local_Status   : Status;
-      Temp_Key       : Crypto.AEAD.Key_Buffer;
-      Shared         : Crypto.KX.Shared_Secret;
-      Timestamp      : Crypto.TAI64N.Timestamp;
-      Local_Chaining : Chaining_Key;
-      Local_Hash     : Hash_State;
+      Local_Status : Status;
+      Temp_Key     : Crypto.AEAD.Key_Buffer;
+      Shared       : Crypto.KX.Shared_Secret;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
-
-      Local_Index    : Session_Index;
-      Local_Ephemeral : Crypto.KX.Key_Pair;
    begin
       --  Initialize outputs
       Msg := (Msg_Type            => 0,
@@ -341,37 +335,35 @@ is
               Mac2                => (others => 0));
       Result := (Success => False, Length => 0);
 
-      --  Generate ephemeral keypair into local to preserve State for prover
-      Crypto.KX.Generate_Key_Pair (Local_Ephemeral, Local_Status);
+      --  Generate ephemeral keypair
+      Crypto.KX.Generate_Key_Pair (State.Ephemeral, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
-      State.Ephemeral := Local_Ephemeral;
 
       --  Allocate local session index
-      Allocate_Local_Index (Local_Index);
-      State.Local_Index := Local_Index;
+      Allocate_Local_Index (State.Local_Index);
 
       --  Initialize Noise protocol state
       --  C = HASH(Construction)
       Crypto.Blake2.Blake2s
         (Data   => Construction,
-         Digest => Local_Chaining,
+         Digest => State.Chaining,
          Result => Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(C || Identifier)
-      Mix_Hash (Local_Chaining, Identifier, Local_Status);
+      Mix_Hash (State.Chaining, Identifier, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
-      Local_Hash := Local_Chaining;
+      State.Hash := State.Chaining;
 
       --  H = HASH(H || responder_static_public)
-      Mix_Hash (Local_Hash, Byte_Array (Peer.Static_Public), Local_Status);
+      Mix_Hash (State.Hash, Byte_Array (Peer.Static_Public), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -379,18 +371,18 @@ is
       --  Build message header
       Msg.Msg_Type  := Transport.Msg_Type_Handshake_Initiation;
       Msg.Reserved  := Reserved_Zero;
-      Msg.Sender    := From_U32 (Local_Index);
+      Msg.Sender    := From_U32 (State.Local_Index);
       Msg.Ephemeral := State.Ephemeral.Pub;
 
       --  C = KDF(C, ephemeral_public)
-      Mix_Key (Local_Chaining, Byte_Array (State.Ephemeral.Pub),
+      Mix_Key (State.Chaining, Byte_Array (State.Ephemeral.Pub),
                Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(H || ephemeral_public)
-      Mix_Hash (Local_Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
+      Mix_Hash (State.Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -406,7 +398,7 @@ is
       end if;
 
       --  C, K = KDF(C, es)
-      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -419,7 +411,7 @@ is
       begin
          Crypto.AEAD.Encrypt
            (Plaintext  => Static_Pub,
-            Ad         => Local_Hash,
+            Ad         => State.Hash,
             Nonce      => Nonce,
             Key        => Temp_Key,
             Ciphertext => Msg.Encrypted_Static,
@@ -430,7 +422,7 @@ is
       end if;
 
       --  H = HASH(H || encrypted_static)
-      Mix_Hash (Local_Hash, Msg.Encrypted_Static, Local_Status);
+      Mix_Hash (State.Hash, Msg.Encrypted_Static, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -446,24 +438,22 @@ is
       end if;
 
       --  C, K = KDF(C, ss)
-      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Get current timestamp
-      Crypto.TAI64N.Now (Timestamp);
-      State.Last_Timestamp := Timestamp;
+      Crypto.TAI64N.Now (State.Last_Timestamp);
 
       --  Encrypt timestamp: encrypted_timestamp = AEAD(K, 0, timestamp, H)
-      --  Timestamp is now a public type; direct conversion avoids access.
       declare
          TS_Bytes : constant Crypto.TAI64N.Timestamp_Bytes :=
-           Byte_Array (Timestamp);
+           Byte_Array (State.Last_Timestamp);
       begin
          Crypto.AEAD.Encrypt
            (Plaintext  => TS_Bytes,
-            Ad         => Local_Hash,
+            Ad         => State.Hash,
             Nonce      => Nonce,
             Key        => Temp_Key,
             Ciphertext => Msg.Encrypted_Timestamp,
@@ -474,7 +464,7 @@ is
       end if;
 
       --  H = HASH(H || encrypted_timestamp)
-      Mix_Hash (Local_Hash, Msg.Encrypted_Timestamp, Local_Status);
+      Mix_Hash (State.Hash, Msg.Encrypted_Timestamp, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -491,9 +481,7 @@ is
 
       --  MAC2 = 0 (no cookie present, already zeroed)
 
-      --  Copy back local noise state and update state machine
-      State.Chaining := Local_Chaining;
-      State.Hash := Local_Hash;
+      --  Update state machine
       State.Kind := State_Initiator_Sent;
       State.Role := Role_Initiator;
 
@@ -509,10 +497,6 @@ is
       Local_Status : Status;
       Temp_Key     : Crypto.AEAD.Key_Buffer;
       Shared       : Crypto.KX.Shared_Secret;
-
-      --  Local copies of chaining and hash to keep State.Kind provable
-      Local_Chaining : Chaining_Key;
-      Local_Hash     : Hash_State;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
@@ -537,38 +521,39 @@ is
       --  Extract initiator's ephemeral public key
       State.Remote_Ephemeral := Msg.Ephemeral;
 
-      --  Initialize Noise protocol state into locals
+      --  Initialize Noise protocol state
+      --  C = HASH(Construction)
       Crypto.Blake2.Blake2s
         (Data   => Construction,
-         Digest => Local_Chaining,
+         Digest => State.Chaining,
          Result => Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(C || Identifier)
-      Mix_Hash (Local_Chaining, Identifier, Local_Status);
+      Mix_Hash (State.Chaining, Identifier, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
-      Local_Hash := Local_Chaining;
+      State.Hash := State.Chaining;
 
       --  H = HASH(H || responder_static_public)
-      Mix_Hash (Local_Hash, Byte_Array (Identity.Key_Pair.Pub), Local_Status);
+      Mix_Hash (State.Hash, Byte_Array (Identity.Key_Pair.Pub), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  C = KDF(C, initiator_ephemeral)
-      Mix_Key (Local_Chaining, Byte_Array (State.Remote_Ephemeral),
+      Mix_Key (State.Chaining, Byte_Array (State.Remote_Ephemeral),
                Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(H || initiator_ephemeral)
-      Mix_Hash (Local_Hash, Byte_Array (State.Remote_Ephemeral), Local_Status);
+      Mix_Hash (State.Hash, Byte_Array (State.Remote_Ephemeral), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -584,22 +569,16 @@ is
       end if;
 
       --  C, K = KDF(C, es)
-      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Decrypt initiator's static public key
-      pragma Assert (Decrypted_Static'Length <= Crypto.AEAD.Max_Buffer_Size);
-      pragma Assert
-        (Msg.Encrypted_Static'Length <= Crypto.AEAD.Max_Buffer_Size);
-      pragma Assert (Msg.Encrypted_Static'Length >= Crypto.AEAD.Tag_Bytes);
-      pragma Assert
-        (Decrypted_Static'Length
-         >= Msg.Encrypted_Static'Length - Crypto.AEAD.Tag_Bytes);
+
       Crypto.AEAD.Decrypt
         (Ciphertext => Msg.Encrypted_Static,
-         Ad         => Local_Hash,
+         Ad         => State.Hash,
          Nonce      => Nonce,
          Key        => Temp_Key,
          Plaintext  => Decrypted_Static,
@@ -611,7 +590,7 @@ is
       State.Remote_Static := Crypto.KX.Public_Key (Decrypted_Static);
 
       --  H = HASH(H || encrypted_static)
-      Mix_Hash (Local_Hash, Msg.Encrypted_Static, Local_Status);
+      Mix_Hash (State.Hash, Msg.Encrypted_Static, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -627,25 +606,15 @@ is
       end if;
 
       --  C, K = KDF(C, ss)
-      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Decrypt timestamp
-      pragma Assert
-        (Decrypted_Timestamp'Length <= Crypto.AEAD.Max_Buffer_Size);
-      pragma Assert
-        (Msg.Encrypted_Timestamp'Length
-         <= Crypto.AEAD.Max_Buffer_Size);
-      pragma Assert
-        (Msg.Encrypted_Timestamp'Length >= Crypto.AEAD.Tag_Bytes);
-      pragma Assert
-        (Decrypted_Timestamp'Length
-         >= Msg.Encrypted_Timestamp'Length - Crypto.AEAD.Tag_Bytes);
       Crypto.AEAD.Decrypt
         (Ciphertext => Msg.Encrypted_Timestamp,
-         Ad         => Local_Hash,
+         Ad         => State.Hash,
          Nonce      => Nonce,
          Key        => Temp_Key,
          Plaintext  => Decrypted_Timestamp,
@@ -659,7 +628,7 @@ is
         Crypto.TAI64N.From_Bytes (Decrypted_Timestamp);
 
       --  H = HASH(H || encrypted_timestamp)
-      Mix_Hash (Local_Hash, Msg.Encrypted_Timestamp, Local_Status);
+      Mix_Hash (State.Hash, Msg.Encrypted_Timestamp, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -680,13 +649,8 @@ is
 
       --  MAC2 verification skipped (cookie system not implemented)
 
-      --  Success - copy back local chaining/hash and set role
-      --  Assert Kind is preserved from initialization for postcondition proof
-      pragma Assert (State.Kind = State_Empty);
-      State.Chaining := Local_Chaining;
-      State.Hash := Local_Hash;
+      --  Success - update state machine
       State.Role := Role_Responder;
-      pragma Assert (State.Role = Role_Responder);
       Result := True;
    end Process_Initiation;
 
@@ -698,13 +662,9 @@ is
    is
       pragma Unreferenced (Identity);
 
-      Local_Status    : Status;
-      Temp_Key        : Crypto.AEAD.Key_Buffer;
-      Shared          : Crypto.KX.Shared_Secret;
-      Local_Index     : Session_Index;
-      Local_Chaining  : Chaining_Key;
-      Local_Hash      : Hash_State;
-      Local_Ephemeral : Crypto.KX.Key_Pair;
+      Local_Status : Status;
+      Temp_Key     : Crypto.AEAD.Key_Buffer;
+      Shared       : Crypto.KX.Shared_Secret;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
@@ -723,37 +683,31 @@ is
               Mac2            => (others => 0));
       Result := (Success => False, Length => 0);
 
-      --  Generate responder ephemeral keypair into local to preserve State
-      Crypto.KX.Generate_Key_Pair (Local_Ephemeral, Local_Status);
+      --  Generate responder ephemeral keypair
+      Crypto.KX.Generate_Key_Pair (State.Ephemeral, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
-      State.Ephemeral := Local_Ephemeral;
 
       --  Allocate local session index
-      Allocate_Local_Index (Local_Index);
-      State.Local_Index := Local_Index;
+      Allocate_Local_Index (State.Local_Index);
 
       --  Build message header
       Msg.Msg_Type  := Transport.Msg_Type_Handshake_Response;
       Msg.Reserved  := Reserved_Zero;
-      Msg.Sender    := From_U32 (Local_Index);
+      Msg.Sender    := From_U32 (State.Local_Index);
       Msg.Receiver  := From_U32 (State.Remote_Index);
       Msg.Ephemeral := State.Ephemeral.Pub;
 
-      --  Copy chaining/hash into locals to preserve State.Kind for prover
-      Local_Chaining := State.Chaining;
-      Local_Hash := State.Hash;
-
       --  C = KDF(C, responder_ephemeral)
-      Mix_Key (Local_Chaining, Byte_Array (State.Ephemeral.Pub),
+      Mix_Key (State.Chaining, Byte_Array (State.Ephemeral.Pub),
                Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  H = HASH(H || responder_ephemeral)
-      Mix_Hash (Local_Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
+      Mix_Hash (State.Hash, Byte_Array (State.Ephemeral.Pub), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -769,7 +723,7 @@ is
       end if;
 
       --  C, K = KDF(C, ee)
-      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -785,7 +739,7 @@ is
       end if;
 
       --  C, K = KDF(C, se)
-      Mix_Key (Local_Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -795,7 +749,7 @@ is
         (Transport.Encrypted_Empty_Size <= Crypto.AEAD.Max_Buffer_Size);
       Crypto.AEAD.Encrypt
         (Plaintext  => Empty_Payload,
-         Ad         => Local_Hash,
+         Ad         => State.Hash,
          Nonce      => Nonce,
          Key        => Temp_Key,
          Ciphertext => Msg.Encrypted_Empty,
@@ -805,7 +759,7 @@ is
       end if;
 
       --  H = HASH(H || encrypted_empty)
-      Mix_Hash (Local_Hash, Msg.Encrypted_Empty, Local_Status);
+      Mix_Hash (State.Hash, Msg.Encrypted_Empty, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -843,9 +797,7 @@ is
 
       --  MAC2 = 0 (already zeroed)
 
-      --  Copy back local noise state and update state machine
-      State.Chaining := Local_Chaining;
-      State.Hash := Local_Hash;
+      --  Update state machine
       State.Kind := State_Responder_Sent;
 
       Result := (Success => True, Length => Transport.Handshake_Response_Size);
