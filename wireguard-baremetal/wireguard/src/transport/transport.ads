@@ -129,28 +129,37 @@ is
      Transport_Messages.Message_Transport_Header;
 
    ---------------------
-   --  MAC1 Prefix Types (re-exported from backend-specific package)
+   --  MAC1 Prefix Types
+   --
+   --  MAC1 is computed over all message bytes preceding the Mac1 field.
+   --  These are defined here (not in Transport_Messages) because the
+   --  computation is backend-independent — it uses only the shared
+   --  field-size constants and message record types.
    ---------------------
 
+   --  Byte offsets of the Mac1 field within each message
    Mac1_Initiation_Offset : constant :=
-     Transport_Messages.Mac1_Initiation_Offset;
+     1 + 3 + 4 + Key_Size + Encrypted_Static_Size + Encrypted_Timestamp_Size;
+
    Mac1_Response_Offset : constant :=
-     Transport_Messages.Mac1_Response_Offset;
+     1 + 3 + 4 + 4 + Key_Size + Encrypted_Empty_Size;
 
    subtype Initiation_Mac1_Prefix_Bytes is
-     Transport_Messages.Initiation_Mac1_Prefix_Bytes;
+     Utils.Byte_Array (0 .. Mac1_Initiation_Offset - 1);
    subtype Response_Mac1_Prefix_Bytes is
-     Transport_Messages.Response_Mac1_Prefix_Bytes;
+     Utils.Byte_Array (0 .. Mac1_Response_Offset - 1);
 
+   --  Extract the bytes preceding Mac1 from a handshake initiation message.
    function To_Mac1_Prefix
      (Msg : Message_Handshake_Initiation)
       return Initiation_Mac1_Prefix_Bytes
-      renames Transport_Messages.To_Mac1_Prefix;
+   with Global => null;
 
+   --  Extract the bytes preceding Mac1 from a handshake response message.
    function To_Mac1_Prefix
      (Msg : Message_Handshake_Response)
       return Response_Mac1_Prefix_Bytes
-      renames Transport_Messages.To_Mac1_Prefix;
+   with Global => null;
 
    ---------------------
    --  Message Kind Detection
