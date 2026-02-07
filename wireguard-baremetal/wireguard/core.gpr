@@ -2,7 +2,7 @@
 with "config/wireguard_config.gpr";
 with "utils.gpr";
 with "crypto.gpr";
-with "transport.gpr";
+with "messages.gpr";
 with "handshake.gpr";
 
 library project Core is

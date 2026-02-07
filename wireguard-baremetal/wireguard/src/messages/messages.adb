@@ -1,6 +1,6 @@
---  Transport - WireGuard Transport Layer Implementation
+--  Messages - WireGuard Wire Protocol Message Types Implementation
 
-package body Transport
+package body Messages
   with SPARK_Mode => On
 is
 
@@ -139,4 +139,4 @@ is
       Length := View.Buf_Ptr.Len;
    end Acquire_RX_From_C;
 
-end Transport;
+end Messages;

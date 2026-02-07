@@ -12,7 +12,7 @@ with Interfaces; use Interfaces;
 with Utils;      use Utils;
 with Crypto.KX;
 with Handshake;
-with Transport;
+with Messages;
 with WG_Keys;
 
 package body WG_Handshake is
@@ -72,8 +72,8 @@ package body WG_Handshake is
       end if;
 
       --  Initialize packet pools
-      Transport.TX_Pool.Initialize;
-      Transport.RX_Pool.Initialize;
+      Messages.TX_Pool.Initialize;
+      Messages.RX_Pool.Initialize;
 
       --  Reset handshake state
       HS_State := Handshake.Empty_Handshake;
@@ -95,8 +95,8 @@ package body WG_Handshake is
       use System;
 
       Result : Handshake.Initiation_Result;
-      Handle : Transport.Buffer_Handle;
-      Ref    : Transport.Buffer_Ref;
+      Handle : Messages.Buffer_Handle;
+      Ref    : Messages.Buffer_Ref;
       Addr   : System.Address;
    begin
       Out_Len.all := 0;
@@ -106,16 +106,16 @@ package body WG_Handshake is
       end if;
 
       --  Allocate a TX pool buffer
-      Transport.TX_Pool.Allocate (Handle);
-      if Transport.TX_Pool.Is_Null (Handle) then
+      Messages.TX_Pool.Allocate (Handle);
+      if Messages.TX_Pool.Is_Null (Handle) then
          return Null_Address;
       end if;
 
       --  Borrow mutably and build message directly in buffer
-      Transport.TX_Pool.Borrow_Mut (Handle, Ref);
+      Messages.TX_Pool.Borrow_Mut (Handle, Ref);
       declare
          --  Overlay message record on buffer data (zero-copy)
-         Msg : Transport.Message_Handshake_Initiation
+         Msg : Messages.Message_Handshake_Initiation
          with Import, Address => Ref.Buf_Ptr.Data'Address;
       begin
          Handshake.Create_Initiation
@@ -123,17 +123,17 @@ package body WG_Handshake is
       end;
 
       if not Result.Success then
-         Transport.TX_Pool.Return_Ref (Handle, Ref);
-         Transport.TX_Pool.Free (Handle);
+         Messages.TX_Pool.Return_Ref (Handle, Ref);
+         Messages.TX_Pool.Free (Handle);
          return Null_Address;
       end if;
 
       Ref.Buf_Ptr.Len := Unsigned_16 (Result.Length);
-      Transport.TX_Pool.Return_Ref (Handle, Ref);
+      Messages.TX_Pool.Return_Ref (Handle, Ref);
 
       --  Release to C layer for transmission
-      Transport.Release_TX_To_C
-        (Handle, Transport.Packet_Length (Result.Length), Addr);
+      Messages.Release_TX_To_C
+        (Handle, Messages.Packet_Length (Result.Length), Addr);
 
       Out_Len.all := Unsigned_16 (Result.Length);
       return Addr;
@@ -152,13 +152,13 @@ package body WG_Handshake is
    is
       use System;
 
-      RX_Handle   : Transport.RX_Buffer_Handle;
-      RX_Length   : Transport.Packet_Length;
-      RX_View     : Transport.RX_Buffer_View;
+      RX_Handle   : Messages.RX_Buffer_Handle;
+      RX_Length   : Messages.Packet_Length;
+      RX_View     : Messages.RX_Buffer_View;
       HS_Err      : Handshake.Handshake_Error;
       Resp_Result : Handshake.Response_Result;
-      TX_Handle   : Transport.Buffer_Handle;
-      TX_Ref      : Transport.Buffer_Ref;
+      TX_Handle   : Messages.Buffer_Handle;
+      TX_Ref      : Messages.Buffer_Ref;
       TX_Addr     : System.Address;
    begin
       Out_Len.all := 0;
@@ -168,61 +168,61 @@ package body WG_Handshake is
       end if;
 
       --  Acquire the received buffer from RX pool
-      Transport.Acquire_RX_From_C (RX_Buf, RX_Handle, RX_Length);
+      Messages.Acquire_RX_From_C (RX_Buf, RX_Handle, RX_Length);
 
-      if Transport.RX_Pool.Is_Null (RX_Handle) then
+      if Messages.RX_Pool.Is_Null (RX_Handle) then
          return Null_Address;
       end if;
 
       --  Verify minimum length
-      if RX_Length < Unsigned_16 (Transport.Handshake_Init_Size) then
-         Transport.RX_Pool.Free (RX_Handle);
+      if RX_Length < Unsigned_16 (Messages.Handshake_Init_Size) then
+         Messages.RX_Pool.Free (RX_Handle);
          return Null_Address;
       end if;
 
       --  Read initiation directly from RX buffer (zero-copy)
-      RX_View := Transport.RX_Pool.Borrow (RX_Handle);
+      RX_View := Messages.RX_Pool.Borrow (RX_Handle);
       declare
-         Msg : Transport.Message_Handshake_Initiation
+         Msg : Messages.Message_Handshake_Initiation
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
          Handshake.Process_Initiation (Msg, HS_State, My_Identity, HS_Err);
       end;
 
       --  Done with RX buffer
-      Transport.RX_Pool.Free (RX_Handle);
+      Messages.RX_Pool.Free (RX_Handle);
 
       if HS_Err /= Handshake.HS_OK then
          return Null_Address;
       end if;
 
       --  Allocate TX buffer for response
-      Transport.TX_Pool.Allocate (TX_Handle);
-      if Transport.TX_Pool.Is_Null (TX_Handle) then
+      Messages.TX_Pool.Allocate (TX_Handle);
+      if Messages.TX_Pool.Is_Null (TX_Handle) then
          return Null_Address;
       end if;
 
       --  Build response directly in TX buffer (zero-copy)
-      Transport.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
+      Messages.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
       declare
-         Resp : Transport.Message_Handshake_Response
+         Resp : Messages.Message_Handshake_Response
          with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
       begin
          Handshake.Create_Response (Resp, HS_State, My_Identity, Resp_Result);
       end;
 
       if not Resp_Result.Success then
-         Transport.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
-         Transport.TX_Pool.Free (TX_Handle);
+         Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
+         Messages.TX_Pool.Free (TX_Handle);
          return Null_Address;
       end if;
 
       TX_Ref.Buf_Ptr.Len := Unsigned_16 (Resp_Result.Length);
-      Transport.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
+      Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
 
       --  Release to C for transmission
-      Transport.Release_TX_To_C
-        (TX_Handle, Transport.Packet_Length (Resp_Result.Length), TX_Addr);
+      Messages.Release_TX_To_C
+        (TX_Handle, Messages.Packet_Length (Resp_Result.Length), TX_Addr);
 
       Out_Len.all := Unsigned_16 (Resp_Result.Length);
       return TX_Addr;
@@ -237,9 +237,9 @@ package body WG_Handshake is
    function Handle_Response
      (RX_Buf : System.Address) return Interfaces.C.C_bool
    is
-      RX_Handle : Transport.RX_Buffer_Handle;
-      RX_Length : Transport.Packet_Length;
-      RX_View   : Transport.RX_Buffer_View;
+      RX_Handle : Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length;
+      RX_View   : Messages.RX_Buffer_View;
       HS_Err    : Handshake.Handshake_Error;
    begin
       if not Initialized then
@@ -247,22 +247,22 @@ package body WG_Handshake is
       end if;
 
       --  Acquire the received buffer from RX pool
-      Transport.Acquire_RX_From_C (RX_Buf, RX_Handle, RX_Length);
+      Messages.Acquire_RX_From_C (RX_Buf, RX_Handle, RX_Length);
 
-      if Transport.RX_Pool.Is_Null (RX_Handle) then
+      if Messages.RX_Pool.Is_Null (RX_Handle) then
          return C_False;
       end if;
 
       --  Verify minimum length
-      if RX_Length < Unsigned_16 (Transport.Handshake_Response_Size) then
-         Transport.RX_Pool.Free (RX_Handle);
+      if RX_Length < Unsigned_16 (Messages.Handshake_Response_Size) then
+         Messages.RX_Pool.Free (RX_Handle);
          return C_False;
       end if;
 
       --  Process response directly from RX buffer (zero-copy)
-      RX_View := Transport.RX_Pool.Borrow (RX_Handle);
+      RX_View := Messages.RX_Pool.Borrow (RX_Handle);
       declare
-         Msg : Transport.Message_Handshake_Response
+         Msg : Messages.Message_Handshake_Response
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
          Handshake.Process_Response
@@ -270,7 +270,7 @@ package body WG_Handshake is
       end;
 
       --  Done with RX buffer
-      Transport.RX_Pool.Free (RX_Handle);
+      Messages.RX_Pool.Free (RX_Handle);
 
       if HS_Err = Handshake.HS_OK then
          return C_True;

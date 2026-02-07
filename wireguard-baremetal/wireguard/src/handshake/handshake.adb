@@ -5,8 +5,8 @@
 with Crypto.Random;
 with Crypto.AEAD;
 with Crypto.KDF;
-with Transport_Messages;
-pragma Unreferenced (Transport_Messages);
+with Messages_Wire;
+pragma Unreferenced (Messages_Wire);
 
 package body Handshake
   with SPARK_Mode => On
@@ -44,7 +44,7 @@ is
       16#2D#, 16#2D#, 16#2D#, 16#2D#); --  "----"
 
    --  Reserved bytes (3 zeros)
-   Reserved_Zero : constant Transport.Reserved_Bytes := (others => 0);
+   Reserved_Zero : constant Messages.Reserved_Bytes := (others => 0);
 
    --!format on
 
@@ -215,7 +215,7 @@ is
    procedure Compute_Mac
      (Key     : Crypto.Blake2.Key_Buffer;
       Message : Byte_Array;
-      Mac     : out Transport.Mac_Bytes;
+      Mac     : out Messages.Mac_Bytes;
       Result  : out Status)
    with
      SPARK_Mode => On,
@@ -226,7 +226,7 @@ is
    begin
       Crypto.Blake2.Blake2s_Init_Key
         (Key    => Key,
-         Outlen => Transport.Mac_Size,
+         Outlen => Messages.Mac_Size,
          State  => State,
          Result => Local_Result);
       if not Is_Success (Local_Result) then
@@ -289,7 +289,7 @@ is
    end Initialize_Peer;
 
    procedure Create_Initiation
-     (Msg      : out Transport.Message_Handshake_Initiation;
+     (Msg      : out Messages.Message_Handshake_Initiation;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
@@ -345,7 +345,7 @@ is
       end if;
 
       --  Build message header
-      Msg.Msg_Type  := Transport.Msg_Type_Handshake_Initiation;
+      Msg.Msg_Type  := Messages.Msg_Type_Handshake_Initiation;
       Msg.Reserved  := Reserved_Zero;
       Msg.Sender    := From_U32 (State.Local_Index);
       Msg.Ephemeral := State.Ephemeral.Pub;
@@ -437,7 +437,7 @@ is
       --  Compute MAC1 = MAC(peer_mac1_key || msg[0..mac1_offset-1])
       Compute_Mac
         (Key     => Peer.Mac1_Key,
-         Message => Transport.To_Mac1_Prefix (Msg),
+         Message => Messages.To_Mac1_Prefix (Msg),
          Mac     => Msg.Mac1,
          Result  => Local_Status);
       if not Is_Success (Local_Status) then
@@ -450,11 +450,11 @@ is
       State.Kind := State_Initiator_Sent;
       State.Role := Role_Initiator;
 
-      Result := (Success => True, Length => Transport.Handshake_Init_Size);
+      Result := (Success => True, Length => Messages.Handshake_Init_Size);
    end Create_Initiation;
 
    procedure Process_Initiation
-     (Msg      : Transport.Message_Handshake_Initiation;
+     (Msg      : Messages.Message_Handshake_Initiation;
       State    : out Handshake_State;
       Identity : Static_Identity;
       Result   : out Handshake_Error)
@@ -469,13 +469,13 @@ is
       --  Decrypted values
       Decrypted_Static    : Byte_Array (0 .. Crypto.KX.Public_Key_Bytes - 1);
       Decrypted_Timestamp : Crypto.TAI64N.Timestamp_Bytes;
-      Computed_Mac        : Transport.Mac_Bytes;
+      Computed_Mac        : Messages.Mac_Bytes;
    begin
       --  Initialize output
       State := Empty_Handshake;
 
       --  Verify message type
-      if Msg.Msg_Type /= Transport.Msg_Type_Handshake_Initiation then
+      if Msg.Msg_Type /= Messages.Msg_Type_Handshake_Initiation then
          Result := HS_Bad_Msg_Type;
          return;
       end if;
@@ -483,7 +483,7 @@ is
       --  Verify MAC1 first (cheap DoS filter before expensive crypto)
       Compute_Mac
         (Key     => Identity.Mac1_Key,
-         Message => Transport.To_Mac1_Prefix (Msg),
+         Message => Messages.To_Mac1_Prefix (Msg),
          Mac     => Computed_Mac,
          Result  => Local_Status);
       if not Is_Success (Local_Status) then
@@ -633,7 +633,7 @@ is
    end Process_Initiation;
 
    procedure Create_Response
-     (Msg      : out Transport.Message_Handshake_Response;
+     (Msg      : out Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Result   : out Response_Result)
@@ -672,7 +672,7 @@ is
       Allocate_Local_Index (State.Local_Index);
 
       --  Build message header
-      Msg.Msg_Type  := Transport.Msg_Type_Handshake_Response;
+      Msg.Msg_Type  := Messages.Msg_Type_Handshake_Response;
       Msg.Reserved  := Reserved_Zero;
       Msg.Sender    := From_U32 (State.Local_Index);
       Msg.Receiver  := From_U32 (State.Remote_Index);
@@ -768,7 +768,7 @@ is
 
          Compute_Mac
            (Key     => Initiator_Mac1_Key,
-            Message => Transport.To_Mac1_Prefix (Msg),
+            Message => Messages.To_Mac1_Prefix (Msg),
             Mac     => Msg.Mac1,
             Result  => Local_Status);
          if not Is_Success (Local_Status) then
@@ -781,11 +781,11 @@ is
       --  Update state machine
       State.Kind := State_Responder_Sent;
 
-      Result := (Success => True, Length => Transport.Handshake_Response_Size);
+      Result := (Success => True, Length => Messages.Handshake_Response_Size);
    end Create_Response;
 
    procedure Process_Response
-     (Msg      : Transport.Message_Handshake_Response;
+     (Msg      : Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
@@ -803,10 +803,10 @@ is
 
       --  Decrypted empty payload (should be zero-length after stripping tag)
       Decrypted_Empty : Byte_Array (1 .. 0);
-      Computed_Mac     : Transport.Mac_Bytes;
+      Computed_Mac     : Messages.Mac_Bytes;
    begin
       --  Verify message type
-      if Msg.Msg_Type /= Transport.Msg_Type_Handshake_Response then
+      if Msg.Msg_Type /= Messages.Msg_Type_Handshake_Response then
          Result := HS_Bad_Msg_Type;
          State := Empty_Handshake;
          return;
@@ -822,7 +822,7 @@ is
       --  Verify MAC1 using our own MAC1 key (keyed to our static public)
       Compute_Mac
         (Key     => Identity.Mac1_Key,
-         Message => Transport.To_Mac1_Prefix (Msg),
+         Message => Messages.To_Mac1_Prefix (Msg),
          Mac     => Computed_Mac,
          Result  => Local_Status);
       if not Is_Success (Local_Status) then

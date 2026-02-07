@@ -1,4 +1,4 @@
---  Transport - VeriGuard Transport Layer
+--  Messages - VeriGuard Wire Protocol Message Types
 --
 --  VeriGuard message types with representation clauses for zero-copy
 --  packet parsing. Records can be overlaid on raw packet memory using
@@ -12,7 +12,7 @@
 --    libsodium backend   -> WireGuard compatible (can debug with wg tools)
 --    libhydrogen backend -> VeriGuard format (larger messages, not compatible)
 --
---  Message types are defined in Transport_Messages (backend-specific).
+--  Message types are defined in Messages_Wire (backend-specific).
 --
 --  Packet Pool:
 --    This package owns the shared buffer pool for network packets.
@@ -22,9 +22,9 @@ with System;
 with Interfaces; use Interfaces;
 with Utils;
 with Utils.Memory_Pool;
-with Transport_Messages;
+with Messages_Wire;
 
-package Transport
+package Messages
   with SPARK_Mode => On
 is
    ---------------------------------------------------------------------------
@@ -72,71 +72,71 @@ is
    ---------------------
 
    --  Field sizes
-   Key_Size       : constant := Transport_Messages.Key_Size;
-   Hash_Size      : constant := Transport_Messages.Hash_Size;
-   Aead_Tag_Size  : constant := Transport_Messages.Aead_Tag_Size;
-   Cookie_Size    : constant := Transport_Messages.Cookie_Size;
-   Mac_Size       : constant := Transport_Messages.Mac_Size;
-   Timestamp_Size : constant := Transport_Messages.Timestamp_Size;
-   XChaCha_Nonce_Size : constant := Transport_Messages.XChaCha_Nonce_Size;
+   Key_Size       : constant := Messages_Wire.Key_Size;
+   Hash_Size      : constant := Messages_Wire.Hash_Size;
+   Aead_Tag_Size  : constant := Messages_Wire.Aead_Tag_Size;
+   Cookie_Size    : constant := Messages_Wire.Cookie_Size;
+   Mac_Size       : constant := Messages_Wire.Mac_Size;
+   Timestamp_Size : constant := Messages_Wire.Timestamp_Size;
+   XChaCha_Nonce_Size : constant := Messages_Wire.XChaCha_Nonce_Size;
 
    --  Encrypted field sizes
    Encrypted_Static_Size    : constant :=
-     Transport_Messages.Encrypted_Static_Size;
+     Messages_Wire.Encrypted_Static_Size;
    Encrypted_Timestamp_Size : constant :=
-     Transport_Messages.Encrypted_Timestamp_Size;
+     Messages_Wire.Encrypted_Timestamp_Size;
    Encrypted_Empty_Size     : constant :=
-     Transport_Messages.Encrypted_Empty_Size;
+     Messages_Wire.Encrypted_Empty_Size;
    Encrypted_Cookie_Size    : constant :=
-     Transport_Messages.Encrypted_Cookie_Size;
+     Messages_Wire.Encrypted_Cookie_Size;
 
    --  Message sizes
    Handshake_Init_Size     : constant :=
-     Transport_Messages.Handshake_Init_Size;
+     Messages_Wire.Handshake_Init_Size;
    Handshake_Response_Size : constant :=
-     Transport_Messages.Handshake_Response_Size;
+     Messages_Wire.Handshake_Response_Size;
    Cookie_Reply_Size       : constant :=
-     Transport_Messages.Cookie_Reply_Size;
+     Messages_Wire.Cookie_Reply_Size;
    Transport_Header_Size   : constant :=
-     Transport_Messages.Transport_Header_Size;
+     Messages_Wire.Transport_Header_Size;
 
    ---------------------
    --  Byte Array Subtypes (re-exported)
    ---------------------
 
-   subtype Reserved_Bytes is Transport_Messages.Reserved_Bytes;
-   subtype Sender_Bytes is Transport_Messages.Sender_Bytes;
-   subtype Receiver_Bytes is Transport_Messages.Receiver_Bytes;
-   subtype Counter_Bytes is Transport_Messages.Counter_Bytes;
+   subtype Reserved_Bytes is Messages_Wire.Reserved_Bytes;
+   subtype Sender_Bytes is Messages_Wire.Sender_Bytes;
+   subtype Receiver_Bytes is Messages_Wire.Receiver_Bytes;
+   subtype Counter_Bytes is Messages_Wire.Counter_Bytes;
 
-   subtype Public_Key_Bytes is Transport_Messages.Public_Key_Bytes;
-   subtype Mac_Bytes is Transport_Messages.Mac_Bytes;
-   subtype XChaCha_Nonce_Bytes is Transport_Messages.XChaCha_Nonce_Bytes;
+   subtype Public_Key_Bytes is Messages_Wire.Public_Key_Bytes;
+   subtype Mac_Bytes is Messages_Wire.Mac_Bytes;
+   subtype XChaCha_Nonce_Bytes is Messages_Wire.XChaCha_Nonce_Bytes;
 
    subtype Encrypted_Static_Bytes is
-     Transport_Messages.Encrypted_Static_Bytes;
+     Messages_Wire.Encrypted_Static_Bytes;
    subtype Encrypted_Timestamp_Bytes is
-     Transport_Messages.Encrypted_Timestamp_Bytes;
+     Messages_Wire.Encrypted_Timestamp_Bytes;
    subtype Encrypted_Empty_Bytes is
-     Transport_Messages.Encrypted_Empty_Bytes;
+     Messages_Wire.Encrypted_Empty_Bytes;
    subtype Encrypted_Cookie_Bytes is
-     Transport_Messages.Encrypted_Cookie_Bytes;
+     Messages_Wire.Encrypted_Cookie_Bytes;
 
    ---------------------
    --  Message Types (re-exported from backend-specific package)
    ---------------------
 
    subtype Message_Handshake_Initiation is
-     Transport_Messages.Message_Handshake_Initiation;
+     Messages_Wire.Message_Handshake_Initiation;
 
    subtype Message_Handshake_Response is
-     Transport_Messages.Message_Handshake_Response;
+     Messages_Wire.Message_Handshake_Response;
 
    subtype Message_Cookie_Reply is
-     Transport_Messages.Message_Cookie_Reply;
+     Messages_Wire.Message_Cookie_Reply;
 
    subtype Message_Transport_Header is
-     Transport_Messages.Message_Transport_Header;
+     Messages_Wire.Message_Transport_Header;
 
    ---------------------
    --  MAC1 Prefix Types
@@ -221,4 +221,4 @@ is
    --    Ref.Buf_Ptr.Len := New_Length;
    --    TX_Pool.Return_Ref (Handle, Ref);
 
-end Transport;
+end Messages;

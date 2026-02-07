@@ -1,10 +1,10 @@
 --  Packet_Pool - C FFI for RX and TX packet buffer pools
 --
---  Provides C-callable interface to Transport.RX_Pool and Transport.TX_Pool.
+--  Provides C-callable interface to Messages.RX_Pool and Messages.TX_Pool.
 
 with System;
 with Interfaces.C;
-with Transport;
+with Messages;
 
 package Packet_Pool
    with SPARK_Mode => On
@@ -12,8 +12,8 @@ is
    use Interfaces.C;
 
    --  Re-export pool configuration for C
-   Packet_Size : constant := Transport.Packet_Size;
-   Pool_Size   : constant := Transport.Pool_Size;
+   Packet_Size : constant := Messages.Packet_Size;
+   Pool_Size   : constant := Messages.Pool_Size;
 
    ---------------------------------------------------------------------------
    --  TX Pool C FFI
