@@ -17,6 +17,8 @@ with WG_Keys;
 
 package body WG_Handshake is
 
+   use type Handshake.Handshake_Error;
+
    --  C_bool conversion helpers
    C_False : constant Interfaces.C.C_bool := Interfaces.C.C_bool (False);
    C_True  : constant Interfaces.C.C_bool := Interfaces.C.C_bool (True);
@@ -153,7 +155,7 @@ package body WG_Handshake is
       RX_Handle   : Transport.RX_Buffer_Handle;
       RX_Length   : Transport.Packet_Length;
       RX_View     : Transport.RX_Buffer_View;
-      OK          : Boolean;
+      HS_Err      : Handshake.Handshake_Error;
       Resp_Result : Handshake.Response_Result;
       TX_Handle   : Transport.Buffer_Handle;
       TX_Ref      : Transport.Buffer_Ref;
@@ -184,13 +186,13 @@ package body WG_Handshake is
          Msg : Transport.Message_Handshake_Initiation
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
-         Handshake.Process_Initiation (Msg, HS_State, My_Identity, OK);
+         Handshake.Process_Initiation (Msg, HS_State, My_Identity, HS_Err);
       end;
 
       --  Done with RX buffer
       Transport.RX_Pool.Free (RX_Handle);
 
-      if not OK then
+      if HS_Err /= Handshake.HS_OK then
          return Null_Address;
       end if;
 
@@ -238,7 +240,7 @@ package body WG_Handshake is
       RX_Handle : Transport.RX_Buffer_Handle;
       RX_Length : Transport.Packet_Length;
       RX_View   : Transport.RX_Buffer_View;
-      OK        : Boolean;
+      HS_Err    : Handshake.Handshake_Error;
    begin
       if not Initialized then
          return C_False;
@@ -263,13 +265,14 @@ package body WG_Handshake is
          Msg : Transport.Message_Handshake_Response
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
-         Handshake.Process_Response (Msg, HS_State, My_Identity, My_Peer, OK);
+         Handshake.Process_Response
+           (Msg, HS_State, My_Identity, My_Peer, HS_Err);
       end;
 
       --  Done with RX buffer
       Transport.RX_Pool.Free (RX_Handle);
 
-      if OK then
+      if HS_Err = Handshake.HS_OK then
          return C_True;
       else
          return C_False;
