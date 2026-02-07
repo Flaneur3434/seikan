@@ -13,3 +13,30 @@ config WIFI_PASSWORD
         WiFi password (WPA2/WPA3).
 
 endmenu
+
+menu "WireGuard Keys"
+
+config WG_STATIC_PRIVATE_KEY
+    string "WireGuard static private key (hex)"
+    default ""
+    help
+        ESP32 static private X25519 key as 64 hex characters.
+        Generate with: python build.py keygen
+
+config WG_PEER_PUBLIC_KEY
+    string "Peer public key (hex)"
+    default ""
+    help
+        Remote peer static public X25519 key as 64 hex characters.
+        This is the Python test side's public key.
+        Generate with: python build.py keygen
+
+config WG_PRESHARED_KEY
+    string "Pre-shared key (hex, optional)"
+    default ""
+    help
+        Optional 32-byte pre-shared key as 64 hex characters.
+        Leave empty for no PSK (all-zero).
+        Generate with: python build.py keygen --psk
+
+endmenu
