@@ -103,7 +103,10 @@ is
 
    function Borrow (Handle : Buffer_Handle) return Buffer_View is
    begin
-      return (Buf_Ptr => Handle.Ptr.all'Unchecked_Access);
+      if Handle.Ptr = null then
+         return (Buf_Ptr => null);
+      end if;
+      return (Buf_Ptr => Handle.Ptr.all'Access);
    end Borrow;
 
    procedure Borrow_Mut
@@ -111,6 +114,10 @@ is
       Ref    : out Buffer_Ref)
    is
    begin
+      if Handle.Ptr = null then
+         Ref := (Buf_Ptr => null);
+         return;
+      end if;
       Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := True;
       Ref := (Buf_Ptr => Handle.Ptr);
    end Borrow_Mut;
@@ -120,7 +127,9 @@ is
       Ref    : in out Buffer_Ref)
    is
    begin
-      Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := False;
+      if Handle.Ptr /= null then
+         Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := False;
+      end if;
       Ref := (Buf_Ptr => null);
    end Return_Ref;
 
