@@ -1,6 +1,7 @@
 --  WireGuard KDF implementation using BLAKE2s streaming API
 
 with Crypto.Blake2_Ref;
+with Crypto.Helper;
 with System;
 with Interfaces; use Interfaces;
 with Interfaces.C; use Interfaces.C;
@@ -164,7 +165,7 @@ is
       end if;
 
       --  Clear intermediate value
-      Tau0 := (others => 0);
+      Crypto.Helper.Memzero (Tau0);
    end KDF1;
 
    ---------------------
@@ -209,8 +210,8 @@ is
       end if;
 
       --  Clear intermediate values
-      Tau0 := (others => 0);
-      Tau1_Cat := (others => 0);
+      Crypto.Helper.Memzero (Tau0);
+      Crypto.Helper.Memzero (Tau1_Cat);
    end KDF2;
 
    ---------------------
@@ -272,8 +273,8 @@ is
       end if;
 
       --  Clear intermediate values
-      Tau0 := (others => 0);
-      Prev_Cat := (others => 0);
+      Crypto.Helper.Memzero (Tau0);
+      Crypto.Helper.Memzero (Prev_Cat);
    end KDF3;
 
 end Crypto.KDF;
