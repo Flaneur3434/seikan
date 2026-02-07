@@ -1,5 +1,6 @@
 --  Packet_Pool - C FFI Implementation for RX and TX pools
 
+with Messages;
 package body Packet_Pool
    with SPARK_Mode => Off
 is
@@ -10,17 +11,17 @@ is
 
    procedure C_TX_Pool_Init is
    begin
-      Transport.TX_Pool.Initialize;
+      Messages.TX_Pool.Initialize;
    end C_TX_Pool_Init;
 
    function C_TX_Pool_Allocate return System.Address is
    begin
-      return Transport.TX_Pool.C_Allocate;
+      return Messages.TX_Pool.C_Allocate;
    end C_TX_Pool_Allocate;
 
    procedure C_TX_Pool_Free (Addr : System.Address) is
    begin
-      Transport.TX_Pool.C_Free (Addr);
+      Messages.TX_Pool.C_Free (Addr);
    end C_TX_Pool_Free;
 
    ---------------------------------------------------------------------------
@@ -29,17 +30,17 @@ is
 
    procedure C_RX_Pool_Init is
    begin
-      Transport.RX_Pool.Initialize;
+      Messages.RX_Pool.Initialize;
    end C_RX_Pool_Init;
 
    function C_RX_Pool_Allocate return System.Address is
    begin
-      return Transport.RX_Pool.C_Allocate;
+      return Messages.RX_Pool.C_Allocate;
    end C_RX_Pool_Allocate;
 
    procedure C_RX_Pool_Free (Addr : System.Address) is
    begin
-      Transport.RX_Pool.C_Free (Addr);
+      Messages.RX_Pool.C_Free (Addr);
    end C_RX_Pool_Free;
 
    ---------------------------------------------------------------------------

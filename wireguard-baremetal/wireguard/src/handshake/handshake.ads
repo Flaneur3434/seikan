@@ -21,7 +21,7 @@ with Utils;      use Utils;
 with Crypto.KX;
 with Crypto.Blake2;
 with Crypto.TAI64N;
-with Transport;
+with Messages;
 
 package Handshake
   with SPARK_Mode => On
@@ -220,7 +220,7 @@ is
    --    s:  Encrypt initiator static with current key
    --    ss: DH(initiator_static_secret, responder_static)
    procedure Create_Initiation
-     (Msg      : out Transport.Message_Handshake_Initiation;
+     (Msg      : out Messages.Message_Handshake_Initiation;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
@@ -231,7 +231,7 @@ is
         then
           State.Kind = State_Initiator_Sent
           and then State.Role = Role_Initiator
-          and then Result.Length = Transport.Handshake_Init_Size);
+          and then Result.Length = Messages.Handshake_Init_Size);
 
    --  Process a received handshake initiation message (RX path, Responder)
    --
@@ -246,7 +246,7 @@ is
    --    s:  Decrypt initiator static
    --    ss: DH(responder_static_secret, initiator_static)
    procedure Process_Initiation
-     (Msg      : Transport.Message_Handshake_Initiation;
+     (Msg      : Messages.Message_Handshake_Initiation;
       State    : out Handshake_State;
       Identity : Static_Identity;
       Result   : out Handshake_Error)
@@ -268,7 +268,7 @@ is
    --    ee: DH(responder_ephemeral_secret, initiator_ephemeral)
    --    se: DH(responder_ephemeral_secret, initiator_static)
    procedure Create_Response
-     (Msg      : out Transport.Message_Handshake_Response;
+     (Msg      : out Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Result   : out Response_Result)
@@ -277,7 +277,7 @@ is
        (if Result.Success
         then
           State.Kind = State_Responder_Sent
-          and then Result.Length = Transport.Handshake_Response_Size);
+          and then Result.Length = Messages.Handshake_Response_Size);
 
    --  Process a received handshake response message (RX path, Initiator)
    --
@@ -292,7 +292,7 @@ is
    --    se: DH(initiator_static_secret, responder_ephemeral)
    --    psk: Mix pre-shared key, decrypt empty payload
    procedure Process_Response
-     (Msg      : Transport.Message_Handshake_Response;
+     (Msg      : Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;

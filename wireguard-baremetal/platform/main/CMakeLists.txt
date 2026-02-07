@@ -29,7 +29,7 @@ set(ADA_LIBS
     "${PROJECT_ROOT}/wireguard/lib/libWireguard.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgHandshake.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgCrypto.a"
-    "${PROJECT_ROOT}/wireguard/lib/libWgTransport.a"
+    "${PROJECT_ROOT}/wireguard/lib/libWgMessages.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgNet.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgUtils.a"
 )

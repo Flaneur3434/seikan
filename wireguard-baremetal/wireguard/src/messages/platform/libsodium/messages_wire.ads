@@ -1,14 +1,11 @@
---  Transport_Messages - VeriGuard Message Types (libhydrogen)
+--  Messages_Wire - WireGuard Wire-Compatible Message Types (libsodium)
 --
---  This package defines the VeriGuard message types with flexible layout
---  for the libhydrogen backend. Uses Pack pragma instead of hardcoded
---  representation clauses since libhydrogen has different tag sizes.
+--  This package defines the VeriGuard/WireGuard message types with
+--  representation clauses that ensure wire compatibility with standard
+--  WireGuard implementations.
 --
---  Backend: libhydrogen (Gimli-based primitives)
---  Wire format: VeriGuard-specific (NOT WireGuard compatible)
---
---  NOTE: Message sizes are LARGER than WireGuard due to libhydrogen's
---  36-byte AEAD header vs WireGuard's 16-byte Poly1305 tag.
+--  Backend: libsodium (X25519, ChaCha20-Poly1305, BLAKE2s)
+--  Wire format: Compatible with WireGuard specification
 
 with Interfaces; use Interfaces;
 with Utils; use Utils;
@@ -16,7 +13,7 @@ with Crypto.KX;
 with Crypto.Blake2;
 with Crypto.AEAD;
 
-package Transport_Messages
+package Messages_Wire
   with SPARK_Mode => On
 is
    ---------------------
@@ -32,7 +29,6 @@ is
    XChaCha_Nonce_Size : constant := 24;
 
    --  Encrypted field sizes (plaintext + AEAD tag)
-   --  NOTE: With libhydrogen, Aead_Tag_Size = 36, so these are larger
    Encrypted_Static_Size    : constant := Key_Size + Aead_Tag_Size;
    Encrypted_Timestamp_Size : constant := Timestamp_Size + Aead_Tag_Size;
    Encrypted_Empty_Size     : constant := Aead_Tag_Size;
@@ -60,24 +56,13 @@ is
      Byte_Array (0 .. Encrypted_Cookie_Size - 1);
 
    ---------------------
-   --  Message Header Sizes (Bytes) - COMPUTED for libhydrogen
+   --  Message Header Sizes (Bytes) - WireGuard spec values
    ---------------------
 
-   --  Handshake Initiation: 1 + 3 + 4 + Key + EncStatic + EncTimestamp + Mac + Mac
-   Handshake_Init_Size : constant :=
-     1 + 3 + 4 + Key_Size + Encrypted_Static_Size + Encrypted_Timestamp_Size +
-     Mac_Size + Mac_Size;
-
-   --  Handshake Response: 1 + 3 + 4 + 4 + Key + EncEmpty + Mac + Mac
-   Handshake_Response_Size : constant :=
-     1 + 3 + 4 + 4 + Key_Size + Encrypted_Empty_Size + Mac_Size + Mac_Size;
-
-   --  Cookie Reply: 1 + 3 + 4 + XChaCha_Nonce + EncCookie
-   Cookie_Reply_Size : constant :=
-     1 + 3 + 4 + XChaCha_Nonce_Size + Encrypted_Cookie_Size;
-
-   --  Transport Header (fixed, no crypto fields)
-   Transport_Header_Size : constant := 16;
+   Handshake_Init_Size     : constant := 148;
+   Handshake_Response_Size : constant := 92;
+   Cookie_Reply_Size       : constant := 64;
+   Transport_Header_Size   : constant := 16;
 
    ---------------------
    --  Message Type 1: Handshake Initiation
@@ -93,10 +78,21 @@ is
       Mac1                : Mac_Bytes;
       Mac2                : Mac_Bytes;
    end record
-   with Convention => C, Pack;
+   with Convention => C;
 
-   --  NOTE: No representation clause - uses Pack for sequential layout.
-   --  Size will be different from WireGuard due to larger AEAD tags.
+   for Message_Handshake_Initiation use
+     record
+       Msg_Type            at 0   range 0 .. 7;
+       Reserved            at 1   range 0 .. 23;
+       Sender              at 4   range 0 .. 31;
+       Ephemeral           at 8   range 0 .. 255;
+       Encrypted_Static    at 40  range 0 .. 383;
+       Encrypted_Timestamp at 88  range 0 .. 223;
+       Mac1                at 116 range 0 .. 127;
+       Mac2                at 132 range 0 .. 127;
+     end record;
+
+   for Message_Handshake_Initiation'Size use Handshake_Init_Size * 8;
 
    ---------------------
    --  Message Type 2: Handshake Response
@@ -112,7 +108,21 @@ is
       Mac1            : Mac_Bytes;
       Mac2            : Mac_Bytes;
    end record
-   with Convention => C, Pack;
+   with Convention => C;
+
+   for Message_Handshake_Response use
+     record
+       Msg_Type        at 0  range 0 .. 7;
+       Reserved        at 1  range 0 .. 23;
+       Sender          at 4  range 0 .. 31;
+       Receiver        at 8  range 0 .. 31;
+       Ephemeral       at 12 range 0 .. 255;
+       Encrypted_Empty at 44 range 0 .. 127;
+       Mac1            at 60 range 0 .. 127;
+       Mac2            at 76 range 0 .. 127;
+     end record;
+
+   for Message_Handshake_Response'Size use Handshake_Response_Size * 8;
 
    ---------------------
    --  Message Type 3: Cookie Reply
@@ -125,7 +135,18 @@ is
       Nonce            : XChaCha_Nonce_Bytes;
       Encrypted_Cookie : Encrypted_Cookie_Bytes;
    end record
-   with Convention => C, Pack;
+   with Convention => C;
+
+   for Message_Cookie_Reply use
+     record
+       Msg_Type         at 0  range 0 .. 7;
+       Reserved         at 1  range 0 .. 23;
+       Receiver         at 4  range 0 .. 31;
+       Nonce            at 8  range 0 .. 191;
+       Encrypted_Cookie at 32 range 0 .. 255;
+     end record;
+
+   for Message_Cookie_Reply'Size use Cookie_Reply_Size * 8;
 
    ---------------------
    --  Message Type 4: Transport Data Header
@@ -137,6 +158,16 @@ is
       Receiver : Receiver_Bytes;
       Counter  : Counter_Bytes;
    end record
-   with Convention => C, Pack;
+   with Convention => C;
 
-end Transport_Messages;
+   for Message_Transport_Header use
+     record
+       Msg_Type at 0 range 0 .. 7;
+       Reserved at 1 range 0 .. 23;
+       Receiver at 4 range 0 .. 31;
+       Counter  at 8 range 0 .. 63;
+     end record;
+
+   for Message_Transport_Header'Size use Transport_Header_Size * 8;
+
+end Messages_Wire;

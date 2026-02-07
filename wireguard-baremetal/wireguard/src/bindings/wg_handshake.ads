@@ -4,7 +4,7 @@
 --  These are the entry points called by C firmware code (udp_server.c)
 --  to perform WireGuard Noise IK handshake operations.
 --
---  Buffer management uses the shared Transport.Packet_Pool:
+--  Buffer management uses the shared Messages.Packet_Pool:
 --    - TX path: Ada allocates buffer, builds message, returns address to C
 --    - RX path: C passes received buffer address, Ada acquires and processes
 --

@@ -1,4 +1,4 @@
---  Transport library - VeriGuard transport layer
+--  Messages library - VeriGuard wire protocol message types
 --
 --  Wire format depends on crypto backend:
 --    libsodium   - WireGuard compatible (hardcoded rep clauses)
@@ -8,7 +8,7 @@ with "config/wireguard_config.gpr";
 with "utils.gpr";
 with "crypto.gpr";
 
-library project Transport is
+library project Messages is
 
    type Platform_Type is ("esp_idf", "host");
    Platform : Platform_Type := external ("PLATFORM", "esp_idf");
@@ -19,7 +19,7 @@ library project Transport is
      external ("CRYPTO_BACKEND", "libsodium");
 
    for Languages use ("Ada");
-   for Library_Name use "WgTransport";
+   for Library_Name use "WgMessages";
 
    case Platform is
       when "esp_idf" =>
@@ -33,13 +33,13 @@ library project Transport is
    Backend_Src := ("");
    case Crypto_Backend is
       when "libsodium" =>
-         Backend_Src := ("src/transport/platform/libsodium/");
+         Backend_Src := ("src/messages/platform/libsodium/");
       when "libhydrogen" =>
-         Backend_Src := ("src/transport/platform/libhydrogen/");
+         Backend_Src := ("src/messages/platform/libhydrogen/");
    end case;
 
-   for Source_Dirs use ("src/transport/") & Backend_Src;
-   for Object_Dir use "obj/" & Platform & "/transport";
+   for Source_Dirs use ("src/messages/") & Backend_Src;
+   for Object_Dir use "obj/" & Platform & "/messages";
    for Library_Dir use "lib";
    for Create_Missing_Dirs use "True";
 
@@ -51,4 +51,4 @@ library project Transport is
       for Default_Switches ("Ada") use Wireguard_Config.Ada_Compiler_Switches;
    end Compiler;
 
-end Transport;
+end Messages;
