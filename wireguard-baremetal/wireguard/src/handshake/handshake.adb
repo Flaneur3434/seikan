@@ -769,4 +769,153 @@ is
       Result := (Success => True, Length => Transport.Handshake_Response_Size);
    end Create_Response;
 
+   procedure Process_Response
+     (Msg      : Transport.Message_Handshake_Response;
+      State    : in out Handshake_State;
+      Identity : Static_Identity;
+      Peer     : Peer_Config;
+      Result   : out Boolean)
+   is
+      pragma Unreferenced (Peer);
+
+      Local_Status : Status;
+      Temp_Key     : Crypto.AEAD.Key_Buffer;
+      Shared       : Crypto.KX.Shared_Secret;
+      Tau          : Hash_State;
+
+      --  Noise protocol uses nonce=0 for all handshake AEAD operations.
+      Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
+
+      --  Decrypted empty payload (should be zero-length after stripping tag)
+      Decrypted_Empty : Byte_Array (1 .. 0);
+      Computed_Mac     : Transport.Mac_Bytes;
+   begin
+      Result := False;
+
+      --  Verify message type
+      if Msg.Msg_Type /= Transport.Msg_Type_Handshake_Response then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  Verify receiver index matches our local index
+      if To_U32 (Msg.Receiver) /= State.Local_Index then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  Verify MAC1 using our own MAC1 key (keyed to our static public)
+      Compute_Mac
+        (Key     => Identity.Mac1_Key,
+         Message => Transport.To_Mac1_Prefix (Msg),
+         Mac     => Computed_Mac,
+         Result  => Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      if Computed_Mac /= Msg.Mac1 then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  Extract sender index
+      State.Remote_Index := To_U32 (Msg.Sender);
+
+      --  Extract responder's ephemeral public key
+      State.Remote_Ephemeral := Msg.Ephemeral;
+
+      --  C = KDF1(C, responder_ephemeral)
+      Mix_Key (State.Chaining, Byte_Array (State.Remote_Ephemeral),
+               Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  H = HASH(H || responder_ephemeral)
+      Mix_Hash (State.Hash, Byte_Array (State.Remote_Ephemeral), Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  DH: ee = DH(initiator_ephemeral_secret, responder_ephemeral)
+      Crypto.KX.DH
+        (Shared       => Shared,
+         My_Secret    => State.Ephemeral.Sec,
+         Their_Public => State.Remote_Ephemeral,
+         Result       => Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  C = KDF1(C, ee)
+      Mix_Key (State.Chaining, Byte_Array (Shared), Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  DH: se = DH(initiator_static_secret, responder_ephemeral)
+      Crypto.KX.DH
+        (Shared       => Shared,
+         My_Secret    => Identity.Key_Pair.Sec,
+         Their_Public => State.Remote_Ephemeral,
+         Result       => Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  C = KDF1(C, se)
+      Mix_Key (State.Chaining, Byte_Array (Shared), Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  C, τ, K = KDF3(C, Q) — PSK mixing (Q = 0^32, no PSK configured)
+      Mix_Key (State.Chaining, No_PSK, Tau, Temp_Key, Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  H = HASH(H || τ)
+      Mix_Hash (State.Hash, Tau, Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  Decrypt empty payload: AEAD-Decrypt(K, 0, encrypted_empty, H)
+      Crypto.AEAD.Decrypt
+        (Ciphertext => Msg.Encrypted_Empty,
+         Ad         => State.Hash,
+         Nonce      => Nonce,
+         Key        => Temp_Key,
+         Plaintext  => Decrypted_Empty,
+         Result     => Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  H = HASH(H || encrypted_empty)
+      Mix_Hash (State.Hash, Msg.Encrypted_Empty, Local_Status);
+      if not Is_Success (Local_Status) then
+         State := Empty_Handshake;
+         return;
+      end if;
+
+      --  MAC2 verification skipped (cookie system not implemented)
+
+      --  Success - update state machine
+      State.Kind := State_Established;
+      Result := True;
+   end Process_Response;
+
 end Handshake;

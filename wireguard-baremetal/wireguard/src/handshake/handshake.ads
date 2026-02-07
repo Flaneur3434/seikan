@@ -244,6 +244,31 @@ is
           State.Kind = State_Responder_Sent
           and then Result.Length = Transport.Handshake_Response_Size);
 
+   --  Process a received handshake response message (RX path, Initiator)
+   --
+   --  Validates and decrypts an incoming response message.
+   --  Must be called after successful Create_Initiation when
+   --  State.Kind = State_Initiator_Sent.
+   --
+   --  Noise IK pattern (Initiator side, receiving second message):
+   --    <- e, ee, se, psk
+   --    e:  Read responder ephemeral
+   --    ee: DH(initiator_ephemeral_secret, responder_ephemeral)
+   --    se: DH(initiator_static_secret, responder_ephemeral)
+   --    psk: Mix pre-shared key, decrypt empty payload
+   procedure Process_Response
+     (Msg      : Transport.Message_Handshake_Response;
+      State    : in out Handshake_State;
+      Identity : Static_Identity;
+      Peer     : Peer_Config;
+      Result   : out Boolean)
+   with
+     Pre  => State.Kind = State_Initiator_Sent,
+     Post =>
+       (if Result
+        then State.Kind = State_Established
+        else State.Kind = State_Empty);
+
 private
 
    Empty_Handshake : constant Handshake_State :=
