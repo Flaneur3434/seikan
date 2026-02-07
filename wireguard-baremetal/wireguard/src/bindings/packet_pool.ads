@@ -1,7 +1,6 @@
---  Packet_Pool - C FFI for the shared packet buffer pool
+--  Packet_Pool - C FFI for RX and TX packet buffer pools
 --
---  Provides C-callable interface to Transport.Packet_Pool.
---  The pool itself is instantiated in transport.ads for use by Ada code.
+--  Provides C-callable interface to Transport.RX_Pool and Transport.TX_Pool.
 
 with System;
 with Interfaces.C;
@@ -17,32 +16,52 @@ is
    Pool_Size   : constant := Transport.Pool_Size;
 
    ---------------------------------------------------------------------------
-   --  C FFI Functions
-   --
-   --  Returns buffer address (void*)
-   --  WARNING: C code must follow ownership rules - no aliasing, no
-   --  double-free
+   --  TX Pool C FFI
    ---------------------------------------------------------------------------
 
-   procedure C_Pool_Init
+   procedure C_TX_Pool_Init
      with Export,
           Convention    => C,
-          External_Name => "packet_pool_init",
+          External_Name => "tx_pool_init",
           SPARK_Mode    => Off;
 
-   function C_Pool_Allocate return System.Address
+   function C_TX_Pool_Allocate return System.Address
      with Export,
           Convention    => C,
-          External_Name => "packet_pool_allocate",
+          External_Name => "tx_pool_allocate",
           SPARK_Mode    => Off;
-   --  Returns buffer address, or NULL if pool exhausted
 
-   procedure C_Pool_Free (Addr : System.Address)
+   procedure C_TX_Pool_Free (Addr : System.Address)
      with Export,
           Convention    => C,
-          External_Name => "packet_pool_free",
+          External_Name => "tx_pool_free",
           SPARK_Mode    => Off;
-   --  Free buffer at address. Safe to call with NULL.
+
+   ---------------------------------------------------------------------------
+   --  RX Pool C FFI
+   ---------------------------------------------------------------------------
+
+   procedure C_RX_Pool_Init
+     with Export,
+          Convention    => C,
+          External_Name => "rx_pool_init",
+          SPARK_Mode    => Off;
+
+   function C_RX_Pool_Allocate return System.Address
+     with Export,
+          Convention    => C,
+          External_Name => "rx_pool_allocate",
+          SPARK_Mode    => Off;
+
+   procedure C_RX_Pool_Free (Addr : System.Address)
+     with Export,
+          Convention    => C,
+          External_Name => "rx_pool_free",
+          SPARK_Mode    => Off;
+
+   ---------------------------------------------------------------------------
+   --  Common queries
+   ---------------------------------------------------------------------------
 
    function C_Pool_Get_Size return size_t
      with Export,
