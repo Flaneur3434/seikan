@@ -1,7 +1,7 @@
 --  Transport - WireGuard Transport Layer Implementation
 
 package body Transport
-  with SPARK_Mode => On  --  Address arithmetic requires SPARK_Mode Off
+  with SPARK_Mode => On
 is
 
    ---------------------
@@ -35,7 +35,7 @@ is
    function To_Mac1_Prefix
      (Msg : Message_Handshake_Initiation) return Initiation_Mac1_Prefix_Bytes
    is
-      Result : Initiation_Mac1_Prefix_Bytes;
+      Result : Initiation_Mac1_Prefix_Bytes := (others => 0);
       Offset : Natural := 0;
    begin
       Result (Offset) := Msg.Msg_Type;
@@ -64,7 +64,7 @@ is
    function To_Mac1_Prefix
      (Msg : Message_Handshake_Response) return Response_Mac1_Prefix_Bytes
    is
-      Result : Response_Mac1_Prefix_Bytes;
+      Result : Response_Mac1_Prefix_Bytes := (others => 0);
       Offset : Natural := 0;
    begin
       Result (Offset) := Msg.Msg_Type;
@@ -93,48 +93,50 @@ is
    --  C Interop Implementation
    ---------------------
 
-   procedure Release_To_C
+   procedure Release_TX_To_C
      (Handle : in out Buffer_Handle;
       Length : Packet_Length;
       Addr   : out System.Address)
+     with SPARK_Mode => Off
    is
       Ref : Buffer_Ref;
    begin
-      if Packet_Pool.Is_Null (Handle) then
+      if TX_Pool.Is_Null (Handle) then
          Addr := System.Null_Address;
          return;
       end if;
 
       --  Borrow mutably to set length and get address
-      Packet_Pool.Borrow_Mut (Handle, Ref);
+      TX_Pool.Borrow_Mut (Handle, Ref);
       Ref.Buf_Ptr.Len := Length;
       Addr := Ref.Buf_Ptr.all'Address;
-      Packet_Pool.Return_Ref (Handle, Ref);
+      TX_Pool.Return_Ref (Handle, Ref);
 
       --  Null out the handle - C now owns the buffer
-      Packet_Pool.Reset_Handle (Handle);
-   end Release_To_C;
+      TX_Pool.Reset_Handle (Handle);
+   end Release_TX_To_C;
 
-   procedure Acquire_From_C
+   procedure Acquire_RX_From_C
      (Addr   : System.Address;
-      Handle : out Buffer_Handle;
+      Handle : out RX_Buffer_Handle;
       Length : out Packet_Length)
+     with SPARK_Mode => Off
    is
       use System;
-      View : Buffer_View;
+      View : RX_Buffer_View;
    begin
       if Addr = Null_Address then
-         Packet_Pool.Create_From_Address (Addr, Handle);
+         RX_Pool.Create_From_Address (Addr, Handle);
          Length := 0;
          return;
       end if;
 
       --  Create handle pointing to this buffer
-      Packet_Pool.Create_From_Address (Addr, Handle);
+      RX_Pool.Create_From_Address (Addr, Handle);
 
       --  Read length directly
-      View := Packet_Pool.Borrow (Handle);
+      View := RX_Pool.Borrow (Handle);
       Length := View.Buf_Ptr.Len;
-   end Acquire_From_C;
+   end Acquire_RX_From_C;
 
 end Transport;
