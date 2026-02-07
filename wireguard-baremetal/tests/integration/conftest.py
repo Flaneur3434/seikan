@@ -2,13 +2,16 @@
 # SPDX-License-Identifier: MIT
 """
 pytest configuration for VeriGuard integration tests.
+
+Software-only tests (handshake self-tests, KDF vectors) run without
+any fixtures.  Hardware tests (marked ``esp32c6``) use the ``dut``
+fixture provided by pytest-embedded-idf.
 """
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def reset_device_before_test(dut):
-    """Reset the ESP32 before each test to ensure clean state."""
-    # Hard reset the device via RTS pin
+@pytest.fixture
+def reset_dut(dut):
+    """Reset the ESP32 before a test.  Use explicitly in hardware tests."""
     dut.serial.hard_reset()
-    yield
+    yield dut

@@ -13,7 +13,10 @@ Layer 3 — ESP32 integration (requires hardware):
     Test 2: Python sends Initiation → ESP32 sends Response
 """
 
+import re
+import socket
 import struct
+import time
 import pytest
 
 from wg_noise import (
@@ -33,6 +36,12 @@ from wg_noise import (
 )
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+from test_keys import (
+    python_private_key,
+    esp32_public,
+    preshared_key,
+)
 
 
 # =====================================================================
@@ -227,21 +236,100 @@ class TestKdfVectors:
 #  Layer 3 — ESP32 integration tests (require hardware)
 # =====================================================================
 
+# WireGuard UDP port (must match firmware PORT define)
+WG_PORT = 51820
+# Timeout for UDP responses from ESP32 (seconds)
+UDP_TIMEOUT = 5.0
+
+
+def _get_esp32_ip(dut, timeout: int = 30) -> str:
+    """Wait for ESP32 to print its IP address on UART and return it.
+
+    Looks for the typical ESP-IDF log line:
+        'sta ip: <IP>, mask: ...'
+    or  'got ip:<IP>'
+    """
+    output = dut.expect(
+        re.compile(rb"(?:sta ip:|got ip:)\s*(\d+\.\d+\.\d+\.\d+)"),
+        timeout=timeout,
+    )
+    ip = output.group(1).decode()
+    return ip
+
+
 @pytest.mark.esp32c6
 class TestEsp32Handshake:
     """Integration tests: Python WireGuard peer ↔ ESP32 over UDP.
 
     These tests require:
     - ESP32-C6 connected via USB
-    - Firmware built with matching test keys
+    - Firmware built with matching test keys (see test_keys.py)
     - pytest-embedded-idf installed
     """
 
     @pytest.fixture
     def wg_peer(self):
-        """Python-side WireGuard peer with test keys."""
-        # TODO: Load fixed test keys that match the ESP32 firmware
-        return WireGuardPeer()
+        """Python-side WireGuard peer with fixed test keys."""
+        return WireGuardPeer(
+            private_key=python_private_key(),
+            psk=preshared_key(),
+        )
+
+    @pytest.fixture
+    def esp32_addr(self, dut):
+        """Wait for ESP32 to boot and return (ip, port) tuple."""
+        # IP is printed before WireGuard init, so capture it first
+        ip = _get_esp32_ip(dut, timeout=30)
+        # Wait for WireGuard initialization log
+        dut.expect("WireGuard initialized", timeout=30)
+        # Wait for socket to be ready
+        dut.expect("Socket bound", timeout=10)
+        return (ip, WG_PORT)
+
+    def test_python_initiates(self, dut, wg_peer, esp32_addr):
+        """Python sends Handshake Initiation, ESP32 sends Response.
+
+        Flow:
+        1. ESP32 boots, listens on UDP 51820
+        2. Python sends 148-byte Handshake Initiation
+        3. ESP32 processes, sends 92-byte Response
+        4. Python processes response, verifies transport key derivation
+        """
+        esp32_ip, esp32_port = esp32_addr
+
+        # Create initiation targeting the ESP32's static public key
+        init_msg, init_state = wg_peer.create_initiation(esp32_public())
+        assert len(init_msg) == INITIATION_SIZE
+        assert init_msg[0] == MSG_TYPE_INITIATION
+
+        # Send initiation via UDP
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(UDP_TIMEOUT)
+        try:
+            sock.sendto(init_msg, (esp32_ip, esp32_port))
+
+            # Receive response from ESP32
+            resp_data, addr = sock.recvfrom(256)
+        finally:
+            sock.close()
+
+        # Verify response structure
+        assert len(resp_data) == RESPONSE_SIZE, (
+            f"Expected {RESPONSE_SIZE} bytes, got {len(resp_data)}"
+        )
+        assert resp_data[0] == MSG_TYPE_RESPONSE
+
+        # Verify UART confirms the handshake processed
+        dut.expect("Handshake Response sent", timeout=5)
+
+        # Process response cryptographically
+        final_state = wg_peer.process_response(resp_data, init_state)
+
+        # Derive transport keys — if this succeeds, handshake is valid
+        send_key, recv_key = derive_transport_keys(final_state.chaining_key)
+        assert len(send_key) == 32
+        assert len(recv_key) == 32
+        assert send_key != recv_key, "Transport keys must differ"
 
     def test_esp32_initiates(self, dut, wg_peer):
         """ESP32 sends Handshake Initiation, Python sends Response.
@@ -252,15 +340,4 @@ class TestEsp32Handshake:
         3. Python processes initiation, sends response
         4. ESP32 processes response (verified via UART log)
         """
-        pytest.skip("ESP32 firmware not yet configured for handshake testing")
-
-    def test_python_initiates(self, dut, wg_peer):
-        """Python sends Handshake Initiation, ESP32 sends Response.
-
-        Flow:
-        1. ESP32 boots, listens on UDP 51820
-        2. Python sends Handshake Initiation
-        3. ESP32 processes, sends Response
-        4. Python processes response, verifies transport keys
-        """
-        pytest.skip("ESP32 firmware not yet configured for handshake testing")
+        pytest.skip("ESP32 firmware does not yet initiate handshakes")
