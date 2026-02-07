@@ -26,10 +26,10 @@
 static const char *TAG = "wg_srv";
 
 /* WireGuard message types (first byte on the wire) */
-#define WG_MSG_INITIATION  1
-#define WG_MSG_RESPONSE    2
-#define WG_MSG_COOKIE      3
-#define WG_MSG_TRANSPORT   4
+#define WG_MSG_INITIATION 1
+#define WG_MSG_RESPONSE 2
+#define WG_MSG_COOKIE 3
+#define WG_MSG_TRANSPORT 4
 
 /* Test-only: triggers ESP32-initiated handshake back to the sender */
 #define WG_MSG_TRIGGER_INITIATION 0xFF
@@ -60,7 +60,8 @@ void udp_server_task(void *pvParameters)
     char addr_str[128];
 
     /* Initialize WireGuard handshake subsystem (keys + both pools) */
-    if (!wg_init()) {
+    if (!wg_init())
+    {
         ESP_LOGE(TAG, "wg_init() failed - check keys in sdkconfig");
         return;
     }
@@ -73,7 +74,8 @@ void udp_server_task(void *pvParameters)
     dest_addr.sin_port = htons(PORT);
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0) {
+    if (sock < 0)
+    {
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
         return;
     }
@@ -86,7 +88,8 @@ void udp_server_task(void *pvParameters)
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 
     int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-    if (err < 0) {
+    if (err < 0)
+    {
         ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
     }
     ESP_LOGI(TAG, "Socket bound, port %d", PORT);
@@ -94,12 +97,14 @@ void udp_server_task(void *pvParameters)
     struct sockaddr_storage source_addr;
     socklen_t socklen;
 
-    while (1) {
+    while (1)
+    {
         ESP_LOGI(TAG, "Waiting for data");
 
         /* Allocate RX buffer from pool (O(1)) */
         packet_buffer_t *pkt = rx_pool_allocate();
-        if (pkt == NULL) {
+        if (pkt == NULL)
+        {
             ESP_LOGE(TAG, "RX pool exhausted!");
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
@@ -111,8 +116,10 @@ void udp_server_task(void *pvParameters)
         int len = recvfrom(sock, pkt->data, buf_size, 0,
                            (struct sockaddr *)&source_addr, &socklen);
 
-        if (len < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (len < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
                 /* Timeout - no data, loop again */
                 rx_pool_free(pkt);
                 continue;
@@ -122,16 +129,20 @@ void udp_server_task(void *pvParameters)
             break;
         }
 
-        if (len == 0) {
+        if (len == 0)
+        {
             rx_pool_free(pkt);
             continue;
         }
 
         /* Get sender address for logging */
-        if (source_addr.ss_family == PF_INET) {
+        if (source_addr.ss_family == PF_INET)
+        {
             inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr,
                         addr_str, sizeof(addr_str) - 1);
-        } else {
+        }
+        else
+        {
             ESP_LOGE(TAG, "IPv6 not supported");
             rx_pool_free(pkt);
             break;
@@ -146,9 +157,11 @@ void udp_server_task(void *pvParameters)
         /* Dispatch on WireGuard message type (first byte) */
         uint8_t msg_type = pkt->data[0];
 
-        switch (msg_type) {
+        switch (msg_type)
+        {
 
-        case WG_MSG_INITIATION: {
+        case WG_MSG_INITIATION:
+        {
             ESP_LOGI(TAG, ">> Handshake Initiation (%d bytes)", len);
 
             uint16_t resp_len = 0;
@@ -159,41 +172,14 @@ void udp_server_task(void *pvParameters)
             packet_buffer_t *tx_pkt =
                 (packet_buffer_t *)wg_handle_initiation(pkt, &resp_len);
 
-            if ((uintptr_t)tx_pkt < 256) {
-                /*
-                 * Small pointer value = Ada error code, not a real address.
-                 *
-                 * Binding-layer errors (1-6):
-                 *   1 = not initialized
-                 *   2 = RX pool acquire failed
-                 *   3 = RX too short
-                 *   5 = TX pool allocate failed
-                 *   6 = Create_Response failed
-                 *
-                 * Handshake errors (100 + enum pos):
-                 *   100 = HS_OK (should not appear)
-                 *   101 = Bad message type
-                 *   102 = MAC1 compute failed
-                 *   103 = MAC1 mismatch (wrong keys?)
-                 *   104 = Init chain hash failed
-                 *   105 = Init mix identifier failed
-                 *   106 = Init mix static pub failed
-                 *   107 = Mix ephemeral CK failed
-                 *   108 = Mix ephemeral H failed
-                 *   109 = DH(es) failed
-                 *   110 = KDF(es) failed
-                 *   111 = AEAD decrypt static failed
-                 *   112 = Mix encrypted static failed
-                 *   113 = DH(ss) failed
-                 *   114 = KDF(ss) failed
-                 *   115 = AEAD decrypt timestamp failed
-                 *   116 = Mix encrypted timestamp failed
-                 */
-                ESP_LOGE(TAG, "wg_handle_initiation failed: error %d",
-                         (int)(uintptr_t)tx_pkt);
+            if (tx_pkt == NULL)
+            {
+                ESP_LOGE(TAG, "wg_handle_initiation failed");
                 /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
                 break;
-            } else if (resp_len == 0) {
+            }
+            else if (resp_len == 0)
+            {
                 ESP_LOGE(TAG, "wg_handle_initiation failed, cause resp_len == 0");
                 /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
                 break;
@@ -205,9 +191,12 @@ void udp_server_task(void *pvParameters)
             int sent = sendto(sock, tx_pkt->data, resp_len, 0,
                               (struct sockaddr *)&source_addr,
                               sizeof(struct sockaddr_in));
-            if (sent < 0) {
+            if (sent < 0)
+            {
                 ESP_LOGE(TAG, "sendto failed: errno %d", errno);
-            } else {
+            }
+            else
+            {
                 ESP_LOGI(TAG, "Handshake Response sent (%d bytes)", sent);
             }
 
@@ -216,22 +205,27 @@ void udp_server_task(void *pvParameters)
             break;
         }
 
-        case WG_MSG_RESPONSE: {
+        case WG_MSG_RESPONSE:
+        {
             ESP_LOGI(TAG, ">> Handshake Response (%d bytes)", len);
 
             /* Ada takes ownership of pkt (frees RX internally) */
             bool ok = wg_handle_response(pkt);
 
-            if (ok) {
+            if (ok)
+            {
                 ESP_LOGI(TAG, "Handshake complete!");
-            } else {
+            }
+            else
+            {
                 ESP_LOGE(TAG, "wg_handle_response failed");
             }
             /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
             break;
         }
 
-        case WG_MSG_TRIGGER_INITIATION: {
+        case WG_MSG_TRIGGER_INITIATION:
+        {
             ESP_LOGI(TAG, ">> Trigger: ESP32-initiated handshake");
             /* Free the trigger packet — it carried no payload */
             rx_pool_free(pkt);
@@ -240,7 +234,8 @@ void udp_server_task(void *pvParameters)
             packet_buffer_t *init_pkt =
                 (packet_buffer_t *)wg_create_initiation(&init_len);
 
-            if (init_pkt == NULL || init_len == 0) {
+            if (init_pkt == NULL || init_len == 0)
+            {
                 ESP_LOGE(TAG, "wg_create_initiation failed");
                 break;
             }
@@ -251,9 +246,12 @@ void udp_server_task(void *pvParameters)
             int sent = sendto(sock, init_pkt->data, init_len, 0,
                               (struct sockaddr *)&source_addr,
                               sizeof(struct sockaddr_in));
-            if (sent < 0) {
+            if (sent < 0)
+            {
                 ESP_LOGE(TAG, "sendto failed: errno %d", errno);
-            } else {
+            }
+            else
+            {
                 ESP_LOGI(TAG, "Handshake Initiation sent (%d bytes)", sent);
             }
 
@@ -269,7 +267,8 @@ void udp_server_task(void *pvParameters)
         }
     }
 
-    if (sock != -1) {
+    if (sock != -1)
+    {
         ESP_LOGE(TAG, "Shutting down socket and restarting ...");
         shutdown(sock, 0);
         close(sock);
