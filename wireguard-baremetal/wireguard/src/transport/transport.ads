@@ -28,24 +28,34 @@ package Transport
   with SPARK_Mode => On
 is
    ---------------------------------------------------------------------------
-   --  Packet Pool - Shared buffer pool for network packets
+   --  Packet Pools - Separate RX and TX buffer pools
    --
-   --  Used by both Ada code and C FFI. Instantiated here in Transport
-   --  so all protocol modules can access it.
+   --  Two pools ensure RX can never starve TX and vice versa.
+   --  256 bytes is sufficient for handshake messages (max 148 bytes).
    ---------------------------------------------------------------------------
 
-   Packet_Size : constant := Utils.Max_Packet_Size;
-   Pool_Size   : constant := 8;
+   Packet_Size : constant := 256;
+   Pool_Size   : constant := 4;
 
-   package Packet_Pool is new Utils.Memory_Pool
+   package RX_Pool is new Utils.Memory_Pool
      (Packet_Size => Packet_Size,
       Pool_Size   => Pool_Size);
 
-   --  Re-export commonly used types
-   subtype Packet_Buffer is Packet_Pool.Packet_Buffer;
-   subtype Buffer_Handle is Packet_Pool.Buffer_Handle;
-   subtype Buffer_View is Packet_Pool.Buffer_View;
-   subtype Buffer_Ref is Packet_Pool.Buffer_Ref;
+   package TX_Pool is new Utils.Memory_Pool
+     (Packet_Size => Packet_Size,
+      Pool_Size   => Pool_Size);
+
+   --  Re-export commonly used types (from TX_Pool; both pools share the
+   --  same generic, so the types are structurally identical)
+   subtype Packet_Buffer is TX_Pool.Packet_Buffer;
+   subtype Buffer_Handle is TX_Pool.Buffer_Handle;
+   subtype Buffer_View is TX_Pool.Buffer_View;
+   subtype Buffer_Ref is TX_Pool.Buffer_Ref;
+
+   --  RX-specific handle type (distinct from TX for type safety)
+   subtype RX_Buffer_Handle is RX_Pool.Buffer_Handle;
+   subtype RX_Buffer_View is RX_Pool.Buffer_View;
+   subtype RX_Buffer_Ref is RX_Pool.Buffer_Ref;
 
    ---------------------
    --  Message Type Constants
@@ -185,29 +195,30 @@ is
    --  Packet length type (matches uint16_t in C struct)
    subtype Packet_Length is Unsigned_16;
 
-   --  Release buffer to C layer for transmission
+   --  Release TX buffer to C layer for transmission.
    --  Handle becomes null; C now owns the buffer.
    --  Returns address of wg_packet_t for C to use.
-   procedure Release_To_C
+   procedure Release_TX_To_C
      (Handle : in out Buffer_Handle;
       Length : Packet_Length;
-      Addr   : out System.Address);
+      Addr   : out System.Address)
+     with SPARK_Mode => Off;
 
-   --  Acquire buffer from C layer after reception
+   --  Acquire RX buffer from C layer after reception.
    --  Takes ownership; C must not use the buffer after this.
    --  Length contains valid data length from C.
-   procedure Acquire_From_C
+   procedure Acquire_RX_From_C
      (Addr   : System.Address;
-      Handle : out Buffer_Handle;
-      Length : out Packet_Length);
+      Handle : out RX_Buffer_Handle;
+      Length : out Packet_Length)
+     with SPARK_Mode => Off;
 
    --  Note: Access buffer fields directly via Borrow/Borrow_Mut:
-   --    View := Packet_Pool.Borrow (Handle);
+   --    View := TX_Pool.Borrow (Handle);
    --    Len := View.Buf_Ptr.Len;
    --
-   --    Packet_Pool.Borrow_Mut (Handle, Ref);
+   --    TX_Pool.Borrow_Mut (Handle, Ref);
    --    Ref.Buf_Ptr.Len := New_Length;
-   --    Ref.Buf_Ptr.Offset := New_Offset;
-   --    Packet_Pool.Return_Ref (Handle, Ref);
+   --    TX_Pool.Return_Ref (Handle, Ref);
 
 end Transport;
