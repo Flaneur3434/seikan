@@ -31,6 +31,9 @@ static const char *TAG = "wg_srv";
 #define WG_MSG_COOKIE      3
 #define WG_MSG_TRANSPORT   4
 
+/* Test-only: triggers ESP32-initiated handshake back to the sender */
+#define WG_MSG_TRIGGER_INITIATION 0xFF
+
 /*
  * WireGuard ESP32-C6 — Responder UDP Server
  *
@@ -225,6 +228,36 @@ void udp_server_task(void *pvParameters)
                 ESP_LOGE(TAG, "wg_handle_response failed");
             }
             /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
+            break;
+        }
+
+        case WG_MSG_TRIGGER_INITIATION: {
+            ESP_LOGI(TAG, ">> Trigger: ESP32-initiated handshake");
+            /* Free the trigger packet — it carried no payload */
+            rx_pool_free(pkt);
+
+            uint16_t init_len = 0;
+            packet_buffer_t *init_pkt =
+                (packet_buffer_t *)wg_create_initiation(&init_len);
+
+            if (init_pkt == NULL || init_len == 0) {
+                ESP_LOGE(TAG, "wg_create_initiation failed");
+                break;
+            }
+
+            ESP_LOGI(TAG, "<< Handshake Initiation (%u bytes)", init_len);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, init_pkt->data, init_len, ESP_LOG_INFO);
+
+            int sent = sendto(sock, init_pkt->data, init_len, 0,
+                              (struct sockaddr *)&source_addr,
+                              sizeof(struct sockaddr_in));
+            if (sent < 0) {
+                ESP_LOGE(TAG, "sendto failed: errno %d", errno);
+            } else {
+                ESP_LOGI(TAG, "Handshake Initiation sent (%d bytes)", sent);
+            }
+
+            tx_pool_free(init_pkt);
             break;
         }
 
