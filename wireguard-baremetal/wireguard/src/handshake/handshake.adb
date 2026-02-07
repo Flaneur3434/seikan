@@ -208,8 +208,10 @@ is
       end if;
    end Mix_Key;
 
-   --  Compute MAC1 = HASH(key || message)
-   --  Truncated to 16 bytes for WireGuard MAC1/MAC2
+   --  Mac(key, input) = Keyed-Blake2s-128
+   --  Per the whitepaper: native 16-byte output, NOT truncation of 32.
+   --  BLAKE2s mixes digest_length into its parameter block, so
+   --  Blake2s(key, msg, outlen=16) ≠ Blake2s(key, msg, outlen=32)[0..15].
    procedure Compute_Mac
      (Key     : Crypto.Blake2.Key_Buffer;
       Message : Byte_Array;
@@ -219,19 +221,35 @@ is
      SPARK_Mode => On,
      Global     => null
    is
-      Full_Hash : Crypto.Blake2.Digest_Buffer;
+      State        : aliased Crypto.Blake2.Blake2s_State;
+      Local_Result : Status;
    begin
-      --  Compute keyed hash
-      Crypto.Blake2.Blake2s
-        (Data   => Message,
-         Key    => Key,
-         Digest => Full_Hash,
-         Result => Result);
+      Crypto.Blake2.Blake2s_Init_Key
+        (Key    => Key,
+         Outlen => Transport.Mac_Size,
+         State  => State,
+         Result => Local_Result);
+      if not Is_Success (Local_Result) then
+         Mac := (others => 0);
+         Result := Local_Result;
+         return;
+      end if;
 
-      if Is_Success (Result) then
-         --  Truncate to MAC size (16 bytes)
-         Mac := Full_Hash (0 .. Transport.Mac_Size - 1);
-      else
+      Crypto.Blake2.Blake2s_Update
+        (Data   => Message,
+         State  => State,
+         Result => Local_Result);
+      if not Is_Success (Local_Result) then
+         Mac := (others => 0);
+         Result := Local_Result;
+         return;
+      end if;
+
+      Crypto.Blake2.Blake2s_Final
+        (State  => State,
+         Digest => Mac,
+         Result => Result);
+      if not Is_Success (Result) then
          Mac := (others => 0);
       end if;
    end Compute_Mac;
