@@ -25,10 +25,10 @@ package body WG_Handshake is
    --  Package State
    ---------------------
 
-   My_Identity  : Handshake.Static_Identity;
-   My_Peer      : Handshake.Peer_Config;
-   HS_State     : Handshake.Handshake_State := Handshake.Empty_Handshake;
-   Initialized  : Boolean := False;
+   My_Identity : Handshake.Static_Identity;
+   My_Peer     : Handshake.Peer_Config;
+   HS_State    : Handshake.Handshake_State := Handshake.Empty_Handshake;
+   Initialized : Boolean := False;
 
    ---------------------
    --  Init
@@ -114,7 +114,7 @@ package body WG_Handshake is
       declare
          --  Overlay message record on buffer data (zero-copy)
          Msg : Transport.Message_Handshake_Initiation
-           with Import, Address => Ref.Buf_Ptr.Data'Address;
+         with Import, Address => Ref.Buf_Ptr.Data'Address;
       begin
          Handshake.Create_Initiation
            (Msg, HS_State, My_Identity, My_Peer, Result);
@@ -145,13 +145,13 @@ package body WG_Handshake is
    ---------------------
 
    function Handle_Initiation
-     (RX_Buf  : System.Address;
-      Out_Len : access Interfaces.Unsigned_16) return System.Address
+     (RX_Buf : System.Address; Out_Len : access Interfaces.Unsigned_16)
+      return System.Address
    is
       use System;
 
       RX_Handle   : Transport.RX_Buffer_Handle;
-      RX_Length    : Transport.Packet_Length;
+      RX_Length   : Transport.Packet_Length;
       RX_View     : Transport.RX_Buffer_View;
       OK          : Boolean;
       Resp_Result : Handshake.Response_Result;
@@ -182,7 +182,7 @@ package body WG_Handshake is
       RX_View := Transport.RX_Pool.Borrow (RX_Handle);
       declare
          Msg : Transport.Message_Handshake_Initiation
-           with Import, Address => RX_View.Buf_Ptr.Data'Address;
+         with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
          Handshake.Process_Initiation (Msg, HS_State, My_Identity, OK);
       end;
@@ -204,10 +204,9 @@ package body WG_Handshake is
       Transport.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
       declare
          Resp : Transport.Message_Handshake_Response
-           with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
+         with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
       begin
-         Handshake.Create_Response
-           (Resp, HS_State, My_Identity, Resp_Result);
+         Handshake.Create_Response (Resp, HS_State, My_Identity, Resp_Result);
       end;
 
       if not Resp_Result.Success then
@@ -262,10 +261,9 @@ package body WG_Handshake is
       RX_View := Transport.RX_Pool.Borrow (RX_Handle);
       declare
          Msg : Transport.Message_Handshake_Response
-           with Import, Address => RX_View.Buf_Ptr.Data'Address;
+         with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
-         Handshake.Process_Response
-           (Msg, HS_State, My_Identity, My_Peer, OK);
+         Handshake.Process_Response (Msg, HS_State, My_Identity, My_Peer, OK);
       end;
 
       --  Done with RX buffer
