@@ -1,8 +1,8 @@
 idf_component_register(
     SRCS main.c udp_server.c wifi_station.c wg_keys.c
-         ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/gnat_last_chance.c
-    INCLUDE_DIRS "."
-    PRIV_REQUIRES esp_wifi nvs_flash esp_netif
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/gnat_last_chance.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/BLAKE2/ref/blake2s-ref.c    INCLUDE_DIRS "."
+    PRIV_REQUIRES esp_wifi nvs_flash esp_netif libsodium
 )
 
 # ============================================================================
@@ -14,37 +14,57 @@ set(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 # Add Ada bindings headers to include path
 target_include_directories(${COMPONENT_LIB} PRIVATE
     "${PROJECT_ROOT}/wireguard/src/bindings"
+    "${PROJECT_ROOT}/third_party/BLAKE2/ref"
 )
 
 # ============================================================================
 # Link Ada Static Libraries
 # ============================================================================
-# 
+#
 # These libraries are built by Alire (alr build) in the wireguard crate.
 # Run build.py --alr before idf.py build.
 
 # Ada library paths (built by Alire in wireguard/lib/)
 set(ADA_LIBS
     "${PROJECT_ROOT}/wireguard/lib/libWireguard.a"
+    "${PROJECT_ROOT}/wireguard/lib/libWgHandshake.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgCrypto.a"
-    "${PROJECT_ROOT}/wireguard/lib/libWgNet.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgTransport.a"
+    "${PROJECT_ROOT}/wireguard/lib/libWgNet.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgUtils.a"
 )
 
-# Link Ada libraries to this component
 foreach(ada_lib ${ADA_LIBS})
     if(EXISTS ${ada_lib})
-        target_link_libraries(${COMPONENT_LIB} PRIVATE ${ada_lib})
         message(STATUS "Linking Ada library: ${ada_lib}")
     else()
         message(WARNING "Ada library not found (run 'alr build' first): ${ada_lib}")
     endif()
 endforeach()
 
-# Force linker to include Ada runtime symbols from this component
-# (needed because Ada libs are linked after libmain.a is processed)
-target_link_libraries(${COMPONENT_LIB} PRIVATE "-Wl,-u,__gnat_last_chance_handler")
+# ── Linker group for Ada + dependencies ──────────────────────────────
+#
+# ESP-IDF places PRIVATE link deps at the END of the link line, after
+# all component archives have been scanned.  Ada libraries have:
+#
+#   1. Inter-crate references  (libWgHandshake → libWgCrypto)
+#   2. Calls into libsodium    (crypto_scalarmult, crypto_box_keypair)
+#   3. Calls into wg_keys.c    (wg_get_static_private_key)
+#
+# --whole-archive   → include ALL Ada objects (resolves inter-Ada deps)
+# --start-group     → multiple passes   (resolves Ada ↔ C ↔ libsodium)
+#
+# libsodium and libmain.a are re-listed inside the group so the linker
+# can satisfy Ada's undefined references in a second pass.
+target_link_libraries(${COMPONENT_LIB} PRIVATE
+    "-Wl,--start-group"
+    "-Wl,--whole-archive"
+    ${ADA_LIBS}
+    "-Wl,--no-whole-archive"
+    "${CMAKE_BINARY_DIR}/esp-idf/espressif__libsodium/libespressif__libsodium.a"
+    "${CMAKE_BINARY_DIR}/esp-idf/main/libmain.a"
+    "-Wl,--end-group"
+)
 
-# Ada runtime library (GNAT RTS - may need adjustment for target)
-# target_link_libraries(${COMPONENT_LIB} PRIVATE gnat)
+# Force linker to include Ada runtime symbols
+target_link_libraries(${COMPONENT_LIB} PRIVATE "-Wl,-u,__gnat_last_chance_handler")
