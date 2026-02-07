@@ -28,14 +28,19 @@ extern "C" {
 
 /**
  * Buffer record returned by pool.
- * Contains index for O(1) free + aligned data payload.
+ * Contains index for O(1) free + metadata + aligned data payload.
  *
- * Layout matches Ada's Utils.Memory_Pool.Buffer record exactly.
- * Index of -1 indicates null/invalid buffer.
+ * Layout matches Ada's Utils.Memory_Pool.Buffer record exactly:
+ *   int32_t  index   (4 bytes) — pool index, -1 = null
+ *   uint16_t len     (2 bytes) — valid data length
+ *   uint16_t offset  (2 bytes) — start offset in data (headroom)
+ *   uint8_t  data[]  — packet payload
  */
 typedef struct {
-    int32_t index;  /* Internal pool index; -1 = null */
-    uint8_t data[]; /* Flexible array - actual size = packet_pool_get_buffer_size() */
+    int32_t  index;   /* Internal pool index; -1 = null */
+    uint16_t len;     /* Valid data length */
+    uint16_t offset;  /* Start offset in data (headroom) */
+    uint8_t  data[];  /* Flexible array - actual size = packet_pool_get_buffer_size() */
 } packet_buffer_t;
 
 /* -----------------------------------------------------------------------
