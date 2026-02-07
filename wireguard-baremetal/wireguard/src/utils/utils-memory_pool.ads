@@ -13,7 +13,10 @@ is
    subtype Valid_Count is Natural range 0 .. Pool_Size;
 
    type Packet_Buffer is new Byte_Array (0 .. Packet_Size - 1);
-   for Packet_Buffer'Alignment use 16;  --  Align for DMA transfers
+   for Packet_Buffer'Alignment use 8;  --  Align for DMA transfers
+
+   --  NOTE: Do NOT raise Packet_Buffer'Alignment above 8 or GNAT will
+   --  insert padding between Offset and Data, breaking the C ↔ Ada overlay.
 
    ---------------------------------------------------------------------------
    --  Buffer Record
@@ -35,6 +38,7 @@ is
       Data   : aliased Packet_Buffer;
    end record
      with Convention => C;
+
 
    type Buffer_Ptr is access all Buffer;
    type Buffer_Const_Ptr is access constant Buffer;
