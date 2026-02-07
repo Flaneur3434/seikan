@@ -103,7 +103,7 @@ is
 
    function Borrow (Handle : Buffer_Handle) return Buffer_View is
    begin
-      return (Buf_Ptr => Handle.Ptr);
+      return (Buf_Ptr => Handle.Ptr.all'Unchecked_Access);
    end Borrow;
 
    procedure Borrow_Mut
@@ -123,20 +123,6 @@ is
       Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := False;
       Ref := (Buf_Ptr => null);
    end Return_Ref;
-
-   ---------------------------------------------------------------------------
-   --  Borrow Accessors
-   ---------------------------------------------------------------------------
-
-   function View_Data (V : Buffer_View) return System.Address is
-   begin
-      return V.Buf_Ptr.Data'Address;
-   end View_Data;
-
-   function Ref_Data (R : Buffer_Ref) return System.Address is
-   begin
-      return R.Buf_Ptr.Data'Address;
-   end Ref_Data;
 
    ---------------------------------------------------------------------------
    --  C FFI Operations
