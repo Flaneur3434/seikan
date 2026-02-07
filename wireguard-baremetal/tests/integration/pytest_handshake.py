@@ -9,8 +9,8 @@ Layer 2 — KDF test vectors:
     the wireguard-go reference implementation.
 
 Layer 3 — ESP32 integration (requires hardware):
-    Test 1: ESP32 sends Initiation  → Python sends Response
-    Test 2: Python sends Initiation → ESP32 sends Response
+    Test 1: Python sends Initiation → ESP32 sends Response
+    Test 2: Python triggers ESP32 → ESP32 sends Initiation → Python responds
 """
 
 import re
@@ -278,11 +278,8 @@ class TestEsp32Handshake:
     @pytest.fixture
     def esp32_addr(self, dut):
         """Wait for ESP32 to boot and return (ip, port) tuple."""
-        # IP is printed before WireGuard init, so capture it first
         ip = _get_esp32_ip(dut, timeout=30)
-        # Wait for WireGuard initialization log
         dut.expect("WireGuard initialized", timeout=30)
-        # Wait for socket to be ready
         dut.expect("Socket bound", timeout=10)
         return (ip, WG_PORT)
 
@@ -331,13 +328,56 @@ class TestEsp32Handshake:
         assert len(recv_key) == 32
         assert send_key != recv_key, "Transport keys must differ"
 
-    def test_esp32_initiates(self, dut, wg_peer):
+    def test_esp32_initiates(self, dut, wg_peer, esp32_addr):
         """ESP32 sends Handshake Initiation, Python sends Response.
 
         Flow:
-        1. ESP32 boots, connects to WiFi
-        2. ESP32 sends Handshake Initiation to Python's UDP socket
-        3. Python processes initiation, sends response
-        4. ESP32 processes response (verified via UART log)
+        1. Python sends a 1-byte trigger (0xFF) to ESP32's UDP socket
+        2. ESP32 calls wg_create_initiation, sends 148-byte Initiation back
+        3. Python processes initiation as responder, sends 92-byte Response
+        4. ESP32 processes response via wg_handle_response
+        5. ESP32 prints "Handshake complete!" on UART
         """
-        pytest.skip("ESP32 firmware does not yet initiate handshakes")
+        esp32_ip, esp32_port = esp32_addr
+
+        # Trigger byte tells the ESP32 to initiate a handshake to the sender
+        TRIGGER = bytes([0xFF])
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(UDP_TIMEOUT)
+        try:
+            # Send trigger to ESP32
+            sock.sendto(TRIGGER, (esp32_ip, esp32_port))
+
+            # Receive the ESP32's Handshake Initiation
+            init_data, addr = sock.recvfrom(256)
+
+            # Verify initiation structure
+            assert len(init_data) == INITIATION_SIZE, (
+                f"Expected {INITIATION_SIZE} bytes, got {len(init_data)}"
+            )
+            assert init_data[0] == MSG_TYPE_INITIATION
+
+            # Verify ESP32 logged the initiation send
+            dut.expect("Handshake Initiation sent", timeout=5)
+
+            # Process initiation as responder
+            resp_state = wg_peer.process_initiation(init_data)
+
+            # Create response
+            resp_msg, resp_state = wg_peer.create_response(resp_state)
+            assert len(resp_msg) == RESPONSE_SIZE
+
+            # Send response back to ESP32
+            sock.sendto(resp_msg, (esp32_ip, esp32_port))
+        finally:
+            sock.close()
+
+        # Verify ESP32 completed the handshake
+        dut.expect("Handshake complete!", timeout=5)
+
+        # Derive transport keys — if this succeeds, handshake is valid
+        send_key, recv_key = derive_transport_keys(resp_state.chaining_key)
+        assert len(send_key) == 32
+        assert len(recv_key) == 32
+        assert send_key != recv_key, "Transport keys must differ"
