@@ -37,6 +37,7 @@ is
      with Convention => C;
 
    type Buffer_Ptr is access all Buffer;
+   type Buffer_Const_Ptr is access constant Buffer;
 
    ---------------------------------------------------------------------------
    --  Thread Safety
@@ -84,12 +85,12 @@ is
    ---------------------------------------------------------------------------
 
    type Buffer_View is record
-      Buf_Ptr : access constant Buffer := null;
+      Buf_Ptr : Buffer_Const_Ptr := null;
    end record;
    --  Read-only view into buffer (immutable borrow)
 
    type Buffer_Ref is record
-      Buf_Ptr : access Buffer := null;
+      Buf_Ptr : Buffer_Ptr := null;
    end record;
    --  Mutable reference to buffer (exclusive borrow)
 
@@ -208,18 +209,6 @@ is
                      and then not Is_Mutably_Borrowed (Handle);
    --  Return mutable borrow. Ref becomes null.
    --  After this, Handle can be freed or borrowed again.
-
-   ---------------------------------------------------------------------------
-   --  Borrow Accessors
-   ---------------------------------------------------------------------------
-
-   function View_Data (V : Buffer_View) return System.Address
-     with Global => null;
-   --  Get address of Data array (read-only intent)
-
-   function Ref_Data (R : Buffer_Ref) return System.Address
-     with Global => null;
-   --  Get address of Data array (mutable intent)
 
    ---------------------------------------------------------------------------
    --  C FFI Operations
