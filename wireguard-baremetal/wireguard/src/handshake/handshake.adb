@@ -4,8 +4,8 @@
 
 with Crypto.Random;
 with Crypto.AEAD;
+with Crypto.KDF;
 with Transport_Messages;
-pragma Unreferenced (Crypto.Random);
 pragma Unreferenced (Transport_Messages);
 
 package body Handshake
@@ -48,26 +48,27 @@ is
 
    --!format on
 
+   --  Pre-shared symmetric key placeholder.
+   --  When no PSK is configured, Q = 0^32 (32 zero bytes).
+   --  The KDF3 step is still performed per the Noise IKpsk2 pattern.
+   No_PSK : constant Byte_Array (0 .. 31) := (others => 0);
+
    ---------------------
-   --  Local Session Index Counter (monotonic)
+   --  Random Session Index Generation
    ---------------------
 
-   --  Simple monotonic counter for generating unique local session indices.
-   --  In a full implementation, this would need to avoid reuse and possibly
-   --  persist across reboots.
-   --
-   --  Wrap at 2^32 is acceptable: at 1 handshake/sec, wrap takes 136 years.
-   --  Embedded devices will reboot long before that.
-   Next_Local_Index : Session_Index := 1;
+   --  Generate a random session index per the WireGuard spec (Section 5.4.2):
+   --    I_i <- random()
+   --  Random indices prevent correlation of handshakes by observers.
 
    procedure Allocate_Local_Index (Index : out Session_Index)
-     with Global => (In_Out => Next_Local_Index);
-   --  Allocates and returns next session index, incrementing the counter.
+     with Global => null;
 
    procedure Allocate_Local_Index (Index : out Session_Index) is
+      Random_Bytes : Bytes_4;
    begin
-      Index := Next_Local_Index;
-      Next_Local_Index := Next_Local_Index + 1;
+      Crypto.Random.Fill_Random (Random_Bytes);
+      Index := To_U32 (Random_Bytes);
    end Allocate_Local_Index;
 
    ---------------------
@@ -75,10 +76,20 @@ is
    ---------------------
 
    --  MixHash: H = HASH(H || data)
-   --  Updates the hash state by hashing the current hash with new data
+   --  Thin wrapper over the 4-param version; uses a temp to avoid aliasing.
    procedure Mix_Hash
      (H      : in out Hash_State;
       Data   : Byte_Array;
+      Result : out Status)
+   with
+     SPARK_Mode => On,
+     Global     => null;
+
+   --  MixHash (separate output): Output = HASH(Input || data)
+   procedure Mix_Hash
+     (Input  : Hash_State;
+      Data   : Byte_Array;
+      Output : out Hash_State;
       Result : out Status)
    with
      SPARK_Mode => On,
@@ -87,88 +98,13 @@ is
       State       : aliased Crypto.Blake2.Blake2s_State;
       Local_Result : Status;
    begin
-      --  Initialize BLAKE2s with output length 32
       Crypto.Blake2.Blake2s_Init
         (Outlen => Crypto.Blake2.BLAKE2S_OUTBYTES,
          State  => State,
          Result => Local_Result);
       if not Is_Success (Local_Result) then
          Result := Local_Result;
-         return;
-      end if;
-
-      --  Update with current hash state
-      Crypto.Blake2.Blake2s_Update
-        (Data   => H,
-         State  => State,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         return;
-      end if;
-
-      --  Update with new data
-      Crypto.Blake2.Blake2s_Update
-        (Data   => Data,
-         State  => State,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         return;
-      end if;
-
-      --  Finalize into H
-      Crypto.Blake2.Blake2s_Final
-        (State  => State,
-         Digest => H,
-         Result => Result);
-   end Mix_Hash;
-
-   --  MixKey: (C, K) = KDF(C, input)
-   --  Updates chaining key and derives a new encryption key.
-   --
-   --  WireGuard uses HKDF with BLAKE2s. We need two outputs from one input:
-   --    1. New chaining key C' (for future derivations)
-   --    2. Encryption key K (for immediate use)
-   --
-   --  HKDF-Expand derives each output by hashing with a counter byte:
-   --    C' = HASH(C || input)        -- first derivation
-   --    K  = HASH(C' || 0x01)        -- second derivation with counter
-   --
-   --  This is simpler than full HKDF (no extract step) because the Noise
-   --  protocol already ensures input key material has sufficient entropy.
-   procedure Mix_Key
-     (C      : in out Chaining_Key;
-      Input  : Byte_Array;
-      K      : out Crypto.AEAD.Key_Buffer;
-      Result : out Status)
-   with
-     SPARK_Mode => On,
-     Global     => null
-   is
-      Temp         : Chaining_Key;
-      State        : aliased Crypto.Blake2.Blake2s_State;
-      One_Byte     : constant Byte_Array (0 .. 0) := (0 => 16#01#);
-      Local_Result : Status;
-   begin
-      --  First: C' = HASH(C || input)
-      Crypto.Blake2.Blake2s_Init
-        (Outlen => Crypto.Blake2.BLAKE2S_OUTBYTES,
-         State  => State,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         K := (others => 0);
-         return;
-      end if;
-
-      Crypto.Blake2.Blake2s_Update
-        (Data   => C,
-         State  => State,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         K := (others => 0);
+         Output := (others => 0);
          return;
       end if;
 
@@ -178,58 +114,98 @@ is
          Result => Local_Result);
       if not Is_Success (Local_Result) then
          Result := Local_Result;
-         K := (others => 0);
+         Output := (others => 0);
+         return;
+      end if;
+
+      Crypto.Blake2.Blake2s_Update
+        (Data   => Data,
+         State  => State,
+         Result => Local_Result);
+      if not Is_Success (Local_Result) then
+         Result := Local_Result;
+         Output := (others => 0);
          return;
       end if;
 
       Crypto.Blake2.Blake2s_Final
         (State  => State,
-         Digest => Temp,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         K := (others => 0);
-         return;
-      end if;
-
-      --  Update C to C'
-      C := Temp;
-
-      --  Second: K = HASH(C' || 0x01)
-      Crypto.Blake2.Blake2s_Init
-        (Outlen => Crypto.Blake2.BLAKE2S_OUTBYTES,
-         State  => State,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         K := (others => 0);
-         return;
-      end if;
-
-      Crypto.Blake2.Blake2s_Update
-        (Data   => Temp,
-         State  => State,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         K := (others => 0);
-         return;
-      end if;
-
-      Crypto.Blake2.Blake2s_Update
-        (Data   => One_Byte,
-         State  => State,
-         Result => Local_Result);
-      if not Is_Success (Local_Result) then
-         Result := Local_Result;
-         K := (others => 0);
-         return;
-      end if;
-
-      Crypto.Blake2.Blake2s_Final
-        (State  => State,
-         Digest => K,
+         Digest => Output,
          Result => Result);
+   end Mix_Hash;
+
+   --  MixHash body (defined after 4-param overload so it can call it)
+   procedure Mix_Hash
+     (H      : in out Hash_State;
+      Data   : Byte_Array;
+      Result : out Status)
+   is
+      Temp : Hash_State;
+   begin
+      Mix_Hash (H, Data, Temp, Result);
+      if Is_Success (Result) then
+         H := Temp;
+      end if;
+   end Mix_Hash;
+
+   --  KDF1: C = KDF(C, input) — chaining key update only
+   procedure Mix_Key
+     (C      : in out Chaining_Key;
+      Input  : Byte_Array;
+      Result : out Status)
+   with
+     SPARK_Mode => On,
+     Global     => null
+   is
+      New_C : Crypto.KDF.KDF_Key;
+   begin
+      Crypto.KDF.KDF1 (C, Input, New_C, Result);
+      if Is_Success (Result) then
+         C := New_C;
+      end if;
+   end Mix_Key;
+
+   --  KDF2: (C, K) = KDF(C, input)
+   procedure Mix_Key
+     (C      : in out Chaining_Key;
+      Input  : Byte_Array;
+      K      : out Crypto.AEAD.Key_Buffer;
+      Result : out Status)
+   with
+     SPARK_Mode => On,
+     Global     => null
+   is
+      New_C : Crypto.KDF.KDF_Key;
+   begin
+      Crypto.KDF.KDF2 (C, Input, New_C, K, Result);
+      if Is_Success (Result) then
+         C := New_C;
+      else
+         K := (others => 0);
+      end if;
+   end Mix_Key;
+
+   --  KDF3: (C, Tau, K) = KDF(C, input)
+   --  Three-output KDF for PSK mixing (Noise IKpsk2 pattern).
+   procedure Mix_Key
+     (C      : in out Chaining_Key;
+      Input  : Byte_Array;
+      Tau    : out Hash_State;
+      K      : out Crypto.AEAD.Key_Buffer;
+      Result : out Status)
+   with
+     SPARK_Mode => On,
+     Global     => null
+   is
+      New_C : Crypto.KDF.KDF_Key;
+   begin
+      Crypto.KDF.KDF3 (C, Input, New_C, Tau, K, Result);
+      if Is_Success (Result) then
+         C := New_C;
+      else
+         Tau := (others => 0);
+         K := (others => 0);
+      end if;
    end Mix_Key;
 
    --  Compute MAC1 = HASH(key || message)
@@ -269,20 +245,12 @@ is
       Key_Pair : Crypto.KX.Key_Pair;
       Result   : out Status)
    is
-      Label_And_Public : Byte_Array
-        (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1) :=
-        (others => 0);
    begin
       Identity.Key_Pair := Key_Pair;
 
       --  Compute MAC1 key: HASH(LABEL_MAC1 || static_public)
-      Label_And_Public (0 .. Label_Mac1_Length - 1) := Label_Mac1;
-      Label_And_Public (Label_Mac1_Length ..
-                        Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1) :=
-        Byte_Array (Key_Pair.Pub);
-
       Crypto.Blake2.Blake2s
-        (Data   => Label_And_Public,
+        (Data   => Label_Mac1 & Byte_Array (Key_Pair.Pub),
          Digest => Identity.Mac1_Key,
          Result => Result);
    end Initialize_Identity;
@@ -292,20 +260,12 @@ is
       Peer_Public : Crypto.KX.Public_Key;
       Result      : out Status)
    is
-      Label_And_Public : Byte_Array
-        (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1) :=
-        (others => 0);
    begin
       Peer.Static_Public := Peer_Public;
 
       --  Compute MAC1 key: HASH(LABEL_MAC1 || peer_public)
-      Label_And_Public (0 .. Label_Mac1_Length - 1) := Label_Mac1;
-      Label_And_Public (Label_Mac1_Length ..
-                        Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1) :=
-        Byte_Array (Peer_Public);
-
       Crypto.Blake2.Blake2s
-        (Data   => Label_And_Public,
+        (Data   => Label_Mac1 & Byte_Array (Peer_Public),
          Digest => Peer.Mac1_Key,
          Result => Result);
    end Initialize_Peer;
@@ -335,12 +295,6 @@ is
               Mac2                => (others => 0));
       Result := (Success => False, Length => 0);
 
-      --  Generate ephemeral keypair
-      Crypto.KX.Generate_Key_Pair (State.Ephemeral, Local_Status);
-      if not Is_Success (Local_Status) then
-         return;
-      end if;
-
       --  Allocate local session index
       Allocate_Local_Index (State.Local_Index);
 
@@ -355,15 +309,19 @@ is
       end if;
 
       --  H = HASH(C || Identifier)
-      Mix_Hash (State.Chaining, Identifier, Local_Status);
+      Mix_Hash (State.Chaining, Identifier, State.Hash, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
-      State.Hash := State.Chaining;
-
       --  H = HASH(H || responder_static_public)
       Mix_Hash (State.Hash, Byte_Array (Peer.Static_Public), Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
+
+      --  Generate ephemeral keypair
+      Crypto.KX.Generate_Key_Pair (State.Ephemeral, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -376,7 +334,7 @@ is
 
       --  C = KDF(C, ephemeral_public)
       Mix_Key (State.Chaining, Byte_Array (State.Ephemeral.Pub),
-               Temp_Key, Local_Status);
+               Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -404,19 +362,13 @@ is
       end if;
 
       --  Encrypt static public key: encrypted_static = AEAD(K, 0, s, H)
-      declare
-         Static_Pub : constant Byte_Array
-           (0 .. Crypto.KX.Public_Key_Bytes - 1) :=
-           Byte_Array (Identity.Key_Pair.Pub);
-      begin
-         Crypto.AEAD.Encrypt
-           (Plaintext  => Static_Pub,
-            Ad         => State.Hash,
-            Nonce      => Nonce,
-            Key        => Temp_Key,
-            Ciphertext => Msg.Encrypted_Static,
-            Result     => Local_Status);
-      end;
+      Crypto.AEAD.Encrypt
+        (Plaintext  => Byte_Array (Identity.Key_Pair.Pub),
+         Ad         => State.Hash,
+         Nonce      => Nonce,
+         Key        => Temp_Key,
+         Ciphertext => Msg.Encrypted_Static,
+         Result     => Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -447,18 +399,13 @@ is
       Crypto.TAI64N.Now (State.Last_Timestamp);
 
       --  Encrypt timestamp: encrypted_timestamp = AEAD(K, 0, timestamp, H)
-      declare
-         TS_Bytes : constant Crypto.TAI64N.Timestamp_Bytes :=
-           Byte_Array (State.Last_Timestamp);
-      begin
-         Crypto.AEAD.Encrypt
-           (Plaintext  => TS_Bytes,
-            Ad         => State.Hash,
-            Nonce      => Nonce,
-            Key        => Temp_Key,
-            Ciphertext => Msg.Encrypted_Timestamp,
-            Result     => Local_Status);
-      end;
+      Crypto.AEAD.Encrypt
+        (Plaintext  => Byte_Array (State.Last_Timestamp),
+         Ad         => State.Hash,
+         Nonce      => Nonce,
+         Key        => Temp_Key,
+         Ciphertext => Msg.Encrypted_Timestamp,
+         Result     => Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -469,7 +416,7 @@ is
          return;
       end if;
 
-      --  Compute MAC1 = HASH(peer_mac1_key || msg[0..mac1_offset-1])
+      --  Compute MAC1 = MAC(peer_mac1_key || msg[0..mac1_offset-1])
       Compute_Mac
         (Key     => Peer.Mac1_Key,
          Message => Transport.To_Mac1_Prefix (Msg),
@@ -515,6 +462,20 @@ is
          return;
       end if;
 
+      --  Verify MAC1 first (cheap DoS filter before expensive crypto)
+      Compute_Mac
+        (Key     => Identity.Mac1_Key,
+         Message => Transport.To_Mac1_Prefix (Msg),
+         Mac     => Computed_Mac,
+         Result  => Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
+
+      if Computed_Mac /= Msg.Mac1 then
+         return;
+      end if;
+
       --  Extract sender index
       State.Remote_Index := To_U32 (Msg.Sender);
 
@@ -532,12 +493,10 @@ is
       end if;
 
       --  H = HASH(C || Identifier)
-      Mix_Hash (State.Chaining, Identifier, Local_Status);
+      Mix_Hash (State.Chaining, Identifier, State.Hash, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
-
-      State.Hash := State.Chaining;
 
       --  H = HASH(H || responder_static_public)
       Mix_Hash (State.Hash, Byte_Array (Identity.Key_Pair.Pub), Local_Status);
@@ -547,7 +506,7 @@ is
 
       --  C = KDF(C, initiator_ephemeral)
       Mix_Key (State.Chaining, Byte_Array (State.Remote_Ephemeral),
-               Temp_Key, Local_Status);
+               Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -633,20 +592,6 @@ is
          return;
       end if;
 
-      --  Verify MAC1
-      Compute_Mac
-        (Key     => Identity.Mac1_Key,
-         Message => Transport.To_Mac1_Prefix (Msg),
-         Mac     => Computed_Mac,
-         Result  => Local_Status);
-      if not Is_Success (Local_Status) then
-         return;
-      end if;
-
-      if Computed_Mac /= Msg.Mac1 then
-         return;
-      end if;
-
       --  MAC2 verification skipped (cookie system not implemented)
 
       --  Success - update state machine
@@ -665,6 +610,7 @@ is
       Local_Status : Status;
       Temp_Key     : Crypto.AEAD.Key_Buffer;
       Shared       : Crypto.KX.Shared_Secret;
+      Tau          : Hash_State;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
       Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
@@ -701,7 +647,7 @@ is
 
       --  C = KDF(C, responder_ephemeral)
       Mix_Key (State.Chaining, Byte_Array (State.Ephemeral.Pub),
-               Temp_Key, Local_Status);
+               Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -722,8 +668,8 @@ is
          return;
       end if;
 
-      --  C, K = KDF(C, ee)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      --  C = KDF1(C, ee)
+      Mix_Key (State.Chaining, Byte_Array (Shared), Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
@@ -738,15 +684,25 @@ is
          return;
       end if;
 
-      --  C, K = KDF(C, se)
-      Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
+      --  C = KDF1(C, se)
+      Mix_Key (State.Chaining, Byte_Array (Shared), Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
+
+      --  C, τ, K = KDF3(C, Q) — PSK mixing (Q = 0^32, no PSK configured)
+      Mix_Key (State.Chaining, No_PSK, Tau, Temp_Key, Local_Status);
+      if not Is_Success (Local_Status) then
+         return;
+      end if;
+
+      --  H = HASH(H || τ)
+      Mix_Hash (State.Hash, Tau, Local_Status);
       if not Is_Success (Local_Status) then
          return;
       end if;
 
       --  Encrypt empty payload: encrypted_empty = AEAD(K, 0, empty, H)
-      pragma Assert
-        (Transport.Encrypted_Empty_Size <= Crypto.AEAD.Max_Buffer_Size);
       Crypto.AEAD.Encrypt
         (Plaintext  => Empty_Payload,
          Ad         => State.Hash,
@@ -766,19 +722,11 @@ is
 
       --  Compute MAC1 using initiator's static public key
       declare
-         Label_And_Public : Byte_Array
-           (0 .. Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1)
-           := (others => 0);
          Initiator_Mac1_Key : Crypto.Blake2.Key_Buffer;
       begin
          --  Compute initiator's MAC1 key: HASH(LABEL_MAC1 || initiator_static)
-         Label_And_Public (0 .. Label_Mac1_Length - 1) := Label_Mac1;
-         Label_And_Public (Label_Mac1_Length ..
-                           Label_Mac1_Length + Crypto.KX.Public_Key_Bytes - 1)
-           := Byte_Array (State.Remote_Static);
-
          Crypto.Blake2.Blake2s
-           (Data   => Label_And_Public,
+           (Data   => Label_Mac1 & Byte_Array (State.Remote_Static),
             Digest => Initiator_Mac1_Key,
             Result => Local_Status);
          if not Is_Success (Local_Status) then
