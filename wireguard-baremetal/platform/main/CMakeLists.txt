@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS main.c udp_server.c wifi_station.c
+    SRCS main.c udp_server.c wifi_station.c wg_keys.c
          ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/gnat_last_chance.c
     INCLUDE_DIRS "."
     PRIV_REQUIRES esp_wifi nvs_flash esp_netif
