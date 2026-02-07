@@ -5,18 +5,21 @@ package Wireguard
         Elaborate_Body
 is
    ---------------------------------------------------------------------------
-   --  Packet Pool - Re-exported from Transport
-   --
-   --  The shared buffer pool is now owned by Transport for C interop.
-   --  Re-export here for backward compatibility with existing code.
+   --  Packet Pools - Re-exported from Transport
    ---------------------------------------------------------------------------
 
-   package Packet_Pool renames Transport.Packet_Pool;
+   package TX_Pool renames Transport.TX_Pool;
+   package RX_Pool renames Transport.RX_Pool;
 
-   --  Re-export commonly used types
+   --  Re-export commonly used types (TX)
    subtype Packet_Buffer is Transport.Packet_Buffer;
    subtype Buffer_Handle is Transport.Buffer_Handle;
    subtype Buffer_View is Transport.Buffer_View;
    subtype Buffer_Ref is Transport.Buffer_Ref;
+
+   --  Re-export RX types
+   subtype RX_Buffer_Handle is Transport.RX_Buffer_Handle;
+   subtype RX_Buffer_View is Transport.RX_Buffer_View;
+   subtype RX_Buffer_Ref is Transport.RX_Buffer_Ref;
 
 end Wireguard;
