@@ -1,5 +1,3 @@
-with System;
-
 package body Wireguard
   with SPARK_Mode => On
 is
@@ -14,18 +12,16 @@ is
    procedure Test_Correct_Usage is
       H : Buffer_Handle;
    begin
-      Packet_Pool.Allocate (H);
-      if not Packet_Pool.Is_Null (H) then
-         --  Use the buffer (via Data address)
+      TX_Pool.Allocate (H);
+      if not TX_Pool.Is_Null (H) then
+         --  Use the buffer (via Buf_Ptr)
          declare
-            V    : Packet_Pool.Buffer_View := Packet_Pool.Borrow (H);
-            Addr : constant System.Address := Packet_Pool.View_Data (V);
-            pragma Unreferenced (Addr);
+            V : TX_Pool.Buffer_View := TX_Pool.Borrow (H);
             pragma Unreferenced (V);
          begin
-            null;  --  Do something with Addr
+            null;  --  Access V.Buf_Ptr.Data, V.Buf_Ptr.Len, etc.
          end;
-         Packet_Pool.Free (H);
+         TX_Pool.Free (H);
       end if;
       --  H is null here, no leak
    end Test_Correct_Usage;
@@ -35,12 +31,12 @@ is
       H1 : Buffer_Handle;
       H2 : Buffer_Handle;
    begin
-      Packet_Pool.Allocate (H1);
-      if not Packet_Pool.Is_Null (H1) then
-         Packet_Pool.Move
+      TX_Pool.Allocate (H1);
+      if not TX_Pool.Is_Null (H1) then
+         TX_Pool.Move
            (From => H1, To => H2);  --  Explicit ownership transfer
          --  H1 is now null (moved)
-         Packet_Pool.Free (H2);  --  Free via H2
+         TX_Pool.Free (H2);  --  Free via H2
 
       end if;
    end Test_Move_Ownership;
@@ -49,10 +45,10 @@ is
    procedure Test_Conditional_Free is
       H : Buffer_Handle;
    begin
-      Packet_Pool.Allocate (H);
+      TX_Pool.Allocate (H);
       --  Even if allocation fails, H is null and no leak occurs
-      if not Packet_Pool.Is_Null (H) then
-         Packet_Pool.Free (H);
+      if not TX_Pool.Is_Null (H) then
+         TX_Pool.Free (H);
       end if;
    end Test_Conditional_Free;
 
@@ -64,7 +60,7 @@ is
    procedure Test_Leak is
       H : Buffer_Handle;
    begin
-      Packet_Pool.Allocate (H);
+      TX_Pool.Allocate (H);
       --  SPARK ERROR: H not reclaimed before end of scope
    end Test_Leak;
 
@@ -72,10 +68,10 @@ is
    procedure Test_Double_Free is
       H : Buffer_Handle;
    begin
-      Packet_Pool.Allocate (H);
-      if not Packet_Pool.Is_Null (H) then
-         Packet_Pool.Free (H);
-         Packet_Pool.Free (H);  --  SPARK ERROR: H is null (already freed)
+      TX_Pool.Allocate (H);
+      if not TX_Pool.Is_Null (H) then
+         TX_Pool.Free (H);
+         TX_Pool.Free (H);  --  SPARK ERROR: H is null (already freed)
 
       end if;
    end Test_Double_Free;
@@ -85,10 +81,10 @@ is
       H : Buffer_Handle;
       V : Buffer_View;
    begin
-      Packet_Pool.Allocate (H);
-      if not Packet_Pool.Is_Null (H) then
-         Packet_Pool.Free (H);
-         V := Packet_Pool.Borrow (H);  --  SPARK ERROR: H is null
+      TX_Pool.Allocate (H);
+      if not TX_Pool.Is_Null (H) then
+         TX_Pool.Free (H);
+         V := TX_Pool.Borrow (H);  --  SPARK ERROR: H is null
 
       end if;
    end Test_Use_After_Free;
@@ -99,12 +95,12 @@ is
       H2 : Buffer_Handle;
       V1 : Buffer_View;
    begin
-      Packet_Pool.Allocate (H1);
-      if not Packet_Pool.Is_Null (H1) then
-         Packet_Pool.Move (From => H1, To => H2);  --  H1 moved to H2
+      TX_Pool.Allocate (H1);
+      if not TX_Pool.Is_Null (H1) then
+         TX_Pool.Move (From => H1, To => H2);  --  H1 moved to H2
          V1 :=
-           Packet_Pool.Borrow (H1);  --  SPARK ERROR: H1 was moved (is null)
-         Packet_Pool.Free (H2);
+           TX_Pool.Borrow (H1);  --  SPARK ERROR: H1 was moved (is null)
+         TX_Pool.Free (H2);
       end if;
    end Test_Use_After_Move;
 
@@ -113,11 +109,11 @@ is
       H1 : Buffer_Handle;
       H2 : Buffer_Handle;
    begin
-      Packet_Pool.Allocate (H1);
-      if not Packet_Pool.Is_Null (H1) then
-         Packet_Pool.Move (From => H1, To => H2);  --  H1 moved to H2
-         Packet_Pool.Free (H1);  --  SPARK ERROR: H1 was moved (is null)
-         Packet_Pool.Free (H2);
+      TX_Pool.Allocate (H1);
+      if not TX_Pool.Is_Null (H1) then
+         TX_Pool.Move (From => H1, To => H2);  --  H1 moved to H2
+         TX_Pool.Free (H1);  --  SPARK ERROR: H1 was moved (is null)
+         TX_Pool.Free (H2);
       end if;
    end Test_Free_After_Move;
 
@@ -130,12 +126,12 @@ is
       H   : Buffer_Handle;
       Ref : Buffer_Ref;
    begin
-      Packet_Pool.Allocate (H);
-      if not Packet_Pool.Is_Null (H) then
-         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref);
+      TX_Pool.Allocate (H);
+      if not TX_Pool.Is_Null (H) then
+         TX_Pool.Borrow_Mut (Handle => H, Ref => Ref);
          --  ... modify buffer via Ref_Data (Ref) ...
-         Packet_Pool.Return_Ref (Handle => H, Ref => Ref);  --  Return borrow
-         Packet_Pool.Free (H);  --  OK: borrow was returned
+         TX_Pool.Return_Ref (Handle => H, Ref => Ref);  --  Return borrow
+         TX_Pool.Free (H);  --  OK: borrow was returned
       end if;
    end Test_Correct_Mutable_Borrow;
 
@@ -144,11 +140,11 @@ is
       H   : Buffer_Handle;
       Ref : Buffer_Ref;
    begin
-      Packet_Pool.Allocate (H);
-      if not Packet_Pool.Is_Null (H) then
-         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref);
+      TX_Pool.Allocate (H);
+      if not TX_Pool.Is_Null (H) then
+         TX_Pool.Borrow_Mut (Handle => H, Ref => Ref);
          --  Forgot to return the borrow!
-         Packet_Pool.Free (H);  --  SPARK ERROR: Is_Mutably_Borrowed (H)
+         TX_Pool.Free (H);  --  SPARK ERROR: Is_Mutably_Borrowed (H)
       end if;
    end Test_Free_While_Borrowed;
 
@@ -158,13 +154,13 @@ is
       Ref1 : Buffer_Ref;
       Ref2 : Buffer_Ref;
    begin
-      Packet_Pool.Allocate (H);
-      if not Packet_Pool.Is_Null (H) then
-         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref1);
-         Packet_Pool.Borrow_Mut (Handle => H, Ref => Ref2);  --  SPARK ERROR
-         Packet_Pool.Return_Ref (Handle => H, Ref => Ref1);
-         Packet_Pool.Return_Ref (Handle => H, Ref => Ref2);
-         Packet_Pool.Free (H);
+      TX_Pool.Allocate (H);
+      if not TX_Pool.Is_Null (H) then
+         TX_Pool.Borrow_Mut (Handle => H, Ref => Ref1);
+         TX_Pool.Borrow_Mut (Handle => H, Ref => Ref2);  --  SPARK ERROR
+         TX_Pool.Return_Ref (Handle => H, Ref => Ref1);
+         TX_Pool.Return_Ref (Handle => H, Ref => Ref2);
+         TX_Pool.Free (H);
       end if;
    end Test_Double_Mutable_Borrow;
 
