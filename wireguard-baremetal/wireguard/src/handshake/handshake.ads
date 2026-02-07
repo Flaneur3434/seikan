@@ -143,6 +143,41 @@ is
    end record;
 
    ---------------------
+   --  Handshake Error Codes
+   ---------------------
+
+   --  Detailed error codes for Process_Initiation / Process_Response.
+   --  Each value identifies a specific failure point.
+   --  Use Handshake_Error'Pos (E) to get an integer for C-side logging.
+   type Handshake_Error is
+     (HS_OK,                  --   0: Success
+      HS_Bad_Msg_Type,        --   1: Wrong message type byte
+      HS_Mac1_Compute,        --   2: Failed to compute MAC1
+      HS_Mac1_Mismatch,       --   3: MAC1 verification failed
+      HS_Init_Chain,          --   4: HASH(Construction) failed
+      HS_Init_Mix_Id,         --   5: HASH(C || Identifier) failed
+      HS_Init_Mix_Spub,       --   6: HASH(H || static_public) failed
+      HS_Mix_Ephem_CK,        --   7: KDF(C, ephemeral) failed
+      HS_Mix_Ephem_H,         --   8: HASH(H || ephemeral) failed
+      HS_DH_ES,               --   9: DH(es) failed
+      HS_KDF_ES,              --  10: KDF(C, es) failed
+      HS_Decrypt_Static,      --  11: AEAD decrypt static key failed
+      HS_Mix_Enc_Static,      --  12: HASH(H || encrypted_static) failed
+      HS_DH_SS,               --  13: DH(ss) failed
+      HS_KDF_SS,              --  14: KDF(C, ss) failed
+      HS_Decrypt_Timestamp,   --  15: AEAD decrypt timestamp failed
+      HS_Mix_Enc_Ts,          --  16: HASH(H || encrypted_timestamp) failed
+      HS_Receiver_Mismatch,   --  17: Receiver index mismatch
+      HS_DH_EE,               --  18: DH(ee) failed
+      HS_KDF_EE,              --  19: KDF(C, ee) failed
+      HS_DH_SE,               --  20: DH(se) failed
+      HS_KDF_SE,              --  21: KDF(C, se) failed
+      HS_KDF_PSK,             --  22: KDF3(C, PSK) failed
+      HS_Mix_Tau,             --  23: HASH(H || tau) failed
+      HS_Decrypt_Empty,       --  24: AEAD decrypt empty failed
+      HS_Mix_Enc_Empty);      --  25: HASH(H || encrypted_empty) failed
+
+   ---------------------
    --  Procedures
    ---------------------
 
@@ -214,11 +249,11 @@ is
      (Msg      : Transport.Message_Handshake_Initiation;
       State    : out Handshake_State;
       Identity : Static_Identity;
-      Result   : out Boolean)
+      Result   : out Handshake_Error)
    with
      Global => null,
      Post   =>
-       (if Result
+       (if Result = HS_OK
         then State.Role = Role_Responder
         else State.Kind = State_Empty);
 
@@ -261,11 +296,11 @@ is
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
-      Result   : out Boolean)
+      Result   : out Handshake_Error)
    with
      Pre  => State.Kind = State_Initiator_Sent,
      Post =>
-       (if Result
+       (if Result = HS_OK
         then State.Kind = State_Established
         else State.Kind = State_Empty);
 
