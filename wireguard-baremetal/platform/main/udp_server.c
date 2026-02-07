@@ -1,47 +1,54 @@
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/time.h>
 
-// BSD socket functions and  data structures
+/* BSD sockets */
 #include <sys/socket.h>
-// Address family and protocal information
 #include <netinet/in.h>
-// Functions for manipulating numeric IP addresses
 #include <arpa/inet.h>
 
 #include <esp_log.h>
 
-// FreeRTOS
+/* FreeRTOS */
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-// Ada memory pool for zero-copy packet buffers
+/* Ada zero-copy memory pools (RX + TX) */
 #include "packet_pool.h"
+/* Ada WireGuard handshake API */
+#include "wg_handshake.h"
 
 #define PORT 51820
 
-static const char *TAG = "udp srv";
+static const char *TAG = "wg_srv";
+
+/* WireGuard message types (first byte on the wire) */
+#define WG_MSG_INITIATION  1
+#define WG_MSG_RESPONSE    2
+#define WG_MSG_COOKIE      3
+#define WG_MSG_TRANSPORT   4
 
 /*
- * WireGuard ESP32-C6 Application Entry Point
+ * WireGuard ESP32-C6 — Responder UDP Server
  *
  * Architecture:
  *   Ada/SPARK core owns protocol logic and state
  *   C layer provides hardware I/O and driver integration
  *
  * This file orchestrates:
- *   1. Hardware initialization
- *   2. Main event loop calling Ada core
- *   3. Packet RX/TX with network driver
+ *   1. wg_init() — load keys, initialize pools
+ *   2. Main event loop: receive -> dispatch on message type -> respond
+ *   3. Zero-copy: RX pool for incoming, TX pool for outgoing
+ *
+ * Ownership rules:
+ *   - wg_handle_initiation() takes ownership of the RX buffer (frees it)
+ *     and returns a TX buffer that the caller must free via tx_pool_free().
+ *   - wg_handle_response() takes ownership of the RX buffer (frees it).
+ *   - Unknown messages: caller frees the RX buffer via rx_pool_free().
  */
-
-/*
- * External Ada ABI - defined in bindings/
- */
-extern void wg_receive_bytes(const uint8_t *buf, size_t len);
-extern size_t wg_prepare_tx(uint8_t *out, size_t max_len);
 
 void udp_server_task(void *pvParameters)
 {
@@ -49,9 +56,12 @@ void udp_server_task(void *pvParameters)
 
     char addr_str[128];
 
-    // Initialize Ada packet pool
-    packet_pool_init();
-    ESP_LOGI(TAG, "Packet pool initialized: %zu buffers of %zu bytes",
+    /* Initialize WireGuard handshake subsystem (keys + both pools) */
+    if (!wg_init()) {
+        ESP_LOGE(TAG, "wg_init() failed - check keys in sdkconfig");
+        return;
+    }
+    ESP_LOGI(TAG, "WireGuard initialized: %zu buffers of %zu bytes per pool",
              packet_pool_get_pool_size(), packet_pool_get_buffer_size());
 
     struct sockaddr_in dest_addr = {};
@@ -60,109 +70,173 @@ void udp_server_task(void *pvParameters)
     dest_addr.sin_port = htons(PORT);
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-    if (sock < 0)
-    {
+    if (sock < 0) {
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
         return;
     }
     ESP_LOGI(TAG, "Socket created");
 
-    // Increase RX buffer size with SO_RCVBUF in the future if needed
-    // UDP drops happen when the socket receive queue fills.
-    // More buffer = more burst absorption
-
-    // Increase TX buffer size with SO_SNDBUF in the future if needed
-    // Useful if enqueuing a burst of outgoing packets (handshake
-    // bursts, keepalives across many peers, etc.).
-
-    // SO_TIMESTAMP / SO_TIMESTAMPNS can provide per-packet timestamps
-
-    // Use connect()
-
-    // Tweak LwIP settings form menuconfig in future too if needed
-
-    // Set timeout
+    /* 10-second receive timeout */
     struct timeval timeout;
     timeout.tv_sec = 10;
     timeout.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 
-    // Binds a local address + port
     int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-    if (err < 0)
-    {
+    if (err < 0) {
         ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
     }
     ESP_LOGI(TAG, "Socket bound, port %d", PORT);
 
-    // TODO: Use connect() to set default remote peer
-    // Filter incoming packets, restrict to default peer
-    // Slightly cheaper send/receive path
-    // Better error reporting
-    // Need to reconnect if endpoint changes
+    struct sockaddr_storage source_addr;
+    socklen_t socklen;
 
-    struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
-    socklen_t socklen = sizeof(source_addr);
-
-    while (1)
-    {
+    while (1) {
         ESP_LOGI(TAG, "Waiting for data");
 
-        // Allocate buffer from Ada pool (O(1) operation)
-        packet_buffer_t *pkt = packet_pool_allocate();
-        if (pkt == NULL)
-        {
-            ESP_LOGE(TAG, "Packet pool exhausted!");
-            vTaskDelay(pdMS_TO_TICKS(100));  // Back off and retry
+        /* Allocate RX buffer from pool (O(1)) */
+        packet_buffer_t *pkt = rx_pool_allocate();
+        if (pkt == NULL) {
+            ESP_LOGE(TAG, "RX pool exhausted!");
+            vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
         size_t buf_size = packet_pool_get_buffer_size();
+        socklen = sizeof(source_addr);
 
-        // Haven't setup connect() yet, so can receive packets from any IP
-        int len = recvfrom(sock, pkt->data, buf_size, 0, (struct sockaddr *)&source_addr, &socklen);
-        // Error occurred on receiving
-        if (len < 0)
-        {
+        int len = recvfrom(sock, pkt->data, buf_size, 0,
+                           (struct sockaddr *)&source_addr, &socklen);
+
+        if (len < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Timeout - no data, loop again */
+                rx_pool_free(pkt);
+                continue;
+            }
             ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
-            packet_pool_free(pkt);  // Return buffer to pool
+            rx_pool_free(pkt);
             break;
         }
-        // Data received
-        else
-        {
-            // Get the sender's ip address as string
-            if (source_addr.ss_family == PF_INET)
-            {
-                inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
-            }
-            else
-            {
-                ESP_LOGE(TAG, "Haven't setup IPv6, exiting program ...");
-                packet_pool_free(pkt);
+
+        if (len == 0) {
+            rx_pool_free(pkt);
+            continue;
+        }
+
+        /* Get sender address for logging */
+        if (source_addr.ss_family == PF_INET) {
+            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr,
+                        addr_str, sizeof(addr_str) - 1);
+        } else {
+            ESP_LOGE(TAG, "IPv6 not supported");
+            rx_pool_free(pkt);
+            break;
+        }
+
+        ESP_LOGI(TAG, "Received %d bytes from %s:", len, addr_str);
+        ESP_LOG_BUFFER_HEXDUMP(TAG, pkt->data, len, ESP_LOG_INFO);
+
+        /* Store length in buffer (Ada reads this via Acquire_RX_From_C) */
+        pkt->len = (uint16_t)len;
+
+        /* Dispatch on WireGuard message type (first byte) */
+        uint8_t msg_type = pkt->data[0];
+
+        switch (msg_type) {
+
+        case WG_MSG_INITIATION: {
+            ESP_LOGI(TAG, ">> Handshake Initiation (%d bytes)", len);
+
+            uint16_t resp_len = 0;
+            /*
+             * Ada takes ownership of pkt (frees RX internally).
+             * Returns a TX pool buffer containing the response.
+             */
+            packet_buffer_t *tx_pkt =
+                (packet_buffer_t *)wg_handle_initiation(pkt, &resp_len);
+
+            if ((uintptr_t)tx_pkt < 256) {
+                /*
+                 * Small pointer value = Ada error code, not a real address.
+                 *
+                 * Binding-layer errors (1-6):
+                 *   1 = not initialized
+                 *   2 = RX pool acquire failed
+                 *   3 = RX too short
+                 *   5 = TX pool allocate failed
+                 *   6 = Create_Response failed
+                 *
+                 * Handshake errors (100 + enum pos):
+                 *   100 = HS_OK (should not appear)
+                 *   101 = Bad message type
+                 *   102 = MAC1 compute failed
+                 *   103 = MAC1 mismatch (wrong keys?)
+                 *   104 = Init chain hash failed
+                 *   105 = Init mix identifier failed
+                 *   106 = Init mix static pub failed
+                 *   107 = Mix ephemeral CK failed
+                 *   108 = Mix ephemeral H failed
+                 *   109 = DH(es) failed
+                 *   110 = KDF(es) failed
+                 *   111 = AEAD decrypt static failed
+                 *   112 = Mix encrypted static failed
+                 *   113 = DH(ss) failed
+                 *   114 = KDF(ss) failed
+                 *   115 = AEAD decrypt timestamp failed
+                 *   116 = Mix encrypted timestamp failed
+                 */
+                ESP_LOGE(TAG, "wg_handle_initiation failed: error %d",
+                         (int)(uintptr_t)tx_pkt);
+                /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
+                break;
+            } else if (resp_len == 0) {
+                ESP_LOGE(TAG, "wg_handle_initiation failed, cause resp_len == 0");
+                /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
                 break;
             }
 
-            ESP_LOGI(TAG, "Received %d bytes from %s:", len, addr_str);
-            ESP_LOG_BUFFER_HEXDUMP(TAG, pkt->data, len, ESP_LOG_INFO);
+            ESP_LOGI(TAG, "<< Handshake Response (%u bytes)", resp_len);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, tx_pkt->data, resp_len, ESP_LOG_INFO);
 
-            // Echo back packet using zero-copy buffer
-            int err = sendto(sock, pkt->data, len, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
-            if (err < 0)
-            {
-                ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-                packet_pool_free(pkt);
-                break;
+            int sent = sendto(sock, tx_pkt->data, resp_len, 0,
+                              (struct sockaddr *)&source_addr,
+                              sizeof(struct sockaddr_in));
+            if (sent < 0) {
+                ESP_LOGE(TAG, "sendto failed: errno %d", errno);
+            } else {
+                ESP_LOGI(TAG, "Handshake Response sent (%d bytes)", sent);
             }
 
-            // Return buffer to pool (O(1) operation)
-            packet_pool_free(pkt);
+            /* Return TX buffer to pool */
+            tx_pool_free(tx_pkt);
+            break;
+        }
+
+        case WG_MSG_RESPONSE: {
+            ESP_LOGI(TAG, ">> Handshake Response (%d bytes)", len);
+
+            /* Ada takes ownership of pkt (frees RX internally) */
+            bool ok = wg_handle_response(pkt);
+
+            if (ok) {
+                ESP_LOGI(TAG, "Handshake complete!");
+            } else {
+                ESP_LOGE(TAG, "wg_handle_response failed");
+            }
+            /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
+            break;
+        }
+
+        default:
+            ESP_LOGW(TAG, "Unknown message type: 0x%02x (%d bytes)",
+                     msg_type, len);
+            rx_pool_free(pkt);
+            break;
         }
     }
 
-    if (sock != -1)
-    {
+    if (sock != -1) {
         ESP_LOGE(TAG, "Shutting down socket and restarting ...");
         shutdown(sock, 0);
         close(sock);
