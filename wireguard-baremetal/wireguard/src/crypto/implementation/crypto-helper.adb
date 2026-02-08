@@ -1,15 +1,16 @@
+with System;
 with Crypto.Crypto_Lib;
 with Interfaces.C; use Interfaces.C;
 
 package body Crypto.Helper
   with SPARK_Mode => Off
 is
-   procedure Memzero (Buffer : in out Byte_Array) is
+   procedure Generic_Memzero (Item : in out T) is
    begin
       Crypto.Crypto_Lib.Secure_Wipe
-        (Buffer => Buffer'Address,
-         Size   => size_t (Buffer'Length));
-   end Memzero;
+        (Buffer => Item'Address,
+         Size   => size_t (Item'Size / System.Storage_Unit));
+   end Generic_Memzero;
 
    function Cmp
      (A : Byte_Array;

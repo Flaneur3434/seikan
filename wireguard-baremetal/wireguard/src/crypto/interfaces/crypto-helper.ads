@@ -7,9 +7,18 @@ with Utils; use Utils;
 package Crypto.Helper
   with SPARK_Mode => On
 is
-   --  Securely zero memory
-   --  Uses constant-time implementation to avoid compiler optimization
-   procedure Memzero (Buffer : in out Byte_Array)
+   --  Securely zero any object (generic, SPARK-compatible)
+   --
+   --  Accepts any type (arrays, records, scalars).  The body uses
+   --  a constant-time wipe imported from the crypto backend so the
+   --  compiler cannot optimise the zeroing away.
+   --
+   --  Usage:
+   --    procedure Wipe_Key is new Generic_Memzero (Key_Buffer);
+   --    Wipe_Key (My_Key);
+   generic
+      type T (<>) is private;
+   procedure Generic_Memzero (Item : in out T)
    with Global => null;
 
    --  Constant-time comparison of two buffers
