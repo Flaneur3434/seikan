@@ -27,11 +27,21 @@ with Utils;      use Utils;
 with Crypto.AEAD;
 with Handshake;
 with Messages;
+with Replay;
 
 package Transport
   with SPARK_Mode => On
 is
    use type Handshake.Handshake_State_Kind;
+
+   ---------------------------------------------------------------------------
+   --  Anti-Replay Constants
+   --
+   --  From the WireGuard whitepaper: reject after 2^64 - 2^13 - 1 messages.
+   ---------------------------------------------------------------------------
+
+   Reject_After_Messages : constant Unsigned_64 :=
+     Unsigned_64'Last - 2**13;
 
    ---------------------------------------------------------------------------
    --  Session Key Material
@@ -48,6 +58,7 @@ is
       Sender_Index   : Unsigned_32;
       Receiver_Index : Unsigned_32;
       Send_Counter   : Unsigned_64;
+      Replay_Filter  : Replay.Filter;
       Valid          : Boolean;
    end record;
 
@@ -57,6 +68,7 @@ is
       Sender_Index   => 0,
       Receiver_Index => 0,
       Send_Counter   => 0,
+      Replay_Filter  => Replay.Empty_Filter,
       Valid          => False);
 
    ---------------------------------------------------------------------------
