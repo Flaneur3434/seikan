@@ -4,8 +4,6 @@
 --  Per WireGuard whitepaper: timestamps are soft-state, RAM-only.
 --  Initial value is random to ensure fresh start after each boot.
 
-with Ada.Unchecked_Conversion;
-with System;
 with Crypto.Random;
 
 package body Crypto.TAI64N
@@ -55,16 +53,6 @@ is
    begin
       return A >= B;
    end Is_After_Or_Equal;
-
-   function To_Bytes
-     (T : aliased Timestamp) return Timestamp_Bytes_Const_Access
-   is
-      function Convert is new Ada.Unchecked_Conversion
-        (Source => System.Address,
-         Target => Timestamp_Bytes_Const_Access);
-   begin
-      return Convert (T'Address);
-   end To_Bytes;
 
    function From_Bytes (B : Timestamp_Bytes) return Timestamp is
       Result : Timestamp;

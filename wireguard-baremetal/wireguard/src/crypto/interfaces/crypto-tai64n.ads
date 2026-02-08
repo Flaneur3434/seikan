@@ -30,11 +30,6 @@ is
    --  Byte_Array overlay for network I/O and AEAD encrypt/decrypt
    subtype Timestamp_Bytes is Byte_Array (0 .. Timestamp_Bytes_Length - 1);
 
-   --  Non-nullable access for zero-copy byte access.
-   --  The type itself guarantees non-null; no postcondition needed.
-   type Timestamp_Bytes_Const_Access is
-     not null access constant Timestamp_Bytes;
-
    --  Zero timestamp (useful for initialization)
    Zero : constant Timestamp := (others => 0);
 
@@ -51,12 +46,6 @@ is
 
    --  Check if timestamp A is after or equal to B
    function Is_After_Or_Equal (A, B : Timestamp) return Boolean
-   with Global => null;
-
-   --  Returns read-only access to the timestamp's internal bytes.
-   --  The returned pointer is valid only while T remains in scope.
-   function To_Bytes
-     (T : aliased Timestamp) return Timestamp_Bytes_Const_Access
    with Global => null;
 
    --  Convert a Byte_Array (e.g. from AEAD decrypt) back to Timestamp.
