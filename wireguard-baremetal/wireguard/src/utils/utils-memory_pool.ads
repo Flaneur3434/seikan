@@ -39,8 +39,8 @@ is
    end record
      with Convention => C;
 
-
    type Buffer_Ptr is access all Buffer;
+   pragma No_Strict_Aliasing (Buffer_Ptr);
    type Buffer_Const_Ptr is access constant Buffer;
 
    ---------------------------------------------------------------------------
