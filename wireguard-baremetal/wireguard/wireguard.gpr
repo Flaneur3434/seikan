@@ -5,6 +5,7 @@
 --    - utils.gpr     : Base utilities, spans, ring buffers
 --    - crypto.gpr    : ChaCha20Poly1305, X25519, BLAKE2s
 --    - messages.gpr  : Wire protocol message types & buffer pools
+--    - transport.gpr : Transport data protocol (Type 4 encrypt/decrypt)
 --    - handshake.gpr : Noise IKpsk2 handshake
 --    - net.gpr       : Network bindings
 --    - core.gpr      : State machine
@@ -13,6 +14,7 @@ with "config/wireguard_config.gpr";
 with "utils.gpr";
 with "crypto.gpr";
 with "messages.gpr";
+with "transport.gpr";
 with "handshake.gpr";
 with "net.gpr";
 --  with "core.gpr";       --  TODO: empty for now
