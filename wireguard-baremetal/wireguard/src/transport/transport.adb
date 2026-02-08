@@ -75,6 +75,7 @@ is
       S.Sender_Index := Unsigned_32 (HS.Local_Index);
       S.Receiver_Index := Unsigned_32 (HS.Remote_Index);
       S.Send_Counter := 0;
+      Replay.Reset (S.Replay_Filter);
       S.Valid := True;
 
       --  Forward secrecy: wipe all ephemeral handshake material
