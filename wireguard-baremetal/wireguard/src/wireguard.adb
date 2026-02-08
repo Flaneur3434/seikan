@@ -7,16 +7,18 @@
 --    HS_State              — ephemeral, wiped after session derivation
 --    Tx_Session            — transport session keys (valid after handshake)
 
-with Interfaces;     use Interfaces;
-with Interfaces.C;   use Interfaces.C;
-with Utils;          use Utils;
+with Interfaces;   use Interfaces;
+with Interfaces.C; use Interfaces.C;
+with Utils;        use Utils;
 with Crypto.KX;
 with Handshake;
 with Messages;
 with Transport;
 with WG_Keys;
 
-package body Wireguard is
+package body Wireguard
+  with SPARK_Mode => Off
+is
 
    use type Handshake.Handshake_Error;
 
@@ -31,7 +33,7 @@ package body Wireguard is
    My_Identity : Handshake.Static_Identity;
    My_Peer     : Handshake.Peer_Config;
    HS_State    : Handshake.Handshake_State := Handshake.Empty_Handshake;
-   Tx_Session  : Transport.Session         := Transport.Null_Session;
+   Tx_Session  : Transport.Session := Transport.Null_Session;
    Initialized : Boolean := False;
 
    ---------------------------------------------------------------------------
@@ -78,7 +80,7 @@ package body Wireguard is
       Messages.RX_Pool.Initialize;
 
       --  Reset protocol state
-      HS_State   := Handshake.Empty_Handshake;
+      HS_State := Handshake.Empty_Handshake;
       Tx_Session := Transport.Null_Session;
       Initialized := True;
 
@@ -112,7 +114,7 @@ package body Wireguard is
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         Msg : Messages.Message_Handshake_Initiation
+         Msg     : Messages.Message_Handshake_Initiation
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
          Handshake.Process_Initiation (Msg, HS_State, My_Identity, HS_Err);
@@ -137,8 +139,7 @@ package body Wireguard is
          Resp : Messages.Message_Handshake_Response
          with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
       begin
-         Handshake.Create_Response
-           (Resp, HS_State, My_Identity, Resp_Result);
+         Handshake.Create_Response (Resp, HS_State, My_Identity, Resp_Result);
       end;
 
       if not Resp_Result.Success then
@@ -183,7 +184,7 @@ package body Wireguard is
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         Msg : Messages.Message_Handshake_Response
+         Msg     : Messages.Message_Handshake_Response
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
          Handshake.Process_Response
@@ -212,8 +213,8 @@ package body Wireguard is
      (RX_Handle : in out Messages.RX_Buffer_Handle;
       RX_Length : Messages.Packet_Length) return WG_Action
    is
-      PT_Len  : Unsigned_16;
-      Counter : Unsigned_64;
+      PT_Len         : Unsigned_16;
+      Counter        : Unsigned_64;
       Decrypt_Result : Status;
    begin
       if not Tx_Session.Valid then
@@ -296,14 +297,14 @@ package body Wireguard is
            Messages.Get_Message_Kind (RX_View.Buf_Ptr.Data (0));
       begin
          case Msg_Kind is
-            when Messages.Kind_Handshake_Initiation =>
-               return Handle_Initiation_RX
-                 (RX_Handle, RX_Length, TX_Buf, TX_Len);
+            when Messages.Kind_Handshake_Initiation                 =>
+               return
+                 Handle_Initiation_RX (RX_Handle, RX_Length, TX_Buf, TX_Len);
 
-            when Messages.Kind_Handshake_Response =>
+            when Messages.Kind_Handshake_Response                   =>
                return Handle_Response_RX (RX_Handle, RX_Length);
 
-            when Messages.Kind_Transport_Data =>
+            when Messages.Kind_Transport_Data                       =>
                return Handle_Transport_RX (RX_Handle, RX_Length);
 
             when Messages.Kind_Cookie_Reply | Messages.Kind_Unknown =>
@@ -314,7 +315,7 @@ package body Wireguard is
    end Receive;
 
    ---------------------------------------------------------------------------
-   --  Create_Initiation — ESP32-initiated handshake
+   --  Create_Initiation
    ---------------------------------------------------------------------------
 
    function Create_Initiation
