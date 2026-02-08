@@ -1,6 +1,5 @@
 --  Packet_Pool - C FFI Implementation for RX and TX pools
 
-with Messages;
 package body Packet_Pool
    with SPARK_Mode => Off
 is
