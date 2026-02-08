@@ -36,7 +36,8 @@ library project Transport is
    for Library_Kind use Library_Type;
 
    package Compiler is
-      for Default_Switches ("Ada") use Wireguard_Config.Ada_Compiler_Switches;
+      for Default_Switches ("Ada") use
+        Wireguard_Config.Ada_Compiler_Switches;
    end Compiler;
 
 end Transport;

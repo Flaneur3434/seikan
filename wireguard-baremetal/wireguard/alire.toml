@@ -9,5 +9,8 @@ website = ""
 tags = ["wireguard", "vpn", "embedded"]
 
 # ESP32-C6 target: RISC-V RV32IMAC
+[build-switches]
+"*".contracts = "Yes"
+
 [[depends-on]]
 gnat_riscv64_elf = "*"
