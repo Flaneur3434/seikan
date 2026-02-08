@@ -10,10 +10,12 @@
 with Interfaces;   use Interfaces;
 with Interfaces.C; use Interfaces.C;
 with Utils;        use Utils;
+with Crypto.AEAD;
 with Crypto.KX;
 with Handshake;
 with Messages;
 with Transport;
+with Replay;
 with WG_Keys;
 
 package body Wireguard
@@ -208,28 +210,46 @@ is
       return Action_None;
    end Handle_Response_RX;
 
-   --  Handle_Transport_RX — Decrypt transport data in-place
+   --  Handle_Transport_RX — Decrypt then echo-encrypt back
+   --
+   --  Current behaviour (pre-netif): decrypt the incoming Type 4 packet,
+   --  copy the plaintext into a TX buffer, re-encrypt it with our send
+   --  key, and hand the TX buffer back for C to sendto().  This makes
+   --  the ESP32 behave as a transport-layer echo server, which is useful
+   --  for integration testing and throughput benchmarks.
    function Handle_Transport_RX
      (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length) return WG_Action
+      RX_Length : Messages.Packet_Length;
+      TX_Buf    : access System.Address;
+      TX_Len    : access Unsigned_16) return WG_Action
    is
+      Header_Size : constant Natural := Messages.Transport_Header_Size;
+      Tag_Size    : constant Natural := Crypto.AEAD.Tag_Bytes;
+
       PT_Len         : Unsigned_16;
       Counter        : Unsigned_64;
       Decrypt_Result : Status;
+      Replay_OK      : Boolean;
+
+      --  Plaintext scratch — max plaintext that fits one pool buffer:
+      --  Packet_Size − header − tag = 256 − 16 − 16 = 224
+      Max_PT : constant Natural :=
+        Messages.Packet_Size - Header_Size - Tag_Size;
+      PT_Buf : Byte_Array (0 .. Max_PT - 1);
+      PT_Act : Natural := 0;   --  actual plaintext length after decrypt
    begin
       if not Tx_Session.Valid then
          Messages.RX_Pool.Free (RX_Handle);
          return Action_Error;
       end if;
 
-      --  Decrypt in-place directly in the RX pool buffer
+      --  1. Decrypt in-place in the RX pool buffer
       declare
          RX_Ref : Messages.RX_Buffer_Ref;
       begin
          Messages.RX_Pool.Borrow_Mut (RX_Handle, RX_Ref);
 
          declare
-            --  Overlay a Byte_Array on the Packet_Buffer data region
             Pkt : Byte_Array (0 .. Natural (RX_Length) - 1)
             with Import, Address => RX_Ref.Buf_Ptr.Data'Address;
          begin
@@ -239,20 +259,82 @@ is
                Length  => PT_Len,
                Counter => Counter,
                Result  => Decrypt_Result);
+
+            --  Anti-replay check: only AFTER AEAD authentication succeeds.
+            --  Validates counter against sliding window (RFC 6479).
+            if Is_Success (Decrypt_Result) then
+               Replay.Validate_Counter
+                 (F        => Tx_Session.Replay_Filter,
+                  Counter  => Counter,
+                  Limit    => Transport.Reject_After_Messages,
+                  Accepted => Replay_OK);
+
+               if not Replay_OK then
+                  Decrypt_Result := Error_Failed;
+               end if;
+            end if;
+
+            --  Copy plaintext out before we return the borrow.
+            --  Plaintext sits at Pkt(Header_Size .. Header_Size + PT_Len-1)
+            --  after in-place decrypt.
+            if Is_Success (Decrypt_Result) and then PT_Len > 0 then
+               PT_Act := Natural (PT_Len);
+               PT_Buf (0 .. PT_Act - 1) :=
+                 Pkt (Header_Size .. Header_Size + PT_Act - 1);
+            end if;
          end;
 
          Messages.RX_Pool.Return_Ref (RX_Handle, RX_Ref);
       end;
 
+      --  Done with RX buffer
       Messages.RX_Pool.Free (RX_Handle);
 
-      --  TODO: deliver plaintext to TUN/IP stack
-      --  For now: Action_None (decrypted and discarded)
-      if Is_Success (Decrypt_Result) then
-         return Action_None;
-      else
+      if not Is_Success (Decrypt_Result) or else PT_Act = 0 then
          return Action_Error;
       end if;
+
+      --  2. Allocate a TX buffer and re-encrypt the plaintext as echo
+      declare
+         TX_Handle     : Messages.Buffer_Handle;
+         TX_Ref        : Messages.Buffer_Ref;
+         Enc_Len       : Unsigned_16;
+         Enc_Result    : Status;
+      begin
+         Messages.TX_Pool.Allocate (TX_Handle);
+         if Messages.TX_Pool.Is_Null (TX_Handle) then
+            return Action_Error;
+         end if;
+
+         Messages.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
+
+         declare
+            Out_Pkt : Byte_Array (0 .. Messages.Packet_Size - 1)
+            with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
+         begin
+            Transport.Encrypt_Packet
+              (S         => Tx_Session,
+               Plaintext => PT_Buf (0 .. PT_Act - 1),
+               Packet    => Out_Pkt,
+               Length    => Enc_Len,
+               Result    => Enc_Result);
+         end;
+
+         if not Is_Success (Enc_Result) then
+            Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
+            Messages.TX_Pool.Free (TX_Handle);
+            return Action_Error;
+         end if;
+
+         TX_Ref.Buf_Ptr.Len := Enc_Len;
+         Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
+
+         --  Release TX buffer to C for transmission
+         Messages.Release_TX_To_C
+           (TX_Handle, Messages.Packet_Length (Enc_Len), TX_Buf.all);
+         TX_Len.all := Enc_Len;
+         return Action_Send_Transport;
+      end;
    end Handle_Transport_RX;
 
    ---------------------------------------------------------------------------
@@ -305,7 +387,8 @@ is
                return Handle_Response_RX (RX_Handle, RX_Length);
 
             when Messages.Kind_Transport_Data                       =>
-               return Handle_Transport_RX (RX_Handle, RX_Length);
+               return
+                 Handle_Transport_RX (RX_Handle, RX_Length, TX_Buf, TX_Len);
 
             when Messages.Kind_Cookie_Reply | Messages.Kind_Unknown =>
                Messages.RX_Pool.Free (RX_Handle);
