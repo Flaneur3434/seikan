@@ -9,8 +9,25 @@ website = ""
 tags = ["wireguard", "vpn", "embedded"]
 
 # ESP32-C6 target: RISC-V RV32IMAC
+
+# -- Build switches (Alire generates wireguard_config.gpr from these) --
 [build-switches]
-"*".contracts = "Yes"
+"*".source_encoding  = "UTF_8"
+"*".style_checks     = "Yes"
+"*".compile_checks   = "Warnings"
+
+# Development  (alr build)  -- full runtime checks, assertions, debug info
+development.optimization   = ["-Og", "-gnatn", "-ffunction-sections", "-fdata-sections"]
+development.runtime_checks = "Everything"
+development.contracts      = "Yes"
+development.debug_info     = "Yes"
+
+# Release  (alr build --release)  -- size-optimised, checks suppressed
+release.optimization   = ["-Os", "-gnatn", "-ffunction-sections", "-fdata-sections"]
+release.runtime_checks = "None"
+release.contracts      = "No"
+release.debug_info     = "No"
+release.compile_checks = "None"
 
 [[depends-on]]
 gnat_riscv64_elf = "*"
