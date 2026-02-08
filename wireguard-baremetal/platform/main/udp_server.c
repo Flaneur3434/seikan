@@ -18,39 +18,31 @@
 
 /* Ada zero-copy memory pools (RX + TX) */
 #include "packet_pool.h"
-/* Ada WireGuard handshake API */
-#include "wg_handshake.h"
+/* Ada WireGuard protocol — single entry point */
+#include "wireguard.h"
 
 #define PORT 51820
 
 static const char *TAG = "wg_srv";
 
-/* WireGuard message types (first byte on the wire) */
-#define WG_MSG_INITIATION 1
-#define WG_MSG_RESPONSE 2
-#define WG_MSG_COOKIE 3
-#define WG_MSG_TRANSPORT 4
-
 /* Test-only: triggers ESP32-initiated handshake back to the sender */
 #define WG_MSG_TRIGGER_INITIATION 0xFF
 
 /*
- * WireGuard ESP32-C6 — Responder UDP Server
+ * WireGuard ESP32-C6 — UDP I/O Driver
  *
  * Architecture:
- *   Ada/SPARK core owns protocol logic and state
- *   C layer provides hardware I/O and driver integration
+ *   Ada/SPARK core owns ALL protocol logic and state.
+ *   C is a dumb I/O driver: receive bytes → wg_receive() → sendto().
  *
  * This file orchestrates:
  *   1. wg_init() — load keys, initialize pools
- *   2. Main event loop: receive -> dispatch on message type -> respond
- *   3. Zero-copy: RX pool for incoming, TX pool for outgoing
+ *   2. Main event loop: recvfrom → wg_receive → sendto if needed
  *
- * Ownership rules:
- *   - wg_handle_initiation() takes ownership of the RX buffer (frees it)
- *     and returns a TX buffer that the caller must free via tx_pool_free().
- *   - wg_handle_response() takes ownership of the RX buffer (frees it).
- *   - Unknown messages: caller frees the RX buffer via rx_pool_free().
+ * Buffer ownership:
+ *   - After recvfrom: C owns the RX pool buffer
+ *   - After wg_receive: Ada owns it (freed internally)
+ *   - If wg_receive returns SEND_*: C gets a TX buffer, must free after send
  */
 
 void udp_server_task(void *pvParameters)
@@ -154,77 +146,10 @@ void udp_server_task(void *pvParameters)
         /* Store length in buffer (Ada reads this via Acquire_RX_From_C) */
         pkt->len = (uint16_t)len;
 
-        /* Dispatch on WireGuard message type (first byte) */
+        /* Check for test-only trigger before handing to Ada */
         uint8_t msg_type = pkt->data[0];
 
-        switch (msg_type)
-        {
-
-        case WG_MSG_INITIATION:
-        {
-            ESP_LOGI(TAG, ">> Handshake Initiation (%d bytes)", len);
-
-            uint16_t resp_len = 0;
-            /*
-             * Ada takes ownership of pkt (frees RX internally).
-             * Returns a TX pool buffer containing the response.
-             */
-            packet_buffer_t *tx_pkt =
-                (packet_buffer_t *)wg_handle_initiation(pkt, &resp_len);
-
-            if (tx_pkt == NULL)
-            {
-                ESP_LOGE(TAG, "wg_handle_initiation failed");
-                /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
-                break;
-            }
-            else if (resp_len == 0)
-            {
-                ESP_LOGE(TAG, "wg_handle_initiation failed, cause resp_len == 0");
-                /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
-                break;
-            }
-
-            ESP_LOGI(TAG, "<< Handshake Response (%u bytes)", resp_len);
-            ESP_LOG_BUFFER_HEXDUMP(TAG, tx_pkt->data, resp_len, ESP_LOG_INFO);
-
-            int sent = sendto(sock, tx_pkt->data, resp_len, 0,
-                              (struct sockaddr *)&source_addr,
-                              sizeof(struct sockaddr_in));
-            if (sent < 0)
-            {
-                ESP_LOGE(TAG, "sendto failed: errno %d", errno);
-            }
-            else
-            {
-                ESP_LOGI(TAG, "Handshake Response sent (%d bytes)", sent);
-            }
-
-            /* Return TX buffer to pool */
-            tx_pool_free(tx_pkt);
-            break;
-        }
-
-        case WG_MSG_RESPONSE:
-        {
-            ESP_LOGI(TAG, ">> Handshake Response (%d bytes)", len);
-
-            /* Ada takes ownership of pkt (frees RX internally) */
-            bool ok = wg_handle_response(pkt);
-
-            if (ok)
-            {
-                ESP_LOGI(TAG, "Handshake complete!");
-            }
-            else
-            {
-                ESP_LOGE(TAG, "wg_handle_response failed");
-            }
-            /* pkt already freed by Ada - do NOT rx_pool_free(pkt) */
-            break;
-        }
-
-        case WG_MSG_TRIGGER_INITIATION:
+        if (msg_type == WG_MSG_TRIGGER_INITIATION)
         {
             ESP_LOGI(TAG, ">> Trigger: ESP32-initiated handshake");
             /* Free the trigger packet — it carried no payload */
@@ -237,7 +162,7 @@ void udp_server_task(void *pvParameters)
             if (init_pkt == NULL || init_len == 0)
             {
                 ESP_LOGE(TAG, "wg_create_initiation failed");
-                break;
+                continue;
             }
 
             ESP_LOGI(TAG, "<< Handshake Initiation (%u bytes)", init_len);
@@ -256,13 +181,52 @@ void udp_server_task(void *pvParameters)
             }
 
             tx_pool_free(init_pkt);
+            continue;
+        }
+
+        /*
+         * Hand the packet to Ada. Ada takes ownership of pkt (freed
+         * internally). On SEND actions, Ada returns a TX pool buffer
+         * for us to transmit.
+         */
+        void *tx_pkt = NULL;
+        uint16_t tx_len = 0;
+        wg_action_t action = wg_receive(pkt, &tx_pkt, &tx_len);
+        /* pkt is now owned by Ada — do NOT rx_pool_free(pkt) */
+
+        switch (action)
+        {
+        case WG_ACTION_SEND_RESPONSE:
+            ESP_LOGI(TAG, "<< Handshake Response (%u bytes)", tx_len);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, ((packet_buffer_t *)tx_pkt)->data,
+                                   tx_len, ESP_LOG_INFO);
+            /* fall through */
+        case WG_ACTION_SEND_TRANSPORT:
+        {
+            if (action == WG_ACTION_SEND_TRANSPORT)
+                ESP_LOGI(TAG, "<< Transport Data (%u bytes)", tx_len);
+
+            int sent = sendto(sock,
+                              ((packet_buffer_t *)tx_pkt)->data,
+                              tx_len, 0,
+                              (struct sockaddr *)&source_addr,
+                              sizeof(struct sockaddr_in));
+            if (sent < 0)
+            {
+                ESP_LOGE(TAG, "sendto failed: errno %d", errno);
+            }
+            tx_pool_free((packet_buffer_t *)tx_pkt);
             break;
         }
 
+        case WG_ACTION_NONE:
+            ESP_LOGI(TAG, "   Processed (no reply needed)");
+            break;
+
+        case WG_ACTION_ERROR:
         default:
-            ESP_LOGW(TAG, "Unknown message type: 0x%02x (%d bytes)",
+            ESP_LOGW(TAG, "   wg_receive error (type 0x%02x, %d bytes)",
                      msg_type, len);
-            rx_pool_free(pkt);
             break;
         }
     }
