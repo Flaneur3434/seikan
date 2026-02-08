@@ -142,6 +142,55 @@ def derive_transport_keys(chaining_key: bytes) -> tuple[bytes, bytes]:
     return kdf2(chaining_key, b"")
 
 
+# ── Transport data (Type 4) ─────────────────────────────────────────
+
+MSG_TYPE_TRANSPORT = 4
+TRANSPORT_HEADER_SIZE = 16
+AEAD_TAG_SIZE = 16
+
+
+def build_transport_packet(
+    key: bytes,
+    receiver_index: int,
+    counter: int,
+    plaintext: bytes,
+) -> bytes:
+    """Build a WireGuard Type 4 transport data packet.
+
+    Wire format:
+        [0]      msg_type  = 4
+        [1..3]   reserved  = 0
+        [4..7]   receiver  = LE32
+        [8..15]  counter   = LE64
+        [16..]   AEAD(plaintext) + tag (16 bytes)
+
+    The header (bytes 0..15) is used as AAD for the AEAD.
+    """
+    header = struct.pack("<BxxxIQ", MSG_TYPE_TRANSPORT, receiver_index, counter)
+    assert len(header) == TRANSPORT_HEADER_SIZE
+    ciphertext_tag = aead_encrypt(key, counter, plaintext, header)
+    return header + ciphertext_tag
+
+
+def parse_transport_packet(
+    key: bytes,
+    packet: bytes,
+) -> tuple[int, int, bytes]:
+    """Parse and decrypt a WireGuard Type 4 transport data packet.
+
+    Returns (receiver_index, counter, plaintext).
+    Raises on authentication failure.
+    """
+    assert len(packet) > TRANSPORT_HEADER_SIZE + AEAD_TAG_SIZE
+    assert packet[0] == MSG_TYPE_TRANSPORT
+
+    header = packet[:TRANSPORT_HEADER_SIZE]
+    _, receiver_index, counter = struct.unpack("<BxxxIQ", header)
+    ciphertext_tag = packet[TRANSPORT_HEADER_SIZE:]
+    plaintext = aead_decrypt(key, counter, ciphertext_tag, header)
+    return receiver_index, counter, plaintext
+
+
 # ── WireGuard peer ───────────────────────────────────────────────────
 
 class WireGuardPeer:
