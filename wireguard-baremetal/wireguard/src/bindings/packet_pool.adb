@@ -8,9 +8,9 @@ is
    --  TX Pool
    ---------------------------------------------------------------------------
 
-   procedure C_TX_Pool_Init is
+   procedure C_TX_Pool_Init (Sem : not null Threads.Mutex.Semaphore_Ref) is
    begin
-      Messages.TX_Pool.Initialize;
+      Messages.TX_Pool.Initialize (Sem);
    end C_TX_Pool_Init;
 
    function C_TX_Pool_Allocate return System.Address is
@@ -27,9 +27,9 @@ is
    --  RX Pool
    ---------------------------------------------------------------------------
 
-   procedure C_RX_Pool_Init is
+   procedure C_RX_Pool_Init (Sem : not null Threads.Mutex.Semaphore_Ref) is
    begin
-      Messages.RX_Pool.Initialize;
+      Messages.RX_Pool.Initialize (Sem);
    end C_RX_Pool_Init;
 
    function C_RX_Pool_Allocate return System.Address is

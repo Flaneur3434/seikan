@@ -77,9 +77,8 @@ is
          return C_False;
       end if;
 
-      --  Initialize packet pools
-      Messages.TX_Pool.Initialize;
-      Messages.RX_Pool.Initialize;
+      --  Packet pools are initialized from C (packet_pool_init) with
+      --  statically-allocated semaphore handles before wg_init is called.
 
       --  Reset protocol state
       HS_State := Handshake.Empty_Handshake;
