@@ -92,8 +92,9 @@ static void wg_task_fn(void *pvParameters)
             /* fall through */
         case WG_ACTION_SEND_TRANSPORT:
         {
-            if (action == WG_ACTION_SEND_TRANSPORT)
+            if (action == WG_ACTION_SEND_TRANSPORT) {
                 ESP_LOGI(TAG, "<< Transport Data (%u bytes)", tx_len);
+            }
 
             wg_tx_msg_t tx_msg = {
                 .tx_buf = (packet_buffer_t *)tx_pkt,
