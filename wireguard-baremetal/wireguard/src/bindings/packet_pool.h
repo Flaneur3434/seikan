@@ -14,10 +14,13 @@
  *   packet_buffer_t contains both an index (for O(1) free) and the data.
  *   C code receives pointer to the whole struct, uses ->data for packet I/O.
  *   Both allocate and free are O(1) operations.
+ *
+ * THREAD SAFETY:
+ *   Each pool has its own statically-allocated binary semaphore.
+ *   Call packet_pool_init() once at startup to create semaphores and
+ *   initialize both pools.  After that, allocate/free are thread-safe.
  */
-
-#ifndef PACKET_POOL_H
-#define PACKET_POOL_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -44,17 +47,29 @@ typedef struct {
 } packet_buffer_t;
 
 /* -----------------------------------------------------------------------
+ * System Init - Creates semaphores and initializes both pools
+ * ----------------------------------------------------------------------- */
+
+/**
+ * Initialize both RX and TX pools with statically-allocated semaphores.
+ * Must be called once at startup, before any allocate/free or wg_init().
+ */
+void packet_pool_init(void);
+
+/* -----------------------------------------------------------------------
  * TX Pool - Outgoing packets (handshake initiation, response, data)
  * ----------------------------------------------------------------------- */
 
 /**
- * Initialize the TX packet pool.
- * Must be called before any other tx_pool functions.
+ * Initialize the TX packet pool with a pre-created semaphore.
+ * Called by packet_pool_init(); not normally called directly.
+ *
+ * @param sem_handle  Opaque semaphore handle (SemaphoreHandle_t).
  */
-void tx_pool_init(void);
+void tx_pool_init(void *sem_handle);
 
 /**
- * Allocate a buffer from the TX pool. O(1) operation.
+ * Allocate a buffer from the TX pool. O(1), thread-safe.
  *
  * @return Pointer to packet_buffer_t, or NULL if pool exhausted.
  *         Caller receives ownership - must call tx_pool_free() when done.
@@ -62,7 +77,7 @@ void tx_pool_init(void);
 packet_buffer_t* tx_pool_allocate(void);
 
 /**
- * Free a buffer back to the TX pool. O(1) operation.
+ * Free a buffer back to the TX pool. O(1), thread-safe.
  *
  * @param buf Pointer obtained from tx_pool_allocate().
  *            Safe to call with NULL (no-op).
@@ -74,13 +89,15 @@ void tx_pool_free(packet_buffer_t* buf);
  * ----------------------------------------------------------------------- */
 
 /**
- * Initialize the RX packet pool.
- * Must be called before any other rx_pool functions.
+ * Initialize the RX packet pool with a pre-created semaphore.
+ * Called by packet_pool_init(); not normally called directly.
+ *
+ * @param sem_handle  Opaque semaphore handle (SemaphoreHandle_t).
  */
-void rx_pool_init(void);
+void rx_pool_init(void *sem_handle);
 
 /**
- * Allocate a buffer from the RX pool. O(1) operation.
+ * Allocate a buffer from the RX pool. O(1), thread-safe.
  *
  * @return Pointer to packet_buffer_t, or NULL if pool exhausted.
  *         Caller receives ownership - must call rx_pool_free() when done.
@@ -88,7 +105,7 @@ void rx_pool_init(void);
 packet_buffer_t* rx_pool_allocate(void);
 
 /**
- * Free a buffer back to the RX pool. O(1) operation.
+ * Free a buffer back to the RX pool. O(1), thread-safe.
  *
  * @param buf Pointer obtained from rx_pool_allocate().
  *            Safe to call with NULL (no-op).
@@ -112,5 +129,3 @@ size_t packet_pool_get_pool_size(void);
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* PACKET_POOL_H */

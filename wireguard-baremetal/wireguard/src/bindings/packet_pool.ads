@@ -5,6 +5,7 @@
 with System;
 with Interfaces.C;
 with Messages;
+with Threads.Mutex;
 
 package Packet_Pool
    with SPARK_Mode => On
@@ -19,7 +20,7 @@ is
    --  TX Pool C FFI
    ---------------------------------------------------------------------------
 
-   procedure C_TX_Pool_Init
+   procedure C_TX_Pool_Init (Sem : not null Threads.Mutex.Semaphore_Ref)
      with Export,
           Convention    => C,
           External_Name => "tx_pool_init",
@@ -41,7 +42,7 @@ is
    --  RX Pool C FFI
    ---------------------------------------------------------------------------
 
-   procedure C_RX_Pool_Init
+   procedure C_RX_Pool_Init (Sem : not null Threads.Mutex.Semaphore_Ref)
      with Export,
           Convention    => C,
           External_Name => "rx_pool_init",
