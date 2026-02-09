@@ -1,0 +1,64 @@
+--  Threads library - Platform-independent threading primitives
+--
+--  Public Interfaces:
+--    Threads.Mutex  - Mutual exclusion (mutex create/lock/unlock)
+--
+--  Backends:
+--    esp_idf  - FreeRTOS xSemaphoreCreateMutex / Take / Give
+--    host     - POSIX pthread_mutex_init / lock / unlock
+--
+--  Note: The FreeRTOS C wrapper (wg_mutex.c) is compiled by ESP-IDF's
+--  CMake build system, not by gprbuild, because it needs FreeRTOS headers.
+
+with "config/wireguard_config.gpr";
+
+library project Threads is
+
+   --  Platform selection
+   type Platform_Type is ("esp_idf", "host");
+   Platform : Platform_Type := external ("PLATFORM", "esp_idf");
+
+   for Languages use ("Ada");
+   for Library_Name use "WgThreads";
+
+   case Platform is
+      when "esp_idf" =>
+         for Target use "riscv64-elf";
+         for Runtime ("Ada") use "light-rv32imac";
+      when "host" =>
+         null;
+   end case;
+
+   --  Common sources
+   Threads_Common := (
+      "src/threads/",
+      "src/threads/interfaces/",
+      "src/threads/implementation/"
+   );
+
+   --  Platform-specific Ada sources
+   --  Note: esp_idf/wg_mutex.c is built by ESP-IDF CMake, not here
+   case Platform is
+      when "esp_idf" =>
+         for Source_Dirs use
+           Threads_Common & ("src/threads/platform/esp_idf/");
+      when "host" =>
+         for Source_Dirs use
+           Threads_Common & ("src/threads/platform/host/");
+   end case;
+
+   for Object_Dir use "obj/" & Platform & "/threads";
+   for Library_Dir use "lib";
+   for Create_Missing_Dirs use "True";
+
+   type Library_Type_Type is ("relocatable", "static", "static-pic");
+   Library_Type : Library_Type_Type :=
+     external ("LIBRARY_TYPE", "static");
+   for Library_Kind use Library_Type;
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        Wireguard_Config.Ada_Compiler_Switches;
+   end Compiler;
+
+end Threads;
