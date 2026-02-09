@@ -2,16 +2,13 @@
     "configurations": [
         {
             "name": "ESP-IDF",
-            "compilerPath": "${config:idf.toolsPath}undefined",
-            "compileCommands": "${config:idf.buildPath}/compile_commands.json",
+            "compileCommands": "${workspaceFolder}/wireguard-baremetal/build/compile_commands.json",
             "includePath": [
-                "${config:idf.espIdfPath}/components/**",
-                "${config:idf.espIdfPathWin}/components/**",
+                "/opt/esp-idf/components/**",
                 "${workspaceFolder}/wireguard-baremetal/platform/main",
                 "${workspaceFolder}/wireguard-baremetal/platform/common/include",
                 "${workspaceFolder}/wireguard-baremetal/platform/cortex_m/include",
-                "${workspaceFolder}/wireguard-baremetal/build/config",
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/wireguard-baremetal/build/config"
             ],
             "defines": [
                 "ESP_PLATFORM",
@@ -22,8 +19,7 @@
             "intelliSenseMode": "linux-gcc-x64",
             "browse": {
                 "path": [
-                    "${config:idf.espIdfPath}/components",
-                    "${config:idf.espIdfPathWin}/components",
+                    "/opt/esp-idf/components",
                     "${workspaceFolder}/wireguard-baremetal"
                 ],
                 "limitSymbolsToIncludedHeaders": true
