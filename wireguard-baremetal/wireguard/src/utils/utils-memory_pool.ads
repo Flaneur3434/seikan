@@ -1,4 +1,5 @@
 with System;
+with Threads.Mutex;
 
 generic
    Packet_Size : Positive;
@@ -46,10 +47,9 @@ is
    ---------------------------------------------------------------------------
    --  Thread Safety
    --
-   --  This pool is NOT thread-safe by default. For concurrent access:
-   --    1. Wrap calls in a protected type, OR
-   --    2. Use OS-level locking (mutex), OR
-   --    3. Disable interrupts during pool operations (baremetal)
+   --  All pool operations (Allocate, Free, C_Allocate, C_Free) are
+   --  protected by a binary semaphore. The semaphore handle must be
+   --  provided to Initialize before any pool operation is called.
    --
    --  The ghost state Borrow_State tracks active borrows for SPARK proof
    --  but does NOT provide runtime synchronization.
@@ -123,10 +123,11 @@ is
    --  Pool Operations
    ---------------------------------------------------------------------------
 
-   procedure Initialize
+   procedure Initialize (Sem : not null Threads.Mutex.Semaphore_Ref)
      with Global => (Output => (Pool_State, Borrow_State)),
           Post   => Free_Count = Pool_Size;
-   --  Initialize the pool. All buffers become available.
+   --  Initialize the pool with a pre-created lock handle.
+   --  Sem must be a valid OS semaphore (SemaphoreHandle_t / pthread_mutex_t*).
 
    procedure Allocate (Handle : out Buffer_Handle)
      with Global => (In_Out => (Pool_State, Borrow_State)),

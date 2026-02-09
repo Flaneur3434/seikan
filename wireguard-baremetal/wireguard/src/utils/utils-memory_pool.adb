@@ -18,6 +18,9 @@ is
    Free_Top     : Integer := -1;  --  -1 means empty
    Borrow_Flags : array (Pool_Index) of Boolean := (others => False);
 
+   --  Mutex protecting Free_Stack / Free_Top (cross-thread Allocate/Free)
+   Pool_Lock : Threads.Mutex.Mutex_Handle;
+
    ---------------------------------------------------------------------------
    --  Ghost Function Bodies
    ---------------------------------------------------------------------------
@@ -36,7 +39,7 @@ is
    --  Pool Operations
    ---------------------------------------------------------------------------
 
-   procedure Initialize is
+   procedure Initialize (Sem : not null Threads.Mutex.Semaphore_Ref) is
    begin
       for I in Pool_Index loop
          Buffers (I).Index := Null_Index;  --  Mark as not allocated
@@ -47,13 +50,19 @@ is
          Borrow_Flags (I) := False;
       end loop;
       Free_Top := Pool_Size - 1;
+
+      --  Store the pre-created lock handle from C
+      Threads.Mutex.Init_From_Handle (Pool_Lock, Sem);
    end Initialize;
 
    procedure Allocate (Handle : out Buffer_Handle) is
       Idx : Pool_Index;
    begin
+      Threads.Mutex.Lock (Pool_Lock);
+
       if Free_Top < 0 then
          Handle.Ptr := null;
+         Threads.Mutex.Unlock (Pool_Lock);
          return;
       end if;
 
@@ -63,11 +72,15 @@ is
       Buffers (Idx).Len := 0;
       Buffers (Idx).Offset := 0;
       Handle.Ptr := Buffers (Idx)'Access;
+
+      Threads.Mutex.Unlock (Pool_Lock);
    end Allocate;
 
    procedure Free (Handle : in out Buffer_Handle) is
       Idx : Pool_Index;
    begin
+      Threads.Mutex.Lock (Pool_Lock);
+
       --  O(1) lookup via stored index
       Idx := Pool_Index (Handle.Ptr.Index);
 
@@ -80,6 +93,8 @@ is
 
       Free_Top := Free_Top + 1;
       Free_Stack (Free_Top) := Idx;
+
+      Threads.Mutex.Unlock (Pool_Lock);
    end Free;
 
    ---------------------------------------------------------------------------
@@ -141,9 +156,13 @@ is
    ---------------------------------------------------------------------------
 
    function C_Allocate return System.Address is
-      Idx : Pool_Index;
+      Idx  : Pool_Index;
+      Addr : System.Address;
    begin
+      Threads.Mutex.Lock (Pool_Lock);
+
       if Free_Top < 0 then
+         Threads.Mutex.Unlock (Pool_Lock);
          return Null_Address;
       end if;
 
@@ -152,7 +171,11 @@ is
       Buffers (Idx).Index := Buffer_Index (Idx);
       Buffers (Idx).Len := 0;
       Buffers (Idx).Offset := 0;
-      return Buffers (Idx)'Address;  --  Return Buffer record address
+      Addr := Buffers (Idx)'Address;
+
+      Threads.Mutex.Unlock (Pool_Lock);
+
+      return Addr;
    end C_Allocate;
 
    procedure C_Free (Buf_Addr : System.Address) is
@@ -173,6 +196,8 @@ is
          return;
       end if;
 
+      Threads.Mutex.Lock (Pool_Lock);
+
       --  O(1) lookup via stored index
       Idx := Pool_Index (Buf.Index);
       Buf.Index := Null_Index;
@@ -182,6 +207,8 @@ is
 
       Free_Top := Free_Top + 1;
       Free_Stack (Free_Top) := Idx;
+
+      Threads.Mutex.Unlock (Pool_Lock);
    end C_Free;
 
    procedure Create_From_Address
