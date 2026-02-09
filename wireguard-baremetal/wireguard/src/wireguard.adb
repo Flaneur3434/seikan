@@ -115,7 +115,7 @@ is
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         Msg     : Messages.Message_Handshake_Initiation
+         Msg     : constant Messages.Message_Handshake_Initiation
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
          Handshake.Process_Initiation (Msg, HS_State, My_Identity, HS_Err);
