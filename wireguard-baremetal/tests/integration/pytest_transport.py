@@ -13,6 +13,7 @@ Layer 2 — ESP32 integration (requires hardware):
 import re
 import socket
 import struct
+import threading
 import time
 import pytest
 
@@ -474,44 +475,147 @@ class TestEsp32Transport:
     @pytest.mark.parametrize("payload_size", [64, 128, 224])
     def test_echo_throughput(self, dut, transport_session, esp32_addr,
                              payload_size):
-        """Measure transport echo round-trips per second.
+        """Measure pipelined transport echo throughput.
 
-        Sends N packets as fast as possible (synchronous send/recv),
-        reports packets/sec, round-trip latency, and data throughput.
+        A dedicated TX thread blasts packets for DURATION seconds.
+        The main thread collects echoes.  Each packet's plaintext
+        starts with an 8-byte send timestamp so we can measure
+        per-packet latency without synchronizing the two threads.
+
+        Reports TX/RX rates, latency (avg/p50/p99), loss, and
+        bidirectional throughput.
         """
         sock, send_key, recv_key, rx_idx = transport_session
-        num_packets = 100
-        plaintext = bytes(range(payload_size % 256)) * (payload_size // 256 + 1)
-        plaintext = plaintext[:payload_size]
 
-        # Warm-up: one round-trip to prime any caches / ARP
-        warmup = build_transport_packet(send_key, rx_idx, counter=0,
-                                        plaintext=plaintext)
-        sock.sendto(warmup, esp32_addr)
-        sock.recvfrom(512)
+        DURATION = 10.0       # seconds the TX thread runs
+        DRAIN_TIMEOUT = 3.0   # extra seconds to collect trailing echoes
+        STAMP_SIZE = 8        # bytes for send timestamp (float64)
+        PAD_SIZE = payload_size - STAMP_SIZE
+        assert PAD_SIZE >= 0, "payload_size must be >= 8 for timestamp"
 
-        # Timed loop: synchronous send → recv
-        start = time.monotonic()
-        for counter in range(1, num_packets + 1):
-            pkt = build_transport_packet(send_key, rx_idx, counter, plaintext)
-            sock.sendto(pkt, esp32_addr)
-            echo_data, _ = sock.recvfrom(512)
-        elapsed = time.monotonic() - start
+        padding = bytes(range(256)) * (PAD_SIZE // 256 + 1)
+        padding = padding[:PAD_SIZE]
 
-        # Verify the last echo is correct
-        _, _, rx_pt = parse_transport_packet(recv_key, echo_data)
-        assert rx_pt == plaintext
+        # Warm-up: one synchronous round-trip to prime ARP / caches
+        warmup_pt = struct.pack("<d", time.monotonic()) + padding
+        warmup_pkt = build_transport_packet(send_key, rx_idx, counter=0,
+                                            plaintext=warmup_pt)
+        sock.sendto(warmup_pkt, esp32_addr)
+        sock.settimeout(UDP_TIMEOUT)
+        try:
+            sock.recvfrom(512)
+        except socket.timeout:
+            pass  # non-fatal
 
-        pps = num_packets / elapsed
-        avg_rtt_ms = (elapsed / num_packets) * 1000
-        # Each round-trip = decrypt + encrypt on ESP32
-        # Data throughput = payload bytes processed in each direction
-        throughput_kbps = (payload_size * num_packets * 2 * 8) / elapsed / 1000
+        # ── Shared state between TX / RX threads ──
+        tx_result = {"sent": 0}       # written by TX thread only
+        stop_event = threading.Event()
 
-        print(f"\n{'='*60}")
-        print(f"  Transport Echo Benchmark  ({payload_size}B payload)")
-        print(f"  {num_packets} packets in {elapsed:.3f}s")
-        print(f"  {pps:.1f} echo round-trips/sec")
-        print(f"  {avg_rtt_ms:.1f} ms avg RTT (network + decrypt + encrypt)")
-        print(f"  {throughput_kbps:.1f} kbit/s bidirectional throughput")
-        print(f"{'='*60}")
+        def tx_thread_fn():
+            """Send packets at a steady rate for DURATION seconds."""
+            counter = 1  # 0 was warmup
+            sent = 0
+            deadline = time.monotonic() + DURATION
+            TX_INTERVAL = 0.001  # 10 ms between packets (~100 pkt/s)
+
+            while time.monotonic() < deadline:
+                stamp = struct.pack("<d", time.monotonic())
+                pt = stamp + padding
+                pkt = build_transport_packet(
+                    send_key, rx_idx, counter, pt,
+                )
+                try:
+                    sock.sendto(pkt, esp32_addr)
+                    sent += 1
+                    counter += 1
+                except OSError:
+                    pass  # send buffer full — skip
+
+                time.sleep(TX_INTERVAL)
+
+            tx_result["sent"] = sent
+            stop_event.set()
+
+        # ── Start TX thread, RX runs on main thread ──
+        latencies = []
+        recv_count = 0
+
+        sock.settimeout(0.1)  # short timeout so RX loop stays responsive
+        tx = threading.Thread(target=tx_thread_fn, daemon=True)
+
+        blast_start = time.monotonic()
+        tx.start()
+
+        # Collect echoes while TX is running and during drain
+        while True:
+            try:
+                echo_data, _ = sock.recvfrom(512)
+            except socket.timeout:
+                if stop_event.is_set():
+                    break
+                continue
+            except OSError:
+                if stop_event.is_set():
+                    break
+                continue
+
+            rx_time = time.monotonic()
+            try:
+                _, _, rx_pt = parse_transport_packet(recv_key, echo_data)
+                send_time = struct.unpack("<d", rx_pt[:STAMP_SIZE])[0]
+                latencies.append(rx_time - send_time)
+                recv_count += 1
+            except Exception:
+                pass  # drop malformed echoes
+
+        tx.join(timeout=2.0)
+
+        # ── Drain phase: collect remaining in-flight echoes ──
+        sock.settimeout(DRAIN_TIMEOUT)
+        while True:
+            try:
+                echo_data, _ = sock.recvfrom(512)
+            except socket.timeout:
+                break
+            rx_time = time.monotonic()
+            try:
+                _, _, rx_pt = parse_transport_packet(recv_key, echo_data)
+                send_time = struct.unpack("<d", rx_pt[:STAMP_SIZE])[0]
+                latencies.append(rx_time - send_time)
+                recv_count += 1
+            except Exception:
+                pass
+
+        blast_end = time.monotonic()
+
+        # ── Results ──
+        sent_count = tx_result["sent"]
+        elapsed = blast_end - blast_start
+        loss_pct = ((sent_count - recv_count) / sent_count * 100
+                    if sent_count > 0 else 0.0)
+
+        sorted_lat = sorted(latencies) if latencies else []
+        avg_lat_ms = (sum(sorted_lat) / len(sorted_lat) * 1000
+                      if sorted_lat else float("inf"))
+        p50 = sorted_lat[len(sorted_lat) // 2] * 1000 if sorted_lat else 0
+        p99_idx = min(int(len(sorted_lat) * 0.99), len(sorted_lat) - 1)
+        p99 = sorted_lat[p99_idx] * 1000 if sorted_lat else 0
+
+        send_pps = sent_count / elapsed if elapsed > 0 else 0
+        recv_pps = recv_count / elapsed if elapsed > 0 else 0
+        throughput_kbps = (
+            (recv_count * payload_size * 2 * 8) / elapsed / 1000
+            if elapsed > 0 else 0
+        )
+
+        print(f"\n{'='*64}")
+        print(f"  Pipelined Echo Benchmark  ({payload_size}B payload)")
+        print(f"  Duration: {elapsed:.1f}s")
+        print(f"  Sent: {sent_count}  |  Received: {recv_count}  "
+              f"|  Loss: {loss_pct:.1f}%")
+        print(f"  TX rate: {send_pps:.1f} pkt/s  |  "
+              f"RX rate: {recv_pps:.1f} pkt/s")
+        print(f"  Latency — avg: {avg_lat_ms:.1f}ms  "
+              f"p50: {p50:.1f}ms  p99: {p99:.1f}ms")
+        print(f"  Bidirectional throughput: {throughput_kbps:.1f} kbit/s")
+        print(f"{'='*64}")
