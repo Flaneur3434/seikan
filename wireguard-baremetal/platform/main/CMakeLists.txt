@@ -1,6 +1,8 @@
 idf_component_register(
-    SRCS main.c udp_server.c wifi_station.c wg_keys.c
+    SRCS main.c udp_server.c wg_task.c wifi_station.c wg_keys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/gnat_last_chance.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/wg_mutex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/packet_pool.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/BLAKE2/ref/blake2s-ref.c    INCLUDE_DIRS "."
     PRIV_REQUIRES esp_wifi nvs_flash esp_netif libsodium
 )
@@ -33,6 +35,7 @@ set(ADA_LIBS
     "${PROJECT_ROOT}/wireguard/lib/libWgTransport.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgNet.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgUtils.a"
+    "${PROJECT_ROOT}/wireguard/lib/libWgThreads.a"
 )
 
 foreach(ada_lib ${ADA_LIBS})
