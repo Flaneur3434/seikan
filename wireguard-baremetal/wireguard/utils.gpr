@@ -1,5 +1,6 @@
 --  Utils library - Base utilities, spans, ring buffers
 with "config/wireguard_config.gpr";
+with "threads.gpr";
 
 library project Utils is
 
