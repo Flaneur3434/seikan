@@ -5,7 +5,8 @@
 --  State:
 --    My_Identity, My_Peer  — loaded once in Init
 --    HS_State              — ephemeral, wiped after session derivation
---    Tx_Session            — transport session keys (valid after handshake)
+--    Session state         — managed by Session module (Keypair slots)
+--    Timer state           — managed by Session.Timer (evaluated by tick)
 
 with Interfaces;   use Interfaces;
 with Interfaces.C; use Interfaces.C;
@@ -15,7 +16,8 @@ with Crypto.KX;
 with Handshake;
 with Messages;
 with Transport;
-with Replay;
+with Session;
+with Timer.Clock;
 with WG_Keys;
 
 package body Wireguard
@@ -35,8 +37,12 @@ is
    My_Identity : Handshake.Static_Identity;
    My_Peer     : Handshake.Peer_Config;
    HS_State    : Handshake.Handshake_State := Handshake.Empty_Handshake;
-   Tx_Session  : Transport.Session := Transport.Null_Session;
    Initialized : Boolean := False;
+
+   --  Single peer — index 1 in the Session table.
+   --  When multi-peer support is added, this will be derived from the
+   --  receiver_index in the packet header.
+   Peer_Idx : constant Session.Peer_Index := 1;
 
    ---------------------------------------------------------------------------
    --  Init
@@ -82,7 +88,11 @@ is
 
       --  Reset protocol state
       HS_State := Handshake.Empty_Handshake;
-      Tx_Session := Transport.Null_Session;
+
+      --  Session table is initialized from C via wg_session_init()
+      --  which creates the binary semaphore and calls Session.Init.
+      --  That must be called before wg_init().
+
       Initialized := True;
 
       return C_True;
@@ -152,9 +162,14 @@ is
       TX_Ref.Buf_Ptr.Len := Unsigned_16 (Resp_Result.Length);
       Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
 
-      --  Responder derives transport keys immediately after Create_Response
-      --  (has all the Noise material; per WireGuard spec §5.4.4)
-      Transport.Init_Session (Tx_Session, HS_State, Sess_Status);
+      --  Responder derives transport keys AND activates the new session
+      --  atomically (single lock hold) after Create_Response.
+      --  Per WireGuard spec §5.4.4: responder has all Noise material.
+      Session.Derive_And_Activate
+        (Peer   => Peer_Idx,
+         HS     => HS_State,
+         Now    => Timer.Clock.Now,
+         Result => Sess_Status);
       if not Is_Success (Sess_Status) then
          Messages.TX_Pool.Free (TX_Handle);
          return Action_Error;
@@ -199,9 +214,14 @@ is
          return Action_Error;
       end if;
 
-      --  Initiator derives transport keys after Process_Response
-      --  HS_State.Kind = State_Established at this point
-      Transport.Init_Session (Tx_Session, HS_State, Sess_Status);
+      --  Initiator derives transport keys AND activates the new session
+      --  atomically (single lock hold) after Process_Response.
+      --  HS_State.Kind = State_Established at this point.
+      Session.Derive_And_Activate
+        (Peer   => Peer_Idx,
+         HS     => HS_State,
+         Now    => Timer.Clock.Now,
+         Result => Sess_Status);
       if not Is_Success (Sess_Status) then
          return Action_Error;
       end if;
@@ -230,14 +250,22 @@ is
       Decrypt_Result : Status;
       Replay_OK      : Boolean;
 
+      --  Session state snapshot (taken under lock)
+      KP : Session.Keypair;
+
       --  Plaintext scratch — max plaintext that fits one pool buffer:
       --  Packet_Size − header − tag = 256 − 16 − 16 = 224
       Max_PT : constant Natural :=
         Messages.Packet_Size - Header_Size - Tag_Size;
       PT_Buf : Byte_Array (0 .. Max_PT - 1);
       PT_Act : Natural := 0;   --  actual plaintext length after decrypt
+
+      --  For encrypt (echo)
+      Send_Counter : Unsigned_64;
    begin
-      if not Tx_Session.Valid then
+      Session.Get_Current (Peer_Idx, KP);
+
+      if not Session.Is_Valid (KP) then
          Messages.RX_Pool.Free (RX_Handle);
          return Action_Error;
       end if;
@@ -253,7 +281,7 @@ is
             with Import, Address => RX_Ref.Buf_Ptr.Data'Address;
          begin
             Transport.Decrypt_Packet
-              (S       => Tx_Session,
+              (Key     => Session.Receive_Key (KP),
                Packet  => Pkt,
                Length  => PT_Len,
                Counter => Counter,
@@ -262,11 +290,13 @@ is
             --  Anti-replay check: only AFTER AEAD authentication succeeds.
             --  Validates counter against sliding window (RFC 6479).
             if Is_Success (Decrypt_Result) then
-               Replay.Validate_Counter
-                 (F        => Tx_Session.Replay_Filter,
+               Session.Validate_And_Update_Replay
+                 (Peer     => Peer_Idx,
                   Counter  => Counter,
-                  Limit    => Transport.Reject_After_Messages,
                   Accepted => Replay_OK);
+               if Replay_OK then
+                  Session.Mark_Received (Peer_Idx, Timer.Clock.Now);
+               end if;
 
                if not Replay_OK then
                   Decrypt_Result := Error_Failed;
@@ -294,6 +324,10 @@ is
       end if;
 
       --  2. Allocate a TX buffer and re-encrypt the plaintext as echo
+      --     Get a fresh nonce counter from the Session module
+      Session.Increment_Send_Counter (Peer_Idx, Send_Counter);
+      Session.Get_Current (Peer_Idx, KP);
+
       declare
          TX_Handle     : Messages.Buffer_Handle;
          TX_Ref        : Messages.Buffer_Ref;
@@ -312,11 +346,13 @@ is
             with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
          begin
             Transport.Encrypt_Packet
-              (S         => Tx_Session,
-               Plaintext => PT_Buf (0 .. PT_Act - 1),
-               Packet    => Out_Pkt,
-               Length    => Enc_Len,
-               Result    => Enc_Result);
+              (Key            => Session.Send_Key (KP),
+               Receiver_Index => Session.Receiver_Index (KP),
+               Counter        => Send_Counter,
+               Plaintext      => PT_Buf (0 .. PT_Act - 1),
+               Packet         => Out_Pkt,
+               Length         => Enc_Len,
+               Result         => Enc_Result);
          end;
 
          if not Is_Success (Enc_Result) then
@@ -324,6 +360,9 @@ is
             Messages.TX_Pool.Free (TX_Handle);
             return Action_Error;
          end if;
+
+         --  Record that we sent a packet
+         Session.Mark_Sent (Peer_Idx, Timer.Clock.Now);
 
          TX_Ref.Buf_Ptr.Len := Enc_Len;
          Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);

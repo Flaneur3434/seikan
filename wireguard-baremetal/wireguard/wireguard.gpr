@@ -7,8 +7,8 @@
 --    - messages.gpr  : Wire protocol message types & buffer pools
 --    - transport.gpr : Transport data protocol (Type 4 encrypt/decrypt)
 --    - handshake.gpr : Noise IKpsk2 handshake
---    - net.gpr       : Network bindings
---    - core.gpr      : State machine
+--    - timer.gpr     : Monotonic clock
+--    - session.gpr   : Session state machine & timer
 
 with "config/wireguard_config.gpr";
 with "utils.gpr";
@@ -16,8 +16,8 @@ with "crypto.gpr";
 with "messages.gpr";
 with "transport.gpr";
 with "handshake.gpr";
-with "net.gpr";
---  with "core.gpr";       --  TODO: empty for now
+with "timer.gpr";
+with "session.gpr";
 
 library project Wireguard is
 
