@@ -11,6 +11,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Acquire lock, blocking indefinitely.
  * @param handle  Opaque lock handle (SemaphoreHandle_t on FreeRTOS,
@@ -23,3 +27,7 @@ void wg_mutex_lock(void *handle);
  * @param handle  Same handle passed to wg_mutex_lock.
  */
 void wg_mutex_unlock(void *handle);
+
+#ifdef __cplusplus
+}
+#endif
