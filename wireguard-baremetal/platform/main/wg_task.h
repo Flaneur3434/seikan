@@ -2,16 +2,17 @@
  * @file wg_task.h
  * @brief WireGuard protocol task — crypto + protocol logic thread.
  *
- * Architecture (2-thread pipeline):
+ * Architecture (3-thread pipeline):
  *
- *   IO Thread (udp_server)          WG Task (this)
- *   ─────────────────────           ──────────────
- *   recvfrom() into pool buf  ──►  wg_receive() dispatch
- *                             ◄──  TX buf + action
- *   sendto() + free TX buf         (crypto, handshake, replay)
+ *   Timer Task (pri 7)              WG Task (this, pri 6)    IO Thread (pri 5)
+ *   ─────────────────                ─────────────────────    ─────────────────
+ *   session_tick_all() ──►  drain timer queue (non-block)
+ *                           drain RX queue (blocking)
+ *   IO Thread:              wg_receive() dispatch
+ *   recvfrom() ──────────►                            ──►  sendto() + free
  *
- * The IO thread owns the memory pools (allocate/free).
- * This task only borrows buffers passed through FreeRTOS queues.
+ * The WG task drains the timer action queue non-blocking at the top
+ * of each loop iteration, then blocks on the RX queue for packets.
  */
 
 #ifndef WG_TASK_H
@@ -67,15 +68,24 @@ extern QueueHandle_t g_wg_tx_queue;
  * -------------------------------------------------------------------- */
 
 /**
- * Start the WireGuard protocol task.
+ * Initialize WireGuard subsystem resources.
  *
- * Creates the RX/TX queues, calls wg_init(), then spawns a FreeRTOS
- * task that dequeues packets, runs Ada crypto/protocol, and enqueues
- * TX results.
+ * Creates RX/TX queues (static), initializes packet pools and the
+ * Ada/SPARK session + crypto subsystem.  Does NOT spawn any tasks.
  *
- * Must be called before udp_server_task.
+ * Must be called before wg_task_start() and before any other WG API.
  *
- * @return true on success, false if wg_init() or task creation failed.
+ * @return true on success, false if wg_init() failed.
+ */
+bool wg_task_init(void);
+
+/**
+ * Spawn the WireGuard protocol task.
+ *
+ * Must be called after wg_task_init() and after all other resources
+ * (timer queue, etc.) are initialized.
+ *
+ * @return true on success, false if xTaskCreate failed.
  */
 bool wg_task_start(void);
 
