@@ -48,7 +48,7 @@ is
 
       --  Encrypt payload in-place; header is AAD, tag is appended
       Crypto.AEAD.Encrypt_In_Place
-        (Buffer        => Packet (PF .. PF + Total_Len - 1),
+        (Buffer        => Packet (PF .. PF + (Total_Len - 1)),
          Plaintext_Len => Plaintext'Length,
          Nonce         => Nonce,
          Key           => Key,
