@@ -33,6 +33,13 @@ package Transport
   with SPARK_Mode => On
 is
 
+   --  Maximum plaintext payload that fits in a transport packet:
+   --    Max_Packet_Size - Header (16) - AEAD Tag
+   Max_Payload : constant Natural :=
+     Utils.Max_Packet_Size
+     - Messages.Transport_Header_Size
+     - Crypto.AEAD.Tag_Bytes;
+
    ---------------------------------------------------------------------------
    --  Encrypt_Packet - Build and encrypt a transport data message (TX path)
    --
@@ -55,13 +62,13 @@ is
    with
      Global => null,
      Pre    =>
-       Plaintext'Length > 0
-       and then Plaintext'Length <= Utils.Max_Packet_Size
-                                     - Messages.Transport_Header_Size
-                                     - Crypto.AEAD.Tag_Bytes
-       and then Packet'Length >= Messages.Transport_Header_Size
-                                   + Plaintext'Length
-                                   + Crypto.AEAD.Tag_Bytes;
+       Packet'Length <= Utils.Max_Packet_Size --  give GNATprove a hard ceiling
+       and then Plaintext'Length in 1 .. Max_Payload --  give GNATprove a Length range
+       and then
+         --  Make sure payload can fit into packet buffer
+         Plaintext'Length
+         <= Packet'Length
+            - (Messages.Transport_Header_Size + Crypto.AEAD.Tag_Bytes);
 
    ---------------------------------------------------------------------------
    --  Decrypt_Packet - Authenticate and decrypt a transport data message
