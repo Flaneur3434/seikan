@@ -202,6 +202,25 @@ is
    --  If valid, updates the filter to include this counter value.
 
    ---------------------------------------------------------------------------
+   --  Timer-driven session management
+   --
+   --  Called by the WG task in response to timer events.
+   --  Thread-safe: acquire the session mutex internally.
+   ---------------------------------------------------------------------------
+
+   procedure Expire_Session (Peer : Peer_Index)
+   with Pre  => Is_Mtx_Initialized and then not Is_Mtx_Locked,
+        Post => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+   --  Wipe all three keypair slots for a peer.
+   --  Called on Session_Expired and Rekey_Timed_Out.
+
+   procedure Set_Rekey_Flag
+     (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
+   with Pre  => Is_Mtx_Initialized and then not Is_Mtx_Locked,
+        Post => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+   --  Mark rekey in progress before sending initiation.
+
+   ---------------------------------------------------------------------------
    --  Private — visible to child packages (Session.Timers)
    --
    --  State lives here (not in the body) so Session.Timers can read
@@ -307,8 +326,8 @@ private
    --  Caller holds lock.
 
    procedure Activate_Next (Peer : Peer_Index)
-   with Global => (In_Out => Peers), 
-     Post => not Peers (Peer).Next.Valid;
+   with Global => (In_Out => Peers),
+        Post   => not Peers (Peer).Next.Valid;
    --  Promote Next → Current, Current → Previous, Previous → wiped.
    --  Post guarantees: Next slot is always cleared after rotation.
    --  If Next was invalid on entry, this is a no-op (still not Valid).
