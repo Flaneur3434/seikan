@@ -5,6 +5,7 @@
 #include <nvs_flash.h>
 
 #include "wg_task.h"
+#include "wg_session_timer.h"
 #include "udp_server.h"
 #include "wifi_station.h"
 
@@ -36,9 +37,22 @@ void app_main(void)
     wifi_init_sta();
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
 
-    /* Start WG protocol task first (creates queues, calls wg_init) */
+    /* WG subsystem: queues, packet pools, session mutex, Ada init */
+    if (!wg_task_init()) {
+        ESP_LOGE(TAG, "WG init failed");
+        return;
+    }
+
+    /* Timer queue (static, always succeeds) */
+    wg_session_timer_init();
+
+    if (!wg_session_timer_start()) {
+        ESP_LOGE(TAG, "Session timer task failed to start");
+        return;
+    }
+
     if (!wg_task_start()) {
-        ESP_LOGE(TAG, "WG task failed to start");
+        ESP_LOGE(TAG, "WG protocol task failed to start");
         return;
     }
 
