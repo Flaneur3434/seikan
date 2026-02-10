@@ -1,10 +1,12 @@
 idf_component_register(
-    SRCS main.c udp_server.c wg_task.c wifi_station.c wg_keys.c
+    SRCS main.c udp_server.c wg_task.c wg_session_timer.c wifi_station.c wg_keys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/gnat_last_chance.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/wg_mutex.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/packet_pool.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/BLAKE2/ref/blake2s-ref.c    INCLUDE_DIRS "."
-    PRIV_REQUIRES esp_wifi nvs_flash esp_netif libsodium
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/wg_mutex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/wg_sessions.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/BLAKE2/ref/blake2s-ref.c
+    INCLUDE_DIRS "."
+    PRIV_REQUIRES esp_wifi nvs_flash esp_netif libsodium esp_timer
 )
 
 # ============================================================================
@@ -36,6 +38,8 @@ set(ADA_LIBS
     "${PROJECT_ROOT}/wireguard/lib/libWgNet.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgUtils.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgThreads.a"
+    "${PROJECT_ROOT}/wireguard/lib/libWgSession.a"
+    "${PROJECT_ROOT}/wireguard/lib/libWgTimer.a"
 )
 
 foreach(ada_lib ${ADA_LIBS})
@@ -72,3 +76,4 @@ target_link_libraries(${COMPONENT_LIB} PRIVATE
 
 # Force linker to include Ada runtime symbols
 target_link_libraries(${COMPONENT_LIB} PRIVATE "-Wl,-u,__gnat_last_chance_handler")
+target_link_libraries(${COMPONENT_LIB} PRIVATE "-Wl,-u,system__assertions__raise_assert_failure")
