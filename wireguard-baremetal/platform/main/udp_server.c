@@ -50,8 +50,8 @@ static void send_pending_tx(int sock)
     while (xQueueReceive(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
     {
         ESP_LOGI(TAG, "<< Sending %u bytes", tx_msg.tx_len);
-        // ESP_LOG_BUFFER_HEXDUMP(TAG, tx_msg.tx_buf->data,
-        //                        tx_msg.tx_len, ESP_LOG_DEBUG);
+        ESP_LOG_BUFFER_HEXDUMP(TAG, tx_msg.tx_buf->data,
+                               tx_msg.tx_len, ESP_LOG_INFO);
 
         int sent = sendto(sock,
                           tx_msg.tx_buf->data,
@@ -155,6 +155,7 @@ void udp_server_task(void *pvParameters)
         }
 
         ESP_LOGI(TAG, "Received %d bytes from %s", len, addr_str);
+        ESP_LOG_BUFFER_HEXDUMP(TAG, pkt->data, len, ESP_LOG_INFO);
 
         /* Fill in length, then hand off to the WG protocol task */
         pkt->len = (uint16_t)len;
