@@ -16,6 +16,6 @@ is
    --  Return monotonic seconds since boot.
    function Clock_Now return Timer.Clock.Timestamp
      with Import, Convention => C,
-          External_Name => "wg_clock_now";
+          External_Name => "esp_timer_get_time";
 
 end Timer.Platform;
