@@ -1,19 +1,21 @@
 --  Transport - WireGuard Transport Data Protocol (Type 4 Messages)
 --
---  Handles encryption and decryption of data packets after a session
---  has been established by the Noise IKpsk2 handshake.
+--  Stateless encryption/decryption of data packets using session keys
+--  established by the Noise IKpsk2 handshake.
+--
+--  Session state (keys, counters, replay) is managed by the Session
+--  module.  Transport is a pure crypto module — no mutable state.
 --
 --  TX Path (encrypt):
---    1. Caller provides plaintext IP packet
+--    1. Caller provides plaintext, key, receiver index, and nonce counter
 --    2. Build transport header (type=4, receiver index, counter)
 --    3. Encrypt payload in-place with ChaCha20-Poly1305
---    4. Increment nonce counter
+--    4. Return the complete packet
 --
 --  RX Path (decrypt):
 --    1. Parse transport header, extract receiver index + counter
---    2. Validate counter (anti-replay window)
---    3. Decrypt payload in-place with ChaCha20-Poly1305
---    4. Return plaintext IP packet
+--    2. Decrypt payload in-place with ChaCha20-Poly1305
+--    3. Return plaintext length and counter (caller does replay check)
 --
 --  Wire format (from Messages_Wire.Message_Transport_Header):
 --    [0]      msg_type  = 4
@@ -25,120 +27,55 @@
 with Interfaces; use Interfaces;
 with Utils;      use Utils;
 with Crypto.AEAD;
-with Handshake;
 with Messages;
-with Replay;
 
 package Transport
   with SPARK_Mode => On
 is
-   use type Handshake.Handshake_State_Kind;
 
    ---------------------------------------------------------------------------
-   --  Anti-Replay Constants
+   --  Encrypt_Packet - Build and encrypt a transport data message (TX path)
    --
-   --  From the WireGuard whitepaper: reject after 2^64 - 2^13 - 1 messages.
-   ---------------------------------------------------------------------------
-
-   Reject_After_Messages : constant Unsigned_64 :=
-     Unsigned_64'Last - 2**13;
-
-   ---------------------------------------------------------------------------
-   --  Session Key Material
-   --
-   --  Derived from the handshake: two symmetric keys (one for each
-   --  direction) plus the receiver index assigned by the peer.
-   ---------------------------------------------------------------------------
-
-   subtype Session_Key is Crypto.AEAD.Key_Buffer;
-
-   type Session is record
-      Send_Key       : Session_Key;
-      Receive_Key    : Session_Key;
-      Sender_Index   : Unsigned_32;
-      Receiver_Index : Unsigned_32;
-      Send_Counter   : Unsigned_64;
-      Replay_Filter  : Replay.Filter;
-      Valid          : Boolean;
-   end record;
-
-   Null_Session : constant Session :=
-     (Send_Key       => (others => 0),
-      Receive_Key    => (others => 0),
-      Sender_Index   => 0,
-      Receiver_Index => 0,
-      Send_Counter   => 0,
-      Replay_Filter  => Replay.Empty_Filter,
-      Valid          => False);
-
-   ---------------------------------------------------------------------------
-   --  Init_Session - Derive transport keys from handshake chaining key
-   --
-   --  Called after a successful handshake to derive the symmetric session
-   --  keys for transport data encryption/decryption.  Securely wipes all
-   --  ephemeral handshake material (forward secrecy).
-   --
-   --  From the WireGuard whitepaper:
-   --    (T_send, T_recv) := KDF2(C, "")
-   --    Epriv_i = Epub_i = Epriv_r = Epub_r = C_i = C_r := ε
-   --
-   --  The initiator sends on τ1 and receives on τ2;
-   --  the responder sends on τ2 and receives on τ1.
-   ---------------------------------------------------------------------------
-
-   procedure Init_Session
-     (S              : out Session;
-      HS             : in out Handshake.Handshake_State;
-      Result         : out Status)
-   with
-     SPARK_Mode => Off,
-     Pre  => HS.Kind = Handshake.State_Established
-             or else HS.Kind = Handshake.State_Responder_Sent;
-
-   ---------------------------------------------------------------------------
-   --  Encrypt - Build and encrypt a transport data message (TX path)
-   --
-   --  Writes the transport header + encrypted payload into the TX buffer.
-   --  Increments the session nonce counter on success.
+   --  Writes the transport header + encrypted payload into the output
+   --  buffer.  Purely functional — does not modify any session state.
+   --  The caller is responsible for incrementing the nonce counter.
    --
    --  Buffer must be large enough for:
    --    Header (16) + Plaintext'Length + AEAD Tag
    ---------------------------------------------------------------------------
 
    procedure Encrypt_Packet
-     (S         : in out Session;
-      Plaintext : Byte_Array;
-      Packet    : out Byte_Array;
-      Length    : out Unsigned_16;
-      Result    : out Status)
+     (Key            : Crypto.AEAD.Key_Buffer;
+      Receiver_Index : Unsigned_32;
+      Counter        : Unsigned_64;
+      Plaintext      : Byte_Array;
+      Packet         : out Byte_Array;
+      Length         : out Unsigned_16;
+      Result         : out Status)
    with
      Global => null,
      Pre    =>
-       S.Valid
-       and then Plaintext'Length > 0
+       Plaintext'Length > 0
        and then Plaintext'Length <= Utils.Max_Packet_Size
                                      - Messages.Transport_Header_Size
                                      - Crypto.AEAD.Tag_Bytes
        and then Packet'Length >= Messages.Transport_Header_Size
                                    + Plaintext'Length
-                                   + Crypto.AEAD.Tag_Bytes,
-     Post   =>
-       (if Result = Success then
-          S.Send_Counter = S.Send_Counter'Old + 1);
+                                   + Crypto.AEAD.Tag_Bytes;
 
    ---------------------------------------------------------------------------
-   --  Decrypt - Authenticate and decrypt a transport data message (RX path)
+   --  Decrypt_Packet - Authenticate and decrypt a transport data message
    --
    --  Decrypts the payload in-place within Packet.  On success the
    --  plaintext occupies:
    --    Packet (Packet'First + Header .. Packet'First + Header + Length - 1)
    --
-   --  Does NOT do replay-window checking here; that belongs in the
-   --  session state machine.
+   --  Returns the counter from the packet header for the caller to
+   --  validate against the replay window.
    ---------------------------------------------------------------------------
 
    procedure Decrypt_Packet
-     (S       : Session;
+     (Key     : Crypto.AEAD.Key_Buffer;
       Packet  : in out Byte_Array;
       Length  : out Unsigned_16;
       Counter : out Unsigned_64;
@@ -146,8 +83,7 @@ is
    with
      Global => null,
      Pre    =>
-       S.Valid
-       and then Packet'Length <= Utils.Max_Packet_Size
+       Packet'Length <= Utils.Max_Packet_Size
        and then Packet'Length > Messages.Transport_Header_Size
                                   + Crypto.AEAD.Tag_Bytes;
 
