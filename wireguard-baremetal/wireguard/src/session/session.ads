@@ -58,11 +58,11 @@ is
 
    --  WireGuard protocol timing constants (seconds)
    --  From whitepaper §6.1–6.4
-   Rekey_After_Time   : constant Unsigned_64 := 120;
-   Reject_After_Time  : constant Unsigned_64 := 180;
-   Rekey_Attempt_Time : constant Unsigned_64 := 90;
-   Rekey_Timeout      : constant Unsigned_64 := 5;
-   Keepalive_Timeout  : constant Unsigned_64 := 10;
+   Rekey_After_Time_S   : constant Unsigned_64 := 120;
+   Reject_After_Time_S  : constant Unsigned_64 := 180;
+   Rekey_Attempt_Time_S : constant Unsigned_64 := 90;
+   Rekey_Timeout_S      : constant Unsigned_64 := 5;
+   Keepalive_Timeout_S  : constant Unsigned_64 := 10;
 
    ---------------------------------------------------------------------------
    --  Peer Index — Direct-mapped array index (1..Max_Peers)

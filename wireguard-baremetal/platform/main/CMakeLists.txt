@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS main.c udp_server.c wg_task.c wg_session_timer.c wifi_station.c wg_keys.c
+    SRCS main.c udp_server.c wg_task.c wg_session_timer.c wg_clock.c wifi_station.c wg_keys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/gnat_last_chance.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/packet_pool.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/wg_mutex.c

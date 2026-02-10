@@ -14,12 +14,12 @@
 
 #include "wg_session_timer.h"
 #include "wg_sessions.h"
+#include "wg_clock.h"
 
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
-#include <esp_timer.h>
 
 static const char *TAG = "wg_timer";
 
@@ -54,7 +54,7 @@ static void session_timer_task(void *pvParameters)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
 
-        uint64_t now = esp_timer_get_time();
+        uint64_t now = wg_clock_now();
 
         /* Ada evaluates all peer timers under session mutex */
         session_tick_all(now, actions);

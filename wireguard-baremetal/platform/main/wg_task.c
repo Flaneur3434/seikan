@@ -14,13 +14,13 @@
 #include "wg_task.h"
 #include "wg_session_timer.h"
 #include "wg_sessions.h"
+#include "wg_clock.h"
 
 #include <string.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
-#include <esp_timer.h>
 
 
 static const char *TAG = "wg_task";
@@ -71,7 +71,7 @@ static void wg_task(void *pvParameters)
             if (a->initiate_rekey)
             {
                 ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
-                uint64_t now = esp_timer_get_time();
+                uint64_t now = wg_clock_now();
 
                 uint16_t init_len = 0;
                 packet_buffer_t *init_pkt =
