@@ -4,19 +4,17 @@
 --  This is a simple binding — the C function returns seconds directly.
 
 with Interfaces.C;
+with Ada.Real_Time; use Ada.Real_Time;
 
 package body Timer.Platform
   with SPARK_Mode => Off
 is
 
-   --  C helper: returns CLOCK_MONOTONIC seconds as uint64_t
-   function C_Clock_Now return Timer.Clock.Timestamp
-     with Import, Convention => C,
-          External_Name => "wg_clock_now";
-
    function Clock_Now return Timer.Clock.Timestamp is
+      Elapsed : constant Time_Span := Ada.Real_Time.Clock - Boot_Time;
    begin
-      return C_Clock_Now;
+      --  Convert to microseconds
+      return Timer.Clock.Timestamp (To_Duration (Elapsed) * 1_000_000.0);
    end Clock_Now;
 
 end Timer.Platform;
