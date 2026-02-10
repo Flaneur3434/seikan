@@ -40,6 +40,32 @@ QueueHandle_t g_wg_rx_queue = NULL;
 QueueHandle_t g_wg_tx_queue = NULL;
 
 /* -----------------------------------------------------------------------
+ * Peer endpoint table — remember the last known address for each peer
+ * so timer-initiated sends (rekey, keepalive) have a destination.
+ *
+ * Updated on every RX packet.  Single-peer today (index 0 = peer 1).
+ * ----------------------------------------------------------------------- */
+#define WG_MAX_PEERS 2
+static struct sockaddr_in s_peer_endpoints[WG_MAX_PEERS];
+
+static void update_peer_endpoint(unsigned int peer,
+                                 const struct sockaddr_in *addr)
+{
+    if (peer >= 1 && peer <= WG_MAX_PEERS) {
+        s_peer_endpoints[peer - 1] = *addr;
+    }
+}
+
+static struct sockaddr_in get_peer_endpoint(unsigned int peer)
+{
+    if (peer >= 1 && peer <= WG_MAX_PEERS) {
+        return s_peer_endpoints[peer - 1];
+    }
+    struct sockaddr_in empty = {0};
+    return empty;
+}
+
+/* -----------------------------------------------------------------------
  * Protocol task main loop
  * ----------------------------------------------------------------------- */
 
@@ -82,7 +108,7 @@ static void wg_task(void *pvParameters)
                     wg_tx_msg_t tx_msg = {
                         .tx_buf = init_pkt,
                         .tx_len = init_len,
-                        .peer   = {0},  /* filled by IO from known endpoint */
+                        .peer   = get_peer_endpoint(peer),
                     };
                     if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
                     {
@@ -122,6 +148,12 @@ static void wg_task(void *pvParameters)
 
         packet_buffer_t *rx_buf = rx_msg.rx_buf;
         uint8_t msg_type = rx_buf->data[0];
+
+        /* Endpoint update is deferred until AFTER crypto verification.
+         * Per WireGuard §6.5: only update a peer's endpoint from the
+         * outer UDP source address of a cryptographically authenticated
+         * packet.  This prevents an attacker from redirecting traffic
+         * by sending spoofed packets from a different address. */
 
         /* ── Test-only: trigger ESP32-initiated handshake ── */
         if (msg_type == 0xFF)
@@ -170,6 +202,10 @@ static void wg_task(void *pvParameters)
                 ESP_LOGI(TAG, "<< Transport Data (%u bytes)", tx_len);
             }
 
+            /* §6.5: crypto succeeded — safe to learn this peer's
+             * outer UDP address for timer-initiated sends. */
+            update_peer_endpoint(1, &rx_msg.peer);
+
             wg_tx_msg_t tx_msg = {
                 .tx_buf = (packet_buffer_t *)tx_pkt,
                 .tx_len = tx_len,
@@ -180,6 +216,8 @@ static void wg_task(void *pvParameters)
         }
 
         case WG_ACTION_NONE:
+            /* Handshake response processed — crypto verified, update endpoint */
+            update_peer_endpoint(1, &rx_msg.peer);
             ESP_LOGD(TAG, "   Processed (no reply needed)");
             break;
 
