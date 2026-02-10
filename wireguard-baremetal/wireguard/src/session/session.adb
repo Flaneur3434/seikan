@@ -235,15 +235,15 @@ is
    end Increment_Send_Counter;
 
    ---------------------------------------------------------------------------
-   --  Session invalidation
+   --  Timer-driven session management
    ---------------------------------------------------------------------------
 
    procedure Expire_Session (Peer : Peer_Index)
-   with Pre  => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx),
-        Post => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx)
-                and then not Peers (Peer).Current.Valid
-                and then not Peers (Peer).Previous.Valid
-                and then not Peers (Peer).Next.Valid
+   with Refined_Post => Is_Mtx_Initialized
+                        and then not Threads.Mutex.Is_Locked (Mtx)
+                        and then not Peers (Peer).Current.Valid
+                        and then not Peers (Peer).Previous.Valid
+                        and then not Peers (Peer).Next.Valid
    is
    begin
       Lock;
@@ -259,25 +259,17 @@ is
       Peers (Peer).Current  := Null_Keypair;
       Peers (Peer).Previous := Null_Keypair;
       Peers (Peer).Next     := Null_Keypair;
+
+      --  Clear rekey state so the peer isn't stuck with
+      --  Rekey_Attempted = True after expiry.
+      Peers (Peer).Rekey_Attempted     := False;
+      Peers (Peer).Rekey_Attempt_Start := Timer.Clock.Never;
+
       Unlock;
    end Expire_Session;
 
-   procedure Clear_Rekey_Flag (Peer : Peer_Index)
-   with Pre  => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx),
-        Post => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx)
-   is
-   begin
-      Lock;
-      Peers (Peer).Rekey_Attempted     := False;
-      Peers (Peer).Rekey_Attempt_Start := Timer.Clock.Never;
-      Unlock;
-   end Clear_Rekey_Flag;
-
    procedure Set_Rekey_Flag
-     (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
-   with Pre  => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx),
-        Post => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx)
-   is
+     (Peer : Peer_Index; Now : Timer.Clock.Timestamp) is
    begin
       Lock;
       Peers (Peer).Rekey_Attempted     := True;
