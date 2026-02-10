@@ -1,0 +1,53 @@
+--  Session library - WireGuard session state machine & timers
+--
+--  Public Interfaces:
+--    Session         — Keypair, Peer_State, session lifecycle
+--    Session.Timer   — Timer event evaluation (Tick)
+--
+--  Depends on:
+--    Utils      — Status type, Byte_Array
+--    Crypto     — AEAD keys, KDF derivation, secure wipe
+--    Handshake  — Handshake_State (consumed by Derive_Keypair)
+--    Transport  — Replay.Filter (shared replay window type)
+--    Threads    — Mutex for session table protection
+--    Timer      — Timer.Clock.Timestamp for deadlines
+
+with "config/wireguard_config.gpr";
+with "utils.gpr";
+with "crypto.gpr";
+with "handshake.gpr";
+with "transport.gpr";
+with "threads.gpr";
+with "timer.gpr";
+
+library project Session is
+
+   type Platform_Type is ("esp_idf", "host");
+   Platform : Platform_Type := external ("PLATFORM", "esp_idf");
+
+   for Languages use ("Ada");
+   for Library_Name use "WgSession";
+
+   case Platform is
+      when "esp_idf" =>
+         for Target use "riscv64-elf";
+         for Runtime ("Ada") use "light-rv32imac";
+      when "host" =>
+         null;
+   end case;
+
+   for Source_Dirs use ("src/session/");
+   for Object_Dir use "obj/" & Platform & "/session";
+   for Library_Dir use "lib";
+   for Create_Missing_Dirs use "True";
+
+   type Library_Type_Type is ("relocatable", "static", "static-pic");
+   Library_Type : Library_Type_Type := external ("LIBRARY_TYPE", "static");
+   for Library_Kind use Library_Type;
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        Wireguard_Config.Ada_Compiler_Switches;
+   end Compiler;
+
+end Session;
