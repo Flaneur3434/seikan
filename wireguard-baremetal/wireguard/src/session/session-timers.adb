@@ -42,7 +42,7 @@ is
 
       --  1. Session expiry — Reject_After_Time exceeded
       --     This is the hardest deadline: drop the session entirely.
-      if Age >= Reject_After_Time then
+      if Age >= Reject_After_Time_S then
          A.Session_Expired := True;
          --  No point checking other timers if session is dead
          return A;
@@ -63,7 +63,7 @@ is
       end if;
 
       --  3. Time-based rekey — Rekey_After_Time exceeded
-      if Age >= Rekey_After_Time and then not Peer.Rekey_Attempted then
+      if Age >= Rekey_After_Time_S and then not Peer.Rekey_Attempted then
          A.Initiate_Rekey := True;
       end if;
 
@@ -74,7 +74,7 @@ is
             Attempt_Elapsed : constant Unsigned_64 :=
               Elapsed (Peer.Rekey_Attempt_Start, Now);
          begin
-            if Attempt_Elapsed >= Rekey_Attempt_Time then
+            if Attempt_Elapsed >= Rekey_Attempt_Time_S then
                A.Rekey_Timed_Out := True;
             end if;
          end;
@@ -91,8 +91,8 @@ is
               Elapsed (Peer.Last_Sent, Now);
          begin
             --  If we received recently but haven't sent recently enough
-            if Since_Recv < Keepalive_Timeout
-              and then Since_Sent >= Keepalive_Timeout
+            if Since_Recv < Keepalive_Timeout_S
+              and then Since_Sent >= Keepalive_Timeout_S
             then
                A.Send_Keepalive := True;
             end if;

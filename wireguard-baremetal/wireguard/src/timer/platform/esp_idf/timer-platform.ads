@@ -7,15 +7,13 @@
 --  The C wrapper (wg_clock.c) is compiled by ESP-IDF's CMake build
 --  system, not by gprbuild, because it needs ESP-IDF headers.
 
+with Interfaces;
 with Timer.Clock;
 
 private package Timer.Platform
   with SPARK_Mode => Off
 is
 
-   --  Return monotonic seconds since boot.
-   function Clock_Now return Timer.Clock.Timestamp
-     with Import, Convention => C,
-          External_Name => "esp_timer_get_time";
+   function Clock_Now return Timer.Clock.Timestamp;
 
 end Timer.Platform;
