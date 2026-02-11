@@ -1,9 +1,9 @@
 idf_component_register(
-    SRCS main.c udp_server.c wg_task.c wg_session_timer.c wg_clock.c wifi_station.c wg_keys.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/gnat_last_chance.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/packet_pool.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/wg_mutex.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/wg_sessions.c
+    SRCS main.c udp_server.c wg_task.c wg_commands.c wg_session_timer.c wg_clock.c wifi_station.c wg_keys.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/Ada_Export/gnat_last_chance.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/Ada_Export/packet_pool.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/C_Import/wg_mutex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../wireguard/src/bindings/Ada_Export/wg_sessions.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/BLAKE2/ref/blake2s-ref.c
     INCLUDE_DIRS "."
     PRIV_REQUIRES esp_wifi nvs_flash esp_netif libsodium esp_timer
@@ -17,7 +17,8 @@ set(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
 # Add Ada bindings headers to include path
 target_include_directories(${COMPONENT_LIB} PRIVATE
-    "${PROJECT_ROOT}/wireguard/src/bindings"
+    "${PROJECT_ROOT}/wireguard/src/bindings/Ada_Export"
+    "${PROJECT_ROOT}/wireguard/src/bindings/C_Import"
     "${PROJECT_ROOT}/third_party/BLAKE2/ref"
 )
 
