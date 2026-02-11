@@ -15,6 +15,7 @@ tags = ["wireguard", "vpn", "embedded"]
 "*".source_encoding  = "UTF_8"
 "*".style_checks     = "Yes"
 "*".compile_checks   = "Warnings"
+"*".ada_version      = "ada2022"
 
 # Development  (alr build)  -- full runtime checks, assertions, debug info
 development.optimization   = ["-Og", "-gnatn", "-ffunction-sections", "-fdata-sections"]
