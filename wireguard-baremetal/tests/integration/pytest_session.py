@@ -1371,14 +1371,14 @@ class TestEsp32RekeyAfterTime:
 @pytest.mark.esp32c6
 @pytest.mark.slow
 class TestEsp32RekeyFlag:
-    """After rekey flag is set, no second initiation fires.
+    """After rekey flag is set, retries are gated to every 5 s.
 
     The C code calls ``session_set_rekey_flag()`` immediately after
     sending the rekey initiation.  This sets ``Rekey_Attempted = True``
-    in the Ada state, which blocks ``Initiate_Rekey`` on subsequent
-    ticks.
+    and records ``Rekey_Last_Sent``.  Subsequent ticks will retry the
+    handshake every ``REKEY_TIMEOUT`` (5 s) but never faster.
 
-    Duration: ~150 s.
+    Duration: ~140 s.
     """
 
     @pytest.fixture(autouse=True)
@@ -1386,21 +1386,25 @@ class TestEsp32RekeyFlag:
         self._ip = _get_esp32_ip(dut, timeout=30)
         dut.expect("Socket bound", timeout=10)
 
-    def test_no_duplicate_rekey(self, dut):
-        """Only one "initiating rekey" appears before session expires.
+    def test_no_immediate_duplicate_rekey(self, dut):
+        """No immediate duplicate rekey — retries are gated to every 5 s.
 
-        After the first rekey at ~120 s, we wait 20 more seconds
-        (session age ~140 s, still < 180 s).  No second initiation
-        should appear because Rekey_Attempted blocks it.
+        After the first rekey at ~120 s, the Rekey_Last_Sent gating
+        prevents a second initiation for REKEY_TIMEOUT (5 s).  We
+        verify no initiation fires within 4 s (under the gate), then
+        confirm a retry does arrive within the next few seconds.
         """
         sock, *_ = _do_handshake(dut, self._ip)
         try:
-            # Wait for the first (and only) rekey initiation
+            # Wait for the first rekey initiation
             dut.expect("initiating rekey", timeout=REKEY_AFTER_TIME + 10)
 
-            # For the next 20 s, no second "initiating rekey" should fire
+            # No immediate duplicate within 4 s (retry gate is 5 s)
             with pytest.raises(Exception):
-                dut.expect("initiating rekey", timeout=20)
+                dut.expect("initiating rekey", timeout=4)
+
+            # But a retry DOES arrive within the next ~6 s
+            dut.expect("initiating rekey", timeout=REKEY_TIMEOUT + 5)
         finally:
             sock.close()
 
@@ -1508,14 +1512,17 @@ class TestEsp32SessionLifecycle:
                 "initiating rekey", timeout=REKEY_AFTER_TIME + 10
             )
 
-            # ── Phase 3: Rekey flag prevents duplicate (120–140 s) ──
+            # ── Phase 3: No immediate duplicate (retry gated to 5 s) ──
             with pytest.raises(Exception):
-                dut.expect("initiating rekey", timeout=15)
+                dut.expect("initiating rekey", timeout=4)
+
+            # Retry arrives within the next ~6 s
+            dut.expect("initiating rekey", timeout=REKEY_TIMEOUT + 5)
 
             # ── Phase 4: Session expires (→ ~180 s) ──
-            # Remaining wait: ~180 - ~135 = ~45 s plus margin
+            # Remaining wait: ~180 - ~130 = ~50 s plus margin
             dut.expect(
-                "session expired", timeout=REJECT_AFTER_TIME - REKEY_AFTER_TIME + 15
+                "session expired", timeout=REJECT_AFTER_TIME - REKEY_AFTER_TIME + 20
             )
 
             # ── Phase 5: After expiry, timer is quiet again ──
