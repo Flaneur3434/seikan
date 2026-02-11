@@ -7,7 +7,6 @@
 --  The C wrapper (wg_clock.c) is compiled by ESP-IDF's CMake build
 --  system, not by gprbuild, because it needs ESP-IDF headers.
 
-with Interfaces;
 with Timer.Clock;
 
 private package Timer.Platform

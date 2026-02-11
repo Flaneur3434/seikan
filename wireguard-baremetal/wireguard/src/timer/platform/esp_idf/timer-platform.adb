@@ -1,5 +1,4 @@
 with Interfaces;
-with Timer.Clock;
 
 package body Timer.Platform
   with SPARK_Mode => Off

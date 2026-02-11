@@ -11,7 +11,6 @@
 with Interfaces;   use Interfaces;
 with Interfaces.C; use Interfaces.C;
 with Utils;        use Utils;
-with Crypto.AEAD;
 with Crypto.KX;
 with Handshake;
 with Messages;
@@ -278,7 +277,6 @@ is
       PT_Len    : access Unsigned_16) return WG_Action
    is
       Header_Size : constant Natural := Messages.Transport_Header_Size;
-      Tag_Size    : constant Natural := Crypto.AEAD.Tag_Bytes;
 
       Decrypt_Len    : Unsigned_16;
       Counter        : Unsigned_64;
@@ -375,8 +373,6 @@ is
       PT_Out : System.Address;
       PT_Len : access Unsigned_16) return WG_Action
    is
-      use System;
-
       RX_Handle : Messages.RX_Buffer_Handle;
       RX_Length : Messages.Packet_Length;
    begin

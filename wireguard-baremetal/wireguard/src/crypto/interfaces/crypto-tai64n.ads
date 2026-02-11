@@ -14,21 +14,17 @@
 --    - Platform-independent
 --    - Requires no wall-clock or FFI
 
-with Interfaces;
 with Utils; use Utils;
 
 package Crypto.TAI64N
   with SPARK_Mode => On, Elaborate_Body
 is
-   use Interfaces;
 
-   --  TAI64N timestamp (12 bytes big-endian, network byte order)
-   --  Public so the SPARK prover can see the size across packages.
-   Timestamp_Bytes_Length : constant := 12;  --  8 bytes TAI64 + 4 bytes nanos
-   type Timestamp is array (0 .. Timestamp_Bytes_Length - 1) of Unsigned_8;
-
-   --  Byte_Array overlay for network I/O and AEAD encrypt/decrypt
-   subtype Timestamp_Bytes is Byte_Array (0 .. Timestamp_Bytes_Length - 1);
+   --  TAI64N timestamp (12 bytes big-endian, network byte order).
+   --  Defined as a Byte_Array subtype so it can be used directly
+   --  with AEAD encrypt/decrypt and network I/O — no conversion needed.
+   Timestamp_Length : constant := 12;  --  8 bytes TAI64 + 4 bytes nanos
+   subtype Timestamp is Byte_Array (0 .. Timestamp_Length - 1);
 
    --  Zero timestamp (useful for initialization)
    Zero : constant Timestamp := (others => 0);
@@ -46,11 +42,6 @@ is
 
    --  Check if timestamp A is after or equal to B
    function Is_After_Or_Equal (A, B : Timestamp) return Boolean
-   with Global => null;
-
-   --  Convert a Byte_Array (e.g. from AEAD decrypt) back to Timestamp.
-   --  Eliminates the need for Unchecked_Conversion across packages.
-   function From_Bytes (B : Timestamp_Bytes) return Timestamp
    with Global => null;
 
 end Crypto.TAI64N;

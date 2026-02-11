@@ -468,7 +468,7 @@ is
 
       --  Decrypted values
       Decrypted_Static    : Byte_Array (0 .. Crypto.KX.Public_Key_Bytes - 1);
-      Decrypted_Timestamp : Crypto.TAI64N.Timestamp_Bytes;
+      Decrypted_Timestamp : Crypto.TAI64N.Timestamp;
       Computed_Mac        : Messages.Mac_Bytes;
    begin
       --  Initialize output
@@ -615,8 +615,7 @@ is
       end if;
 
       --  Store timestamp for replay protection
-      State.Last_Timestamp :=
-        Crypto.TAI64N.From_Bytes (Decrypted_Timestamp);
+      State.Last_Timestamp := Decrypted_Timestamp;
 
       --  H = HASH(H || encrypted_timestamp)
       Mix_Hash (State.Hash, Msg.Encrypted_Timestamp, Local_Status);

@@ -93,7 +93,7 @@ is
       --  Remote sender index (received in initiation/response)
       Remote_Index : Session_Index;
 
-      --  Timestamp for replay protection
+      --  Timestamp for replay protection (12-byte TAI64N)
       Last_Timestamp : Crypto.TAI64N.Timestamp;
    end record;
 
