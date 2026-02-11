@@ -1,8 +1,4 @@
 --  Crypto library initialization and wrapper implementations for libhydrogen
---
---  This body provides:
---  1. Calls hydro_init() during elaboration
---  2. Implements wrapper functions to adapt libhydrogen API to abstract interface
 
 with Ada.Unchecked_Conversion;
 with Crypto.Blake2_Ref;

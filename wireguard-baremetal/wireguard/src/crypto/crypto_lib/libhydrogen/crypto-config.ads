@@ -5,7 +5,8 @@
 --  package and the public Crypto.* interfaces.
 --
 --  The constants here are derived from libhydrogen.
---  - libhydrogen: Gimli-based KX, Secretbox, Hash
+--  
+--  libhydrogen: Gimli-based KX, Secretbox, Hash
 
 package Crypto.Config
   with SPARK_Mode => On

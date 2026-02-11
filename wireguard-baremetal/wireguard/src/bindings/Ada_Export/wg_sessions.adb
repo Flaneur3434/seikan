@@ -36,7 +36,7 @@ is
             A : Session.Timers.Timer_Action renames
               Ada_Actions (I);
          begin
-            Actions (Integer (I) - 1) :=
+            Actions (I - 1) :=
               (Send_Keepalive  => B2U (A.Send_Keepalive),
                Initiate_Rekey  => B2U (A.Initiate_Rekey),
                Session_Expired => B2U (A.Session_Expired),

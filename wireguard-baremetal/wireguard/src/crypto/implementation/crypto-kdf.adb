@@ -9,7 +9,7 @@ with Interfaces.C; use Interfaces.C;
 package body Crypto.KDF
   with SPARK_Mode => Off
 is
-   --  Local secure-wipe for Byte_Array (generic instance)
+   --  Local secure-wipe for Byte_Array
    procedure Memzero is new Crypto.Helper.Generic_Memzero (Byte_Array);
 
    --  BLAKE2s block size for HMAC
@@ -140,10 +140,6 @@ is
       Result := Success;
    end HMAC_Blake2s;
 
-   ---------------------
-   --  KDF1
-   ---------------------
-
    procedure KDF1
      (Key    : KDF_Key;
       Input  : Byte_Array;
@@ -169,10 +165,6 @@ is
       --  Clear intermediate value
       Memzero (Tau0);
    end KDF1;
-
-   ---------------------
-   --  KDF2
-   ---------------------
 
    procedure KDF2
      (Key     : KDF_Key;
@@ -215,10 +207,6 @@ is
       Memzero (Tau0);
       Memzero (Tau1_Cat);
    end KDF2;
-
-   ---------------------
-   --  KDF3
-   ---------------------
 
    procedure KDF3
      (Key     : KDF_Key;

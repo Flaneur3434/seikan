@@ -3,8 +3,6 @@
 --  This is a PRIVATE package - only visible within Crypto hierarchy.
 --  Provides bindings to libhydrogen for key exchange and AEAD operations.
 --
---  Backend: libhydrogen (Gimli-based primitives)
---
 --  NOTE: hydro_init() is called automatically during package elaboration.
 
 with System;

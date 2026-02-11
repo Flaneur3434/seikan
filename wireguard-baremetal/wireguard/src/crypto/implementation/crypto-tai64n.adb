@@ -4,6 +4,7 @@
 --  Per WireGuard whitepaper: timestamps are soft-state, RAM-only.
 --  Initial value is random to ensure fresh start after each boot.
 
+with Interfaces; use Interfaces;
 with Crypto.Random;
 
 package body Crypto.TAI64N
@@ -53,15 +54,6 @@ is
    begin
       return A >= B;
    end Is_After_Or_Equal;
-
-   function From_Bytes (B : Timestamp_Bytes) return Timestamp is
-      Result : Timestamp;
-   begin
-      for I in Timestamp'Range loop
-         Result (I) := B (I);
-      end loop;
-      return Result;
-   end From_Bytes;
 
 begin
    --  Initialize counter with random seed at elaboration

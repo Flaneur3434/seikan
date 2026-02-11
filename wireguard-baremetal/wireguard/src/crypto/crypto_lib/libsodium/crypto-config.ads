@@ -5,8 +5,8 @@
 --  package and the public Crypto.* interfaces.
 --
 --  The constants here are derived from the selected crypto backend.
---  - libsodium: X25519, ChaCha20-Poly1305 IETF, BLAKE2s
---  - libhydrogen: Gimli-based KX, Secretbox, Hash
+--
+--  libsodium: X25519, ChaCha20-Poly1305 IETF, BLAKE2s
 
 package Crypto.Config
   with SPARK_Mode => On

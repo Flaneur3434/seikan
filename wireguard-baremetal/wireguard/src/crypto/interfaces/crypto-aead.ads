@@ -10,7 +10,6 @@
 --  ZERO-COPY DESIGN
 --    - Uses native Ada arrays (passed by reference automatically)
 --    - In-place encryption overwrites plaintext with ciphertext
---    - No custom span types needed - Ada's type system enforces safety
 --
 --  IN-PLACE ENCRYPTION (for TX path)
 --    Buffer layout before encryption:
@@ -91,22 +90,6 @@ is
    ---------------------
 
    --  Encrypt plaintext in-place within a mutable buffer.
-   --  The buffer must have the transport packet layout:
-   --    - Header at offset 0 (used as AAD, not modified)
-   --    - Plaintext at offset Header_Bytes (encrypted in place)
-   --    - Tag space reserved at end
-   --
-   --  Parameters:
-   --    Buffer         : Mutable array covering entire packet region
-   --    Plaintext_Len  : Length of plaintext (not including header or tag)
-   --    Nonce          : Nonce buffer (may be unused by some backends)
-   --    Key            : Encryption key
-   --    Result         : Success or error status
-   --
-   --  On success:
-   --    - Bytes [Header_Bytes .. Header_Bytes+Plaintext_Len-1] contain ciphertext
-   --    - Bytes [Header_Bytes+Plaintext_Len .. +Tag_Bytes-1] contain auth tag
-   --    - Total packet length = Header_Bytes + Plaintext_Len + Tag_Bytes
    procedure Encrypt_In_Place
      (Buffer        : in out Byte_Array;
       Plaintext_Len : Natural;
@@ -121,20 +104,6 @@ is
        and then Plaintext_Len <= Buffer'Length - Header_Bytes - Tag_Bytes;
 
    --  Decrypt ciphertext in-place within a mutable buffer.
-   --  The buffer must have the transport packet layout:
-   --    - Header at offset 0 (used as AAD verification)
-   --    - Ciphertext + tag starting at offset Header_Bytes
-   --
-   --  Parameters:
-   --    Buffer         : Mutable array covering entire packet
-   --    Ciphertext_Len : Length of ciphertext INCLUDING the tag
-   --    Nonce          : Nonce buffer (may be unused by some backends)
-   --    Key            : Decryption key
-   --    Result         : Success if tag verified, Error_Failed otherwise
-   --
-   --  On success:
-   --    - Bytes [Header_Bytes .. Header_Bytes+Ciphertext_Len-Tag_Bytes-1]
-   --      contain the decrypted plaintext
    procedure Decrypt_In_Place
      (Buffer         : in out Byte_Array;
       Ciphertext_Len : Natural;
