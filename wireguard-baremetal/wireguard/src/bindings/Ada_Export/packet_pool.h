@@ -9,17 +9,8 @@
  *   1. Handles (pointers) must not be aliased/copied
  *   2. No double-free
  *   3. No use-after-free
- *
- * DESIGN:
- *   packet_buffer_t contains both an index (for O(1) free) and the data.
- *   C code receives pointer to the whole struct, uses ->data for packet I/O.
- *   Both allocate and free are O(1) operations.
- *
- * THREAD SAFETY:
- *   Each pool has its own statically-allocated binary semaphore.
- *   Call packet_pool_init() once at startup to create semaphores and
- *   initialize both pools.  After that, allocate/free are thread-safe.
  */
+
 #pragma once
 
 #include <stddef.h>
@@ -33,17 +24,13 @@ extern "C" {
  * Buffer record returned by pool.
  * Contains index for O(1) free + metadata + aligned data payload.
  *
- * Layout matches Ada's Utils.Memory_Pool.Buffer record exactly:
- *   int32_t  index   (4 bytes) — pool index, -1 = null
- *   uint16_t len     (2 bytes) — valid data length
- *   uint16_t offset  (2 bytes) — start offset in data (headroom)
- *   uint8_t  data[]  — packet payload
+ * Layout matches Ada's Utils.Memory_Pool.Buffer record exactly
  */
 typedef struct {
-    int32_t  index;   /* Internal pool index; -1 = null */
-    uint16_t len;     /* Valid data length */
-    uint16_t offset;  /* Start offset in data (headroom) */
-    uint8_t  data[];  /* Flexible array - actual size = packet_pool_get_buffer_size() */
+    int32_t  index;   // Internal pool index; -1 = null
+    uint16_t len;     // Valid data length
+    uint16_t offset;  // Start offset in data
+    uint8_t  data[];  // Flexible array - actual size = packet_pool_get_buffer_size()
 } packet_buffer_t;
 
 /* -----------------------------------------------------------------------
@@ -113,7 +100,7 @@ packet_buffer_t* rx_pool_allocate(void);
 void rx_pool_free(packet_buffer_t* buf);
 
 /* -----------------------------------------------------------------------
- * Shared queries
+ * Query functions
  * ----------------------------------------------------------------------- */
 
 /**

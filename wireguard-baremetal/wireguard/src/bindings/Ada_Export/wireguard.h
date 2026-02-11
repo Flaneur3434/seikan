@@ -4,18 +4,6 @@
  *
  * C is a dumb I/O driver.  All protocol intelligence lives in Ada.
  * C decides WHAT to send; Ada decides HOW.
- *
- * RX path:
- *   action = wg_receive(rx_buf, pt_out, &pt_len);
- *   switch (action) {
- *     case SEND_RESPONSE:  tx = wg_create_response(&len); sendto(); free; break;
- *     case SEND_TRANSPORT: tx = wg_send(1, pt_out, pt_len, &len); sendto(); free; break;
- *     case NONE: break;  // keepalive or handshake response processed
- *   }
- *
- * Timer-initiated sends:
- *   keepalive:  tx = wg_send(peer, NULL, 0, &len);
- *   rekey:      tx = wg_create_initiation(&len);
  */
 
 #pragma once
@@ -28,7 +16,8 @@ extern "C" {
 #endif
 
 /** Max plaintext bytes from a single wg_receive() call.
- *  Packet_Size (256) - Header (16) - AEAD Tag (16) = 224. */
+ *  Packet_Size (256) - Header (16) - AEAD Tag (16) = 224. 
+ */
 #define WG_MAX_PLAINTEXT 224
 
 /**
@@ -36,10 +25,10 @@ extern "C" {
  */
 typedef enum
 {
-    WG_ACTION_NONE                  = 0, /**< Nothing to do (keepalive / HS response processed) */
-    WG_ACTION_SEND_RESPONSE         = 1, /**< Call wg_create_response(), sendto(), free */
-    WG_ACTION_RX_DECRYPTION_SUCCESS = 2, /**< Decrypted data in pt_out; C decides next step */
-    WG_ACTION_ERROR                 = 3  /**< Processing failed */
+    WG_ACTION_NONE                  = 0, // Nothing to do (keepalive / HS response processed)
+    WG_ACTION_SEND_RESPONSE         = 1, // Call wg_create_response(), sendto(), free
+    WG_ACTION_RX_DECRYPTION_SUCCESS = 2, // Decrypted data in pt_out; C decides next step
+    WG_ACTION_ERROR                 = 3  // Processing failed
 } wg_action_t;
 
 /**
@@ -49,7 +38,7 @@ typedef enum
 bool wg_init(void);
 
 /**
- * Process an incoming packet (RX only — never allocates TX buffers).
+ * Process an incoming packet (RX only - never allocates TX buffers).
  *
  * Ada takes ownership of rx_buf (freed internally — do NOT free in C).
  *

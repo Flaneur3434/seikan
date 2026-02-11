@@ -1,11 +1,6 @@
 /**
- * wg_mutex.c - FreeRTOS binary semaphore lock/unlock wrappers
- *
- * xSemaphoreTake and xSemaphoreGive are preprocessor macros on
- * ESP-IDF, so Ada cannot Import them directly. These wrappers
- * provide real function symbols.
- *
- * Semaphore creation/ownership lives in packet_pool.c.
+ * @file wg_mutex.c 
+ * @brief FreeRTOS binary semaphore lock/unlock wrappers
  */
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"

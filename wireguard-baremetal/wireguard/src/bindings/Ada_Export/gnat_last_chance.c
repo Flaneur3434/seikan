@@ -42,8 +42,6 @@ void __gnat_last_chance_handler(const char *source_location, int line)
  * GNAT passes an Ada fat-string (pointer + bounds), but the ABI for
  * bare-metal RISC-V lays it out as (pointer, first, last). We only
  * need the pointer to log something useful.
- *
- * This is the missing symbol: system.assertions.raise_assert_failure
  */
 void system__assertions__raise_assert_failure(const char *msg,
                                               int32_t first,
