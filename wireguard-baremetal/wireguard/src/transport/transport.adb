@@ -40,8 +40,11 @@ is
       Packet (PF + 8 .. PF + 15) := From_U64 (Counter);
 
       --  Copy plaintext into payload region (offset Header_Size)
-      Packet (PF + Header_Size .. PF + Header_Size + Plaintext'Length - 1) :=
-        Plaintext;
+      --  Skip for keepalive (zero-length plaintext)
+      if Plaintext'Length > 0 then
+         Packet (PF + Header_Size .. PF + Header_Size + Plaintext'Length - 1) :=
+           Plaintext;
+      end if;
 
       --  Build nonce from counter
       Crypto.AEAD.Build_Nonce (Counter, Nonce);

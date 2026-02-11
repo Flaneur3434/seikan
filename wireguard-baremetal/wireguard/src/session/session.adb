@@ -142,8 +142,9 @@ is
       Peers (Peer).Last_Handshake := Peers (Peer).Current.Created_At;
 
       --  Clear rekey state since we have a new session
-      Peers (Peer).Rekey_Attempted    := False;
+      Peers (Peer).Rekey_Attempted     := False;
       Peers (Peer).Rekey_Attempt_Start := Timer.Clock.Never;
+      Peers (Peer).Rekey_Last_Sent     := Timer.Clock.Never;
    end Activate_Next;
 
    ---------------------------------------------------------------------------
@@ -264,6 +265,7 @@ is
       --  Rekey_Attempted = True after expiry.
       Peers (Peer).Rekey_Attempted     := False;
       Peers (Peer).Rekey_Attempt_Start := Timer.Clock.Never;
+      Peers (Peer).Rekey_Last_Sent     := Timer.Clock.Never;
 
       Unlock;
    end Expire_Session;
@@ -272,8 +274,14 @@ is
      (Peer : Peer_Index; Now : Timer.Clock.Timestamp) is
    begin
       Lock;
-      Peers (Peer).Rekey_Attempted     := True;
-      Peers (Peer).Rekey_Attempt_Start := Now;
+      --  Only set the attempt window start on the FIRST call.
+      --  Retries must not reset the 90 s Rekey_Attempt_Time window.
+      if not Peers (Peer).Rekey_Attempted then
+         Peers (Peer).Rekey_Attempted     := True;
+         Peers (Peer).Rekey_Attempt_Start := Now;
+      end if;
+      --  Always record when the last initiation was sent (retry gating).
+      Peers (Peer).Rekey_Last_Sent := Now;
       Unlock;
    end Set_Rekey_Flag;
 

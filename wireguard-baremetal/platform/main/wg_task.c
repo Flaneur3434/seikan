@@ -12,6 +12,7 @@
  */
 
 #include "wg_task.h"
+#include "wg_commands.h"
 #include "wg_session_timer.h"
 #include "wg_sessions.h"
 #include "wg_clock.h"
@@ -65,6 +66,86 @@ static struct sockaddr_in get_peer_endpoint(unsigned int peer)
     return empty;
 }
 
+static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
+{
+    if (a->session_expired || a->rekey_timed_out)
+    {
+        ESP_LOGW(TAG, "Peer %u: %s — expiring session",
+                 peer,
+                 a->session_expired ? "session expired"
+                                    : "rekey timed out");
+        session_expire(peer);
+    }
+
+    if (a->initiate_rekey)
+    {
+        ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
+        uint64_t now = wg_clock_now();
+
+        uint16_t init_len = 0;
+        packet_buffer_t *init_pkt =
+            (packet_buffer_t *)wg_create_initiation(&init_len);
+
+        if (init_pkt != NULL && init_len > 0)
+        {
+            wg_tx_msg_t tx_msg = {
+                .tx_buf = init_pkt,
+                .tx_len = init_len,
+                .peer = get_peer_endpoint(peer),
+            };
+            if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
+            {
+                /* Sent — mark rekey in progress so the timer
+                 * doesn't fire initiate_rekey again while we
+                 * wait for the handshake response. */
+                session_set_rekey_flag(peer, now);
+                ESP_LOGI(TAG, "<< Rekey Initiation (%u bytes)",
+                         init_len);
+            }
+            else
+            {
+                /* TX queue full — free the buffer, retry next tick */
+                tx_pool_free(init_pkt);
+                ESP_LOGW(TAG, "TX queue full, rekey retry next tick");
+            }
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Rekey initiation failed, retry next tick");
+        }
+    }
+
+    if (a->send_keepalive)
+    {
+        uint16_t ka_len = 0;
+        packet_buffer_t *ka_pkt =
+            (packet_buffer_t *)wg_send(peer, NULL, 0, &ka_len);
+
+        if (ka_pkt != NULL && ka_len > 0)
+        {
+            wg_tx_msg_t tx_msg = {
+                .tx_buf = ka_pkt,
+                .tx_len = ka_len,
+                .peer = get_peer_endpoint(peer),
+            };
+            if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
+            {
+                ESP_LOGI(TAG, "Peer %u: keepalive sent (%u bytes)",
+                         peer, ka_len);
+            }
+            else
+            {
+                tx_pool_free(ka_pkt);
+                ESP_LOGW(TAG, "TX queue full, keepalive dropped");
+            }
+        }
+        else
+        {
+            ESP_LOGW(TAG, "Peer %u: keepalive failed (no session?)", peer);
+        }
+    }
+}
+
 /* -----------------------------------------------------------------------
  * Protocol task main loop
  * ----------------------------------------------------------------------- */
@@ -85,58 +166,7 @@ static void wg_task(void *pvParameters)
             const wg_timer_action_t *a = &tmr_msg.action;
             unsigned int peer = tmr_msg.peer;
 
-            if (a->session_expired || a->rekey_timed_out)
-            {
-                ESP_LOGW(TAG, "Peer %u: %s — expiring session",
-                         peer,
-                         a->session_expired ? "session expired"
-                                            : "rekey timed out");
-                session_expire(peer);
-            }
-
-            if (a->initiate_rekey)
-            {
-                ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
-                uint64_t now = wg_clock_now();
-
-                uint16_t init_len = 0;
-                packet_buffer_t *init_pkt =
-                    (packet_buffer_t *)wg_create_initiation(&init_len);
-
-                if (init_pkt != NULL && init_len > 0)
-                {
-                    wg_tx_msg_t tx_msg = {
-                        .tx_buf = init_pkt,
-                        .tx_len = init_len,
-                        .peer   = get_peer_endpoint(peer),
-                    };
-                    if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
-                    {
-                        /* Sent — mark rekey in progress so the timer
-                         * doesn't fire initiate_rekey again while we
-                         * wait for the handshake response. */
-                        session_set_rekey_flag(peer, now);
-                        ESP_LOGI(TAG, "<< Rekey Initiation (%u bytes)",
-                                 init_len);
-                    }
-                    else
-                    {
-                        /* TX queue full — free the buffer, retry next tick */
-                        tx_pool_free(init_pkt);
-                        ESP_LOGW(TAG, "TX queue full, rekey retry next tick");
-                    }
-                }
-                else
-                {
-                    ESP_LOGE(TAG, "Rekey initiation failed, retry next tick");
-                }
-            }
-
-            if (a->send_keepalive)
-            {
-                ESP_LOGD(TAG, "Peer %u: keepalive (TODO)", peer);
-                /* TODO: send empty transport packet as keepalive */
-            }
+            wg_session_action(a, peer);
         }
 
         /* ── Block until the IO thread sends us a packet ── */
@@ -155,75 +185,90 @@ static void wg_task(void *pvParameters)
          * packet.  This prevents an attacker from redirecting traffic
          * by sending spoofed packets from a different address. */
 
-        /* ── Test-only: trigger ESP32-initiated handshake ── */
-        if (msg_type == 0xFF)
+        /* ── Test commands from Python suite (bit 7 set) ── */
+        if (wg_is_command(msg_type))
         {
-            ESP_LOGI(TAG, ">> Trigger: ESP32-initiated handshake");
-            /* Free the trigger packet — it carried no payload.
-             * Send free request back to IO thread via a TX msg
-             * with NULL tx_buf so it frees the RX buffer. */
-            rx_pool_free(rx_buf);
-
-            uint16_t init_len = 0;
-            packet_buffer_t *init_pkt =
-                (packet_buffer_t *)wg_create_initiation(&init_len);
-
-            if (init_pkt == NULL || init_len == 0)
-            {
-                ESP_LOGE(TAG, "wg_create_initiation failed");
-                continue;
-            }
-
-            ESP_LOGI(TAG, "<< Handshake Initiation (%u bytes)", init_len);
-
-            wg_tx_msg_t tx_msg = {
-                .tx_buf = init_pkt,
-                .tx_len = init_len,
-                .peer   = rx_msg.peer,
-            };
-            xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY);
+            wg_command_dispatch(msg_type, &rx_msg);
             continue;
         }
 
         /* ── Normal path: hand to Ada ── */
-        void *tx_pkt = NULL;
-        uint16_t tx_len = 0;
-        wg_action_t action = wg_receive(rx_buf, &tx_pkt, &tx_len);
+        uint8_t pt_buf[WG_MAX_PLAINTEXT];
+        uint16_t pt_len = 0;
+        wg_action_t action = wg_receive(rx_buf, pt_buf, &pt_len);
         /* rx_buf is now owned by Ada (freed internally) */
 
         switch (action)
         {
         case WG_ACTION_SEND_RESPONSE:
-            ESP_LOGI(TAG, "<< Handshake Response (%u bytes)", tx_len);
-            /* fall through */
-        case WG_ACTION_SEND_TRANSPORT:
         {
-            if (action == WG_ACTION_SEND_TRANSPORT) {
-                ESP_LOGI(TAG, "<< Transport Data (%u bytes)", tx_len);
+            /* Initiation processed — build and send the response */
+            uint16_t resp_len = 0;
+            packet_buffer_t *resp_pkt =
+                (packet_buffer_t *)wg_create_response(&resp_len);
+
+            if (resp_pkt == NULL || resp_len == 0)
+            {
+                ESP_LOGE(TAG, "wg_create_response failed");
+                break;
             }
 
-            /* §6.5: crypto succeeded — safe to learn this peer's
-             * outer UDP address for timer-initiated sends. */
+            ESP_LOGI(TAG, "<< Handshake Response (%u bytes)", resp_len);
+
+            /* §6.5: crypto succeeded — safe to learn endpoint */
             update_peer_endpoint(1, &rx_msg.peer);
 
             wg_tx_msg_t tx_msg = {
-                .tx_buf = (packet_buffer_t *)tx_pkt,
-                .tx_len = tx_len,
+                .tx_buf = resp_pkt,
+                .tx_len = resp_len,
                 .peer   = rx_msg.peer,
             };
             xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY);
             break;
         }
 
-        case WG_ACTION_NONE:
-            /* Handshake response processed — crypto verified, update endpoint */
+        case WG_ACTION_RX_DECRYPTION_SUCCESS:
+        {
+            /* Transport data decrypted successfully */
             update_peer_endpoint(1, &rx_msg.peer);
-            ESP_LOGD(TAG, "   Processed (no reply needed)");
+
+            ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext)", pt_len);
+
+            /* Echo mode: re-encrypt and send back (test-only) */
+            if (wg_echo_enabled())
+            {
+                uint16_t tx_len = 0;
+                packet_buffer_t *tx_pkt =
+                    (packet_buffer_t *)wg_send(1, pt_buf, pt_len, &tx_len);
+
+                if (tx_pkt == NULL || tx_len == 0)
+                {
+                    ESP_LOGW(TAG, "wg_send (echo) failed");
+                    break;
+                }
+
+                ESP_LOGI(TAG, "<< Echo Transport (%u bytes)", tx_len);
+
+                wg_tx_msg_t tx_msg = {
+                    .tx_buf = tx_pkt,
+                    .tx_len = tx_len,
+                    .peer   = rx_msg.peer,
+                };
+                xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY);
+            }
+            break;
+        }
+
+        case WG_ACTION_NONE:
+            /* Handshake response processed or keepalive received.
+             * Crypto verified — safe to update endpoint. */
+            update_peer_endpoint(1, &rx_msg.peer);
+            ESP_LOGI(TAG, "<< Processed (no reply needed)");
             break;
 
         case WG_ACTION_ERROR:
         default:
-            ESP_LOGW(TAG, "   wg_receive error (type 0x%02x)", msg_type);
+            ESP_LOGW(TAG, "<< wg_receive error (type 0x%02x)", msg_type);
             break;
         }
     }
