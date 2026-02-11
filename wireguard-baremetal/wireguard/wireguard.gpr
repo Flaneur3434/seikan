@@ -40,7 +40,7 @@ library project Wireguard is
    end case;
 
    --  Top-level sources (just src/wireguard.ads, bindings)
-   for Source_Dirs use ("src/", "src/bindings/", "config/");
+   for Source_Dirs use ("src/", "src/bindings/Ada_Export/", "src/bindings/C_Import/", "config/");
 
    for Object_Dir use "obj/" & Platform;
    for Library_Dir use "lib";
