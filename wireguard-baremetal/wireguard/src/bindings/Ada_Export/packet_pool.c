@@ -17,17 +17,17 @@ static StaticSemaphore_t s_tx_pool_sem_buf;
 
 void packet_pool_init(void)
 {
-    /* Create binary semaphores from static buffers */
+    // Create binary semaphores from static buffers
     SemaphoreHandle_t rx_sem =
         xSemaphoreCreateBinaryStatic(&s_rx_pool_sem_buf);
     SemaphoreHandle_t tx_sem =
         xSemaphoreCreateBinaryStatic(&s_tx_pool_sem_buf);
 
-    /* Binary semaphores start empty; give once so first Take succeeds */
+    // Binary semaphores start empty; give once so first Take succeeds
     xSemaphoreGive(rx_sem);
     xSemaphoreGive(tx_sem);
 
-    /* Pass semaphore handles into Ada pool init */
+    // Pass semaphore handles into Ada pool init
     rx_pool_init(rx_sem);
     tx_pool_init(tx_sem);
 }

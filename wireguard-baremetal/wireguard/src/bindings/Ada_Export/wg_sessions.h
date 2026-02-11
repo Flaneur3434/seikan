@@ -32,10 +32,6 @@ void wg_session_init(void);
 
 /* --------------------------------------------------------------------
  * Timer action dispatch — Ada-exported functions
- *
- * These are implemented in Ada (WG_Sessions package) and linked
- * by the External_Name pragma.  Declared here so C callers get
- * proper prototypes.
  * -------------------------------------------------------------------- */
 
 /**
