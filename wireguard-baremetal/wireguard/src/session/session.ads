@@ -270,6 +270,7 @@ private
       Last_Handshake      : Timer.Clock.Timestamp;  --  When current was born
       Rekey_Attempted     : Boolean;                --  Rekey in progress?
       Rekey_Attempt_Start : Timer.Clock.Timestamp;  --  When rekey began
+      Rekey_Last_Sent     : Timer.Clock.Timestamp;  --  When last initiation sent
 
       --  Is this peer slot in use?
       Active : Boolean;
@@ -284,6 +285,7 @@ private
       Last_Handshake      => Timer.Clock.Never,
       Rekey_Attempted     => False,
       Rekey_Attempt_Start => Timer.Clock.Never,
+      Rekey_Last_Sent     => Timer.Clock.Never,
       Active              => False);
 
    Peers      : array (Peer_Index) of Peer_State := (others => Null_Peer);

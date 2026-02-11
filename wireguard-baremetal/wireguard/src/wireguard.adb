@@ -102,18 +102,16 @@ is
    --  Helpers: Handshake sub-operations (body-local)
    ---------------------------------------------------------------------------
 
-   --  Handle_Initiation_RX — Responder: process initiation, build response
+   --  Handle_Initiation_RX — Process initiation, signal C to build response
+   --
+   --  Just validates + processes the initiation message.  Does NOT allocate
+   --  any TX buffer or build the response.  Returns Action_Send_Response
+   --  so C can call wg_create_response() at its own pace.
    function Handle_Initiation_RX
      (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length;
-      TX_Buf    : access System.Address;
-      TX_Len    : access Unsigned_16) return WG_Action
+      RX_Length : Messages.Packet_Length) return WG_Action
    is
-      HS_Err      : Handshake.Handshake_Error;
-      Resp_Result : Handshake.Response_Result;
-      TX_Handle   : Messages.Buffer_Handle;
-      TX_Ref      : Messages.Buffer_Ref;
-      Sess_Status : Status;
+      HS_Err : Handshake.Handshake_Error;
    begin
       --  Verify minimum length
       if RX_Length < Unsigned_16 (Messages.Handshake_Init_Size) then
@@ -138,47 +136,7 @@ is
          return Action_Error;
       end if;
 
-      --  Allocate TX buffer for response
-      Messages.TX_Pool.Allocate (TX_Handle);
-      if Messages.TX_Pool.Is_Null (TX_Handle) then
-         return Action_Error;
-      end if;
-
-      --  Build response directly in TX buffer (zero-copy)
-      Messages.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
-      declare
-         Resp : Messages.Message_Handshake_Response
-         with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
-      begin
-         Handshake.Create_Response (Resp, HS_State, My_Identity, Resp_Result);
-      end;
-
-      if not Resp_Result.Success then
-         Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
-         Messages.TX_Pool.Free (TX_Handle);
-         return Action_Error;
-      end if;
-
-      TX_Ref.Buf_Ptr.Len := Unsigned_16 (Resp_Result.Length);
-      Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
-
-      --  Responder derives transport keys AND activates the new session
-      --  atomically (single lock hold) after Create_Response.
-      --  Per WireGuard spec §5.4.4: responder has all Noise material.
-      Session.Derive_And_Activate
-        (Peer   => Peer_Idx,
-         HS     => HS_State,
-         Now    => Timer.Clock.Now,
-         Result => Sess_Status);
-      if not Is_Success (Sess_Status) then
-         Messages.TX_Pool.Free (TX_Handle);
-         return Action_Error;
-      end if;
-
-      --  Release TX buffer to C for transmission
-      Messages.Release_TX_To_C
-        (TX_Handle, Messages.Packet_Length (Resp_Result.Length), TX_Buf.all);
-      TX_Len.all := Unsigned_16 (Resp_Result.Length);
+      --  Tell C to call wg_create_response()
       return Action_Send_Response;
    end Handle_Initiation_RX;
 
@@ -229,23 +187,100 @@ is
       return Action_None;
    end Handle_Response_RX;
 
-   --  Handle_Transport_RX — Decrypt then echo-encrypt back
+   ---------------------------------------------------------------------------
+   --  Build_And_Encrypt_TX — Internal TX path
    --
-   --  Current behaviour (pre-netif): decrypt the incoming Type 4 packet,
-   --  copy the plaintext into a TX buffer, re-encrypt it with our send
-   --  key, and hand the TX buffer back for C to sendto().  This makes
-   --  the ESP32 behave as a transport-layer echo server, which is useful
-   --  for integration testing and throughput benchmarks.
+   --  Allocates a TX pool buffer, encrypts the given plaintext (which
+   --  may be zero-length for a keepalive), and releases the buffer to
+   --  C for transmission.
+   --
+   --  On success: TX_Addr = pool buffer address, TX_Len = wire bytes.
+   --  On failure: TX_Addr = Null_Address, TX_Len = 0.
+   ---------------------------------------------------------------------------
+
+   function Build_And_Encrypt_TX
+     (Peer    : Session.Peer_Index;
+      Payload : Byte_Array;
+      TX_Addr : out System.Address;
+      TX_Len  : out Unsigned_16) return Boolean
+   is
+      use System;
+
+      KP           : Session.Keypair;
+      Send_Counter : Unsigned_64;
+      TX_Handle    : Messages.Buffer_Handle;
+      TX_Ref       : Messages.Buffer_Ref;
+      Enc_Len      : Unsigned_16;
+      Enc_Result   : Status;
+   begin
+      TX_Addr := Null_Address;
+      TX_Len  := 0;
+
+      --  Get a nonce counter (atomically increments under lock)
+      Session.Increment_Send_Counter (Peer, Send_Counter);
+
+      --  Snapshot current keypair
+      Session.Get_Current (Peer, KP);
+      if not Session.Is_Valid (KP) then
+         return False;
+      end if;
+
+      --  Allocate TX pool buffer
+      Messages.TX_Pool.Allocate (TX_Handle);
+      if Messages.TX_Pool.Is_Null (TX_Handle) then
+         return False;
+      end if;
+
+      --  Encrypt payload into TX buffer (zero-length = keepalive)
+      Messages.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
+      declare
+         Out_Pkt : Byte_Array (0 .. Messages.Packet_Size - 1)
+         with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
+      begin
+         Transport.Encrypt_Packet
+           (Key            => Session.Send_Key (KP),
+            Receiver_Index => Session.Receiver_Index (KP),
+            Counter        => Send_Counter,
+            Plaintext      => Payload,
+            Packet         => Out_Pkt,
+            Length         => Enc_Len,
+            Result         => Enc_Result);
+      end;
+
+      if not Is_Success (Enc_Result) then
+         Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
+         Messages.TX_Pool.Free (TX_Handle);
+         return False;
+      end if;
+
+      --  Record that we sent a packet (resets keepalive timer)
+      Session.Mark_Sent (Peer, Timer.Clock.Now);
+
+      TX_Ref.Buf_Ptr.Len := Enc_Len;
+      Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
+
+      --  Release TX buffer to C for transmission
+      Messages.Release_TX_To_C
+        (TX_Handle, Messages.Packet_Length (Enc_Len), TX_Addr);
+      TX_Len := Enc_Len;
+      return True;
+   end Build_And_Encrypt_TX;
+
+   --  Handle_Transport_RX — Decrypt incoming transport data
+   --
+   --  Decrypts the Type 4 packet and copies the plaintext to C's buffer.
+   --  C decides what to do with it (echo, forward to TUN, drop).
+   --  Zero-length plaintext (keepalive) returns Action_None.
    function Handle_Transport_RX
      (RX_Handle : in out Messages.RX_Buffer_Handle;
       RX_Length : Messages.Packet_Length;
-      TX_Buf    : access System.Address;
-      TX_Len    : access Unsigned_16) return WG_Action
+      PT_Out    : System.Address;
+      PT_Len    : access Unsigned_16) return WG_Action
    is
       Header_Size : constant Natural := Messages.Transport_Header_Size;
       Tag_Size    : constant Natural := Crypto.AEAD.Tag_Bytes;
 
-      PT_Len         : Unsigned_16;
+      Decrypt_Len    : Unsigned_16;
       Counter        : Unsigned_64;
       Decrypt_Result : Status;
       Replay_OK      : Boolean;
@@ -253,16 +288,11 @@ is
       --  Session state snapshot (taken under lock)
       KP : Session.Keypair;
 
-      --  Plaintext scratch — max plaintext that fits one pool buffer:
-      --  Packet_Size − header − tag = 256 − 16 − 16 = 224
-      Max_PT : constant Natural :=
-        Messages.Packet_Size - Header_Size - Tag_Size;
-      PT_Buf : Byte_Array (0 .. Max_PT - 1);
-      PT_Act : Natural := 0;   --  actual plaintext length after decrypt
-
-      --  For encrypt (echo)
-      Send_Counter : Unsigned_64;
+      --  Actual plaintext length after decrypt
+      PT_Act : Natural := 0;
    begin
+      PT_Len.all := 0;
+
       Session.Get_Current (Peer_Idx, KP);
 
       if not Session.Is_Valid (KP) then
@@ -270,7 +300,7 @@ is
          return Action_Error;
       end if;
 
-      --  1. Decrypt in-place in the RX pool buffer
+      --  Decrypt in-place in the RX pool buffer
       declare
          RX_Ref : Messages.RX_Buffer_Ref;
       begin
@@ -283,12 +313,11 @@ is
             Transport.Decrypt_Packet
               (Key     => Session.Receive_Key (KP),
                Packet  => Pkt,
-               Length  => PT_Len,
+               Length  => Decrypt_Len,
                Counter => Counter,
                Result  => Decrypt_Result);
 
             --  Anti-replay check: only AFTER AEAD authentication succeeds.
-            --  Validates counter against sliding window (RFC 6479).
             if Is_Success (Decrypt_Result) then
                Session.Validate_And_Update_Replay
                  (Peer     => Peer_Idx,
@@ -303,13 +332,17 @@ is
                end if;
             end if;
 
-            --  Copy plaintext out before we return the borrow.
-            --  Plaintext sits at Pkt(Header_Size .. Header_Size + PT_Len-1)
+            --  Copy plaintext to C's output buffer.
+            --  Plaintext sits at Pkt(Header_Size .. Header_Size+Len-1)
             --  after in-place decrypt.
-            if Is_Success (Decrypt_Result) and then PT_Len > 0 then
-               PT_Act := Natural (PT_Len);
-               PT_Buf (0 .. PT_Act - 1) :=
-                 Pkt (Header_Size .. Header_Size + PT_Act - 1);
+            if Is_Success (Decrypt_Result) and then Decrypt_Len > 0 then
+               PT_Act := Natural (Decrypt_Len);
+               declare
+                  C_Out : Byte_Array (0 .. PT_Act - 1)
+                  with Import, Address => PT_Out;
+               begin
+                  C_Out := Pkt (Header_Size .. Header_Size + PT_Act - 1);
+               end;
             end if;
          end;
 
@@ -319,60 +352,18 @@ is
       --  Done with RX buffer
       Messages.RX_Pool.Free (RX_Handle);
 
-      if not Is_Success (Decrypt_Result) or else PT_Act = 0 then
+      if not Is_Success (Decrypt_Result) then
          return Action_Error;
       end if;
 
-      --  2. Allocate a TX buffer and re-encrypt the plaintext as echo
-      --     Get a fresh nonce counter from the Session module
-      Session.Increment_Send_Counter (Peer_Idx, Send_Counter);
-      Session.Get_Current (Peer_Idx, KP);
+      --  Zero-length plaintext = keepalive.  Authentic packet,
+      --  already Mark_Received'd, nothing for C to do.
+      if PT_Act = 0 then
+         return Action_None;
+      end if;
 
-      declare
-         TX_Handle     : Messages.Buffer_Handle;
-         TX_Ref        : Messages.Buffer_Ref;
-         Enc_Len       : Unsigned_16;
-         Enc_Result    : Status;
-      begin
-         Messages.TX_Pool.Allocate (TX_Handle);
-         if Messages.TX_Pool.Is_Null (TX_Handle) then
-            return Action_Error;
-         end if;
-
-         Messages.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
-
-         declare
-            Out_Pkt : Byte_Array (0 .. Messages.Packet_Size - 1)
-            with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
-         begin
-            Transport.Encrypt_Packet
-              (Key            => Session.Send_Key (KP),
-               Receiver_Index => Session.Receiver_Index (KP),
-               Counter        => Send_Counter,
-               Plaintext      => PT_Buf (0 .. PT_Act - 1),
-               Packet         => Out_Pkt,
-               Length         => Enc_Len,
-               Result         => Enc_Result);
-         end;
-
-         if not Is_Success (Enc_Result) then
-            Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
-            Messages.TX_Pool.Free (TX_Handle);
-            return Action_Error;
-         end if;
-
-         --  Record that we sent a packet
-         Session.Mark_Sent (Peer_Idx, Timer.Clock.Now);
-
-         TX_Ref.Buf_Ptr.Len := Enc_Len;
-         Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
-
-         --  Release TX buffer to C for transmission
-         Messages.Release_TX_To_C
-           (TX_Handle, Messages.Packet_Length (Enc_Len), TX_Buf.all);
-         TX_Len.all := Enc_Len;
-         return Action_Send_Transport;
-      end;
+      PT_Len.all := Unsigned_16 (PT_Act);
+      return RX_Decryption_Success;
    end Handle_Transport_RX;
 
    ---------------------------------------------------------------------------
@@ -381,16 +372,15 @@ is
 
    function Receive
      (RX_Buf : System.Address;
-      TX_Buf : access System.Address;
-      TX_Len : access Unsigned_16) return WG_Action
+      PT_Out : System.Address;
+      PT_Len : access Unsigned_16) return WG_Action
    is
       use System;
 
       RX_Handle : Messages.RX_Buffer_Handle;
       RX_Length : Messages.Packet_Length;
    begin
-      TX_Buf.all := Null_Address;
-      TX_Len.all := 0;
+      PT_Len.all := 0;
 
       if not Initialized then
          return Action_Error;
@@ -418,15 +408,14 @@ is
       begin
          case Msg_Kind is
             when Messages.Kind_Handshake_Initiation                 =>
-               return
-                 Handle_Initiation_RX (RX_Handle, RX_Length, TX_Buf, TX_Len);
+               return Handle_Initiation_RX (RX_Handle, RX_Length);
 
             when Messages.Kind_Handshake_Response                   =>
                return Handle_Response_RX (RX_Handle, RX_Length);
 
             when Messages.Kind_Transport_Data                       =>
                return
-                 Handle_Transport_RX (RX_Handle, RX_Length, TX_Buf, TX_Len);
+                 Handle_Transport_RX (RX_Handle, RX_Length, PT_Out, PT_Len);
 
             when Messages.Kind_Cookie_Reply | Messages.Kind_Unknown =>
                Messages.RX_Pool.Free (RX_Handle);
@@ -487,5 +476,126 @@ is
       Out_Len.all := Unsigned_16 (Result.Length);
       return Addr;
    end Create_Initiation;
+
+   ---------------------------------------------------------------------------
+   --  Create_Response
+   ---------------------------------------------------------------------------
+
+   function Create_Response
+     (Out_Len : access Unsigned_16) return System.Address
+   is
+      use System;
+
+      Resp_Result : Handshake.Response_Result;
+      Handle      : Messages.Buffer_Handle;
+      Ref         : Messages.Buffer_Ref;
+      Sess_Status : Status;
+      Addr        : System.Address;
+   begin
+      Out_Len.all := 0;
+
+      if not Initialized then
+         return Null_Address;
+      end if;
+
+      --  Allocate a TX pool buffer
+      Messages.TX_Pool.Allocate (Handle);
+      if Messages.TX_Pool.Is_Null (Handle) then
+         return Null_Address;
+      end if;
+
+      --  Build response directly in TX buffer (zero-copy)
+      Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+      declare
+         Resp : Messages.Message_Handshake_Response
+         with Import, Address => Ref.Buf_Ptr.Data'Address;
+      begin
+         Handshake.Create_Response (Resp, HS_State, My_Identity, Resp_Result);
+      end;
+
+      if not Resp_Result.Success then
+         Messages.TX_Pool.Return_Ref (Handle, Ref);
+         Messages.TX_Pool.Free (Handle);
+         return Null_Address;
+      end if;
+
+      Ref.Buf_Ptr.Len := Unsigned_16 (Resp_Result.Length);
+      Messages.TX_Pool.Return_Ref (Handle, Ref);
+
+      --  Responder derives transport keys AND activates the new session
+      --  atomically (single lock hold) after Create_Response.
+      --  Per WireGuard spec §5.4.4: responder has all Noise material.
+      Session.Derive_And_Activate
+        (Peer   => Peer_Idx,
+         HS     => HS_State,
+         Now    => Timer.Clock.Now,
+         Result => Sess_Status);
+      if not Is_Success (Sess_Status) then
+         Messages.TX_Pool.Free (Handle);
+         return Null_Address;
+      end if;
+
+      --  Release to C layer for transmission
+      Messages.Release_TX_To_C
+        (Handle, Messages.Packet_Length (Resp_Result.Length), Addr);
+
+      Out_Len.all := Unsigned_16 (Resp_Result.Length);
+      return Addr;
+   end Create_Response;
+
+   ---------------------------------------------------------------------------
+   --  Send - Encrypt plaintext to be ready to send
+   ---------------------------------------------------------------------------
+
+   function Send
+     (Peer_ID     : Interfaces.C.unsigned;
+      Payload     : System.Address;
+      Payload_Len : Interfaces.Unsigned_16;
+      Out_Len     : access Unsigned_16) return System.Address
+   is
+      use System;
+
+      Peer : Session.Peer_Index;
+      Addr : System.Address;
+      Len  : Unsigned_16;
+   begin
+      Out_Len.all := 0;
+
+      if not Initialized then
+         return Null_Address;
+      end if;
+
+      --  Validate peer index
+      if Peer_ID not in
+        Interfaces.C.unsigned (Session.Peer_Index'First) ..
+        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      then
+         return Null_Address;
+      end if;
+      Peer := Session.Peer_Index (Peer_ID);
+
+      --  Zero-length = keepalive, otherwise overlay caller's buffer
+      if Payload_Len = 0 then
+         declare
+            Empty : constant Byte_Array (1 .. 0) := (others => 0);
+         begin
+            if not Build_And_Encrypt_TX (Peer, Empty, Addr, Len) then
+               return Null_Address;
+            end if;
+         end;
+      else
+         declare
+            Data : Byte_Array (0 .. Natural (Payload_Len) - 1)
+            with Import, Address => Payload;
+         begin
+            if not Build_And_Encrypt_TX (Peer, Data, Addr, Len) then
+               return Null_Address;
+            end if;
+         end;
+      end if;
+
+      Out_Len.all := Len;
+      return Addr;
+   end Send;
 
 end Wireguard;

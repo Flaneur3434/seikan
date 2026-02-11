@@ -63,7 +63,7 @@ is
      Global => null,
      Pre    =>
        Packet'Length <= Utils.Max_Packet_Size --  give GNATprove a hard ceiling
-       and then Plaintext'Length in 1 .. Max_Payload --  give GNATprove a Length range
+       and then Plaintext'Length in 0 .. Max_Payload --  0 = keepalive (empty payload)
        and then
          --  Make sure payload can fit into packet buffer
          Plaintext'Length

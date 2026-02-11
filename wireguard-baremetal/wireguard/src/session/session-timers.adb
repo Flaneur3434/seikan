@@ -6,8 +6,6 @@ is
 
    ---------------------------------------------------------------------------
    --  Elapsed — Compute seconds elapsed since a timestamp
-   --
-   --  Returns 0 if Start is Never (event hasn't occurred yet).
    ---------------------------------------------------------------------------
 
    function Elapsed
@@ -15,7 +13,7 @@ is
       Now   : Timer.Clock.Timestamp) return Unsigned_64
    is
    begin
-      if Start = Timer.Clock.Never or else Now < Start then
+      if Now < Start then
          return 0;
       end if;
       return Now - Start;
@@ -69,20 +67,30 @@ is
 
       --  4. Rekey attempt timeout — Rekey_Attempt_Time exceeded
       --     If we started a rekey and it's taking too long, retry.
+      --  4. Rekey retry / attempt timeout (§6.4)
+      --
+      --     When Rekey_Attempted is True, we're waiting for a handshake
+      --     response.  Retry every Rekey_Timeout (5 s).  If the whole
+      --     attempt has been going for >= Rekey_Attempt_Time (90 s),
+      --     give up.
       if Peer.Rekey_Attempted then
          declare
             Attempt_Elapsed : constant Unsigned_64 :=
               Elapsed (Peer.Rekey_Attempt_Start, Now);
+            Since_Last_Init : constant Unsigned_64 :=
+              Elapsed (Peer.Rekey_Last_Sent, Now);
          begin
             if Attempt_Elapsed >= Rekey_Attempt_Time_S then
                A.Rekey_Timed_Out := True;
+            elsif Since_Last_Init >= Rekey_Timeout_S then
+               A.Initiate_Rekey := True;
             end if;
          end;
       end if;
 
       --  5. Keepalive — We received a packet but haven't sent anything
       --     back within Keepalive_Timeout.  Send an empty data packet
-      --     so the peer knows we're alive (NAT traversal).
+      --     so the peer knows we're alive.
       if Peer.Last_Received /= Timer.Clock.Never then
          declare
             Since_Recv : constant Unsigned_64 :=
@@ -90,11 +98,29 @@ is
             Since_Sent : constant Unsigned_64 :=
               Elapsed (Peer.Last_Sent, Now);
          begin
-            --  If we received recently but haven't sent recently enough
             if Since_Recv < Keepalive_Timeout_S
               and then Since_Sent >= Keepalive_Timeout_S
             then
                A.Send_Keepalive := True;
+            end if;
+         end;
+      end if;
+
+      --  6. Unresponsive peer (§6.2)
+      --
+      --     If no transport data received for Keepalive_Timeout +
+      --     Rekey_Timeout (15 s), the peer is unresponsive.  Initiate
+      --     a handshake.  Retries are handled by condition 4 above
+      --     (once Rekey_Attempted is True after the C side sends).
+      if Peer.Last_Received /= Timer.Clock.Never
+        and then not Peer.Rekey_Attempted
+      then
+         declare
+            Since_Recv : constant Unsigned_64 :=
+              Elapsed (Peer.Last_Received, Now);
+         begin
+            if Since_Recv >= Keepalive_Timeout_S + Rekey_Timeout_S then
+               A.Initiate_Rekey := True;
             end if;
          end;
       end if;
