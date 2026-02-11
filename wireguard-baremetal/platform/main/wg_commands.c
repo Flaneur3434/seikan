@@ -2,10 +2,6 @@
  * @file wg_commands.c
  * @brief Test-suite command dispatcher.
  *
- * Each command from the Python test suite arrives as an RX packet with
- * a synthetic message type (bit 7 set).  We free the trigger packet,
- * execute the command, and enqueue any resulting TX for the IO thread.
- *
  * Adding a new command:
  *   1. #define WG_CMD_FOO 0xNN in wg_commands.h
  *   2. Write a static cmd_foo() handler below.
@@ -92,7 +88,7 @@ static void cmd_set_echo_mode(const wg_rx_msg_t *rx_msg, uint16_t len)
 
 void wg_command_dispatch(uint8_t cmd, const wg_rx_msg_t *rx_msg)
 {
-    /* Save length before freeing — some commands inspect payload */
+    // Save length before freeing — some commands inspect payload
     uint16_t len = rx_msg->rx_buf->len;
 
     switch (cmd)

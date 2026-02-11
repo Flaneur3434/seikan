@@ -1,3 +1,20 @@
+/**
+ * @file udp_server.c
+ * @brief UDP I/O task — pure socket I/O, no protocol logic.
+ *
+ * This task owns the UDP socket and runs at priority 5 (lowest in
+ * the WG pipeline).  It:
+ *   1. Binds to port 51820
+ *   2. RX: recvfrom → allocate RX buffer → enqueue to WG task
+ *   3. TX: dequeue from WG task → sendto → free TX buffer
+ *
+ * Buffer ownership:
+ *   - RX: IO allocates, transfers ownership to WG task via queue
+ *   - TX: WG task produces, IO receives ownership via queue, frees after send
+ *
+ * No crypto or protocol logic happens here — that's the WG task's job.
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -21,23 +38,12 @@
 #include "packet_pool.h"
 /* WG protocol task queues */
 #include "wg_task.h"
+/* Own header */
+#include "udp_server.h"
 
 #define PORT 51820
 
 static const char *TAG = "wg_io";
-
-/*
- * WireGuard ESP32-C6 — UDP I/O Thread
- *
- * Pure I/O: no protocol logic, no crypto.
- *
- *   RX: recvfrom -> allocate RX buffer -> enqueue to WG task
- *   TX: dequeue from WG task -> sendto -> free TX buffer
- *
- * Buffer ownership:
- *   - RX: IO allocates, transfers ownership to WG task via queue
- *   - TX: WG task produces, IO receives ownership via queue, frees after send
- */
 
 /**
  * Drain the TX queue: send all pending outbound packets.
@@ -67,7 +73,7 @@ static void send_pending_tx(int sock)
     }
 }
 
-void udp_server_task(void *pvParameters)
+static void udp_server_task(void *pvParameters)
 {
     (void)pvParameters;
 
@@ -86,10 +92,10 @@ void udp_server_task(void *pvParameters)
     }
     ESP_LOGI(TAG, "Socket created");
 
-    /* Short receive timeout so we can service the TX queue regularly */
+    // Short receive timeout so we can service the TX queue regularly
     struct timeval timeout;
     timeout.tv_sec = 0;
-    timeout.tv_usec = 50000; /* 50 ms */
+    timeout.tv_usec = 50000; // 50 ms
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 
     int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
@@ -104,10 +110,10 @@ void udp_server_task(void *pvParameters)
 
     while (1)
     {
-        /* ── TX: send any queued outbound packets ── */
+        // TX: send any queued outbound packets
         send_pending_tx(sock);
 
-        /* ── RX: try to receive an inbound packet ── */
+        // RX: try to receive an inbound packet
         packet_buffer_t *pkt = rx_pool_allocate();
         if (pkt == NULL)
         {
@@ -126,7 +132,7 @@ void udp_server_task(void *pvParameters)
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
-                /* Timeout — no data, free buffer and loop (services TX) */
+                // Timed out — no data, free buffer and loop (services TX)
                 rx_pool_free(pkt);
                 continue;
             }
@@ -141,7 +147,7 @@ void udp_server_task(void *pvParameters)
             continue;
         }
 
-        /* Log sender */
+        // Log the sender
         if (source_addr.ss_family == PF_INET)
         {
             inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr,
@@ -157,7 +163,7 @@ void udp_server_task(void *pvParameters)
         ESP_LOGI(TAG, "Received %d bytes from %s", len, addr_str);
         ESP_LOG_BUFFER_HEXDUMP(TAG, pkt->data, len, ESP_LOG_INFO);
 
-        /* Fill in length, then hand off to the WG protocol task */
+        // Fill in length, then hand off to the WG protocol task
         pkt->len = (uint16_t)len;
 
         wg_rx_msg_t rx_msg = {
@@ -178,4 +184,25 @@ void udp_server_task(void *pvParameters)
         shutdown(sock, 0);
         close(sock);
     }
+}
+
+bool udp_server_task_start(void)
+{
+    BaseType_t ret = xTaskCreate(
+        udp_server_task,
+        "wg_io",
+        8192,
+        NULL,
+        5,    /* Priority 5 — lowest in the WG pipeline */
+        NULL
+    );
+
+    if (ret != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create UDP I/O task");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "UDP I/O task started (pri 5)");
+    return true;
 }

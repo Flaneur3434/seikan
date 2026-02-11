@@ -30,20 +30,22 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    /* If you only want to open more logs in the wifi module, you need to make the max level greater than the default level,
-     * and call esp_log_level_set() before esp_wifi_init() to improve the log level of the wifi module. */
+    // If you only want to open more logs in the wifi module, you need to make
+    // the max level greater than the default level, and call
+    // esp_log_level_set() before esp_wifi_init() to improve the log level of
+    // the wifi module.
     esp_log_level_set("wifi", ESP_LOG_DEBUG);
 
     wifi_init_sta();
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
 
-    /* WG subsystem: queues, packet pools, session mutex, Ada init */
+    // WG subsystem: queues, packet pools, session mutex, Ada init
     if (!wg_task_init()) {
         ESP_LOGE(TAG, "WG init failed");
         return;
     }
 
-    /* Timer queue (static, always succeeds) */
+    // Timer queue (static, always succeeds)
     wg_session_timer_init();
 
     if (!wg_session_timer_start()) {
@@ -56,10 +58,13 @@ void app_main(void)
         return;
     }
 
-    /* Start IO task (socket, recvfrom/sendto — talks to WG task via queues) */
-    xTaskCreate(udp_server_task, "wg_io", 8192, NULL, 5, NULL);
-    ESP_LOGI(TAG, "IO + WG tasks started");
+    if (!udp_server_task_start()) {
+        ESP_LOGE(TAG, "UDP I/O task failed to start");
+        return;
+    }
 
-    /* app_main() returns here -- FreeRTOS deletes the main task.
-     * Both tasks continue running independently. */
+    ESP_LOGI(TAG, "All tasks started");
+
+    // app_main() returns here -- FreeRTOS deletes the main task.
+    // Both tasks continue running independently.
 }
