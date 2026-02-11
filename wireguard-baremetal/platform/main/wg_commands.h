@@ -10,8 +10,7 @@
  * never collide with WireGuard message types (1-4).
  */
 
-#ifndef WG_COMMANDS_H
-#define WG_COMMANDS_H
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -61,5 +60,3 @@ void wg_command_dispatch(uint8_t cmd, const wg_rx_msg_t *rx_msg);
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* WG_COMMANDS_H */

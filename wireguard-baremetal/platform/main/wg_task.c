@@ -30,7 +30,7 @@ static const char *TAG = "wg_task";
 #define RX_QUEUE_DEPTH 4
 #define TX_QUEUE_DEPTH 4
 
-/* Static backing storage — lives in BSS, zero heap cost */
+/* Static backing storage */
 static StaticQueue_t s_rx_queue_buf;
 static uint8_t s_rx_queue_storage[RX_QUEUE_DEPTH * sizeof(wg_rx_msg_t)];
 static StaticQueue_t s_tx_queue_buf;
@@ -80,7 +80,6 @@ static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
     if (a->initiate_rekey)
     {
         ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
-        uint64_t now = wg_clock_now();
 
         uint16_t init_len = 0;
         packet_buffer_t *init_pkt =
@@ -93,18 +92,19 @@ static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
                 .tx_len = init_len,
                 .peer = get_peer_endpoint(peer),
             };
+            
             if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
             {
-                /* Sent — mark rekey in progress so the timer
-                 * doesn't fire initiate_rekey again while we
-                 * wait for the handshake response. */
-                session_set_rekey_flag(peer, now);
+                // Sent — mark rekey in progress so the timer doesn't fire
+                // initiate_rekey again while we wait for the handshake
+                // response.
+                session_set_rekey_flag(peer, wg_clock_now());
                 ESP_LOGI(TAG, "<< Rekey Initiation (%u bytes)",
                          init_len);
             }
             else
             {
-                /* TX queue full — free the buffer, retry next tick */
+                // TX queue full — free the buffer, retry next tick
                 tx_pool_free(init_pkt);
                 ESP_LOGW(TAG, "TX queue full, rekey retry next tick");
             }
@@ -128,6 +128,7 @@ static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
                 .tx_len = ka_len,
                 .peer = get_peer_endpoint(peer),
             };
+
             if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
             {
                 ESP_LOGI(TAG, "Peer %u: keepalive sent (%u bytes)",
@@ -135,6 +136,8 @@ static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
             }
             else
             {
+                // TX queue full — free the buffer, drop keepalive message
+                // (re-try next keepalive epoch)
                 tx_pool_free(ka_pkt);
                 ESP_LOGW(TAG, "TX queue full, keepalive dropped");
             }
@@ -159,7 +162,7 @@ static void wg_task(void *pvParameters)
 
     while (1)
     {
-        /* ── Drain timer action queue (non-blocking) ── */
+        // Drain timer action queue (non-blocking)
         wg_timer_msg_t tmr_msg;
         while (xQueueReceive(g_wg_timer_queue, &tmr_msg, 0) == pdTRUE)
         {
@@ -169,12 +172,13 @@ static void wg_task(void *pvParameters)
             wg_session_action(a, peer);
         }
 
-        /* ── Block until the IO thread sends us a packet ── */
-        /* Use 100 ms timeout so timer actions get drained even when
-         * no packets arrive (idle peer keepalive, rekey, expiry). */
-        if (xQueueReceive(g_wg_rx_queue, &rx_msg,
-                          pdMS_TO_TICKS(100)) != pdTRUE)
+        // Block until the IO thread sends us a packet
+        // Use 100 ms timeout so timer actions get drained even when
+        // no packets arrive (idle peer keepalive, rekey, expiry).
+        if (xQueueReceive(g_wg_rx_queue, &rx_msg, pdMS_TO_TICKS(100)) != pdTRUE)
+        {
             continue;
+        }
 
         packet_buffer_t *rx_buf = rx_msg.rx_buf;
         uint8_t msg_type = rx_buf->data[0];
@@ -182,27 +186,27 @@ static void wg_task(void *pvParameters)
         /* Endpoint update is deferred until AFTER crypto verification.
          * Per WireGuard §6.5: only update a peer's endpoint from the
          * outer UDP source address of a cryptographically authenticated
-         * packet.  This prevents an attacker from redirecting traffic
+         * packet. This prevents an attacker from redirecting traffic
          * by sending spoofed packets from a different address. */
 
-        /* ── Test commands from Python suite (bit 7 set) ── */
+        // Test commands from Python suite (bit 7 set)
         if (wg_is_command(msg_type))
         {
             wg_command_dispatch(msg_type, &rx_msg);
             continue;
         }
 
-        /* ── Normal path: hand to Ada ── */
+        // Nominal path: hand to Ada
         uint8_t pt_buf[WG_MAX_PLAINTEXT];
         uint16_t pt_len = 0;
         wg_action_t action = wg_receive(rx_buf, pt_buf, &pt_len);
-        /* rx_buf is now owned by Ada (freed internally) */
+        // rx_buf is now owned by Ada (freed internally)
 
         switch (action)
         {
         case WG_ACTION_SEND_RESPONSE:
         {
-            /* Initiation processed — build and send the response */
+            // Initiation processed — build and send the response
             uint16_t resp_len = 0;
             packet_buffer_t *resp_pkt =
                 (packet_buffer_t *)wg_create_response(&resp_len);
@@ -215,7 +219,7 @@ static void wg_task(void *pvParameters)
 
             ESP_LOGI(TAG, "<< Handshake Response (%u bytes)", resp_len);
 
-            /* §6.5: crypto succeeded — safe to learn endpoint */
+            // §6.5: crypto succeeded — safe to learn endpoint
             update_peer_endpoint(1, &rx_msg.peer);
 
             wg_tx_msg_t tx_msg = {
@@ -223,18 +227,20 @@ static void wg_task(void *pvParameters)
                 .tx_len = resp_len,
                 .peer   = rx_msg.peer,
             };
+
+            // Network I/O handed by different thread, enqueue response (blocking)
             xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY);
             break;
         }
 
         case WG_ACTION_RX_DECRYPTION_SUCCESS:
         {
-            /* Transport data decrypted successfully */
+            // Transport data decrypted successfully
             update_peer_endpoint(1, &rx_msg.peer);
 
             ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext)", pt_len);
 
-            /* Echo mode: re-encrypt and send back (test-only) */
+            // Echo mode: re-encrypt and send back (test-only)
             if (wg_echo_enabled())
             {
                 uint16_t tx_len = 0;
@@ -256,12 +262,14 @@ static void wg_task(void *pvParameters)
                 };
                 xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY);
             }
+
+            // TODO: do something with plaintext in the future
             break;
         }
 
         case WG_ACTION_NONE:
-            /* Handshake response processed or keepalive received.
-             * Crypto verified — safe to update endpoint. */
+            // Handshake response processed or keepalive received.
+            // Crypto verified — safe to update endpoint.
             update_peer_endpoint(1, &rx_msg.peer);
             ESP_LOGI(TAG, "<< Processed (no reply needed)");
             break;
@@ -280,7 +288,7 @@ static void wg_task(void *pvParameters)
 
 bool wg_task_init(void)
 {
-    /* Create inter-thread queues (static allocation, zero heap) */
+    // Create inter-thread queues
     g_wg_rx_queue = xQueueCreateStatic(
         RX_QUEUE_DEPTH, sizeof(wg_rx_msg_t),
         s_rx_queue_storage, &s_rx_queue_buf);
@@ -288,7 +296,7 @@ bool wg_task_init(void)
         TX_QUEUE_DEPTH, sizeof(wg_tx_msg_t),
         s_tx_queue_storage, &s_tx_queue_buf);
 
-    /* Initialize pools with static semaphores, then Ada subsystem */
+    // Initialize pools with static semaphores and Ada subsystem structures
     packet_pool_init();
 
     if (!wg_init())

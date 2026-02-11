@@ -1,30 +1,28 @@
 /**
  * @file udp_server.h
- * @brief UDP I/O thread -- pure socket I/O, no protocol logic.
- *
- * Receives packets via recvfrom(), enqueues to the WG protocol task,
- * dequeues TX results and sends via sendto().
- *
- * Requires wg_task_start() to have been called first.
+ * @brief UDP I/O thread — pure socket I/O, no protocol logic.
  */
 
-#ifndef UDP_SERVER_H
-#define UDP_SERVER_H
+#pragma once
+
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * FreeRTOS task function for the UDP I/O thread.
+ * Spawn the UDP I/O task.
  *
- * Binds to port 51820, runs the recvfrom/sendto loop.
- * Pass to xTaskCreate() after wg_task_start() succeeds.
+ * Binds to port 51820, runs the recvfrom/sendto loop at priority 5
+ * (lowest in the WG pipeline).
+ *
+ * Must be called after wg_task_init() and wg_task_start().
+ *
+ * @return true on success, false if xTaskCreate failed.
  */
-void udp_server_task(void *pvParameters);
+bool udp_server_task_start(void);
 
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* UDP_SERVER_H */

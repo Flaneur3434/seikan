@@ -3,7 +3,7 @@
  * @brief Session timer task — evaluates WireGuard peer timers.
  *
  * This task runs at priority 7 (highest in the WG pipeline) and:
- *   1. Sleeps for 1 second (vTaskDelay)
+ *   1. Sleeps for 1 second
  *   2. Calls Ada's session_tick_all() which evaluates all peer timers
  *      under a single session-mutex hold
  *   3. Enqueues any non-empty actions to g_wg_timer_queue
@@ -29,10 +29,9 @@ static const char *TAG = "wg_timer";
 /* Queue depth: one action per peer, with some headroom */
 #define TIMER_QUEUE_DEPTH 4
 
-/* Ada-exported: evaluate all peer timers under session mutex */
+/* Ada-exported */
 extern void session_tick_all(uint64_t now, wg_timer_action_t actions[]);
 
-/* Static backing storage — lives in BSS, zero heap cost */
 static StaticQueue_t s_timer_queue_buf;
 static uint8_t s_timer_queue_storage[TIMER_QUEUE_DEPTH * sizeof(wg_timer_msg_t)];
 
@@ -48,18 +47,16 @@ static void session_timer_task(void *pvParameters)
     (void)pvParameters;
     wg_timer_action_t actions[WG_MAX_PEERS];
 
-    ESP_LOGI(TAG, "Session timer task running (1 s tick)");
-
     while (1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
 
         uint64_t now = wg_clock_now();
 
-        /* Ada evaluates all peer timers under session mutex */
+        // Ada evaluates all peer timers under session mutex
         session_tick_all(now, actions);
 
-        /* Enqueue any non-empty actions for the WG task to dispatch */
+        // Enqueue any non-empty actions for the WG task to dispatch
         for (unsigned int i = 0; i < WG_MAX_PEERS; i++)
         {
             const wg_timer_action_t *a = &actions[i];
@@ -70,8 +67,8 @@ static void session_timer_task(void *pvParameters)
                     .peer   = i + 1,  /* Ada Peer_Index is 1-based */
                     .action = *a,
                 };
-                /* Non-blocking: if queue is full, drop (timer will
-                 * re-evaluate next tick anyway). */
+                // Non-blocking: if queue is full, drop (timer will re-evaluate
+                // next tick anyway).
                 if (xQueueSend(g_wg_timer_queue, &msg, 0) != pdTRUE)
                 {
                     ESP_LOGW(TAG, "Timer queue full, dropping peer %u", i + 1);
@@ -93,14 +90,16 @@ bool wg_session_timer_init(void)
         s_timer_queue_storage,
         &s_timer_queue_buf);
 
-    ESP_LOGI(TAG, "Session timer queue initialized");
+    ESP_LOGD(TAG, "Session timer queue initialized");
+
+    // Create the session table semaphore and initialize all session state
+    wg_session_init();
+
     return true;
 }
 
 bool wg_session_timer_start(void)
-{
-    wg_session_init();
-    
+{   
     BaseType_t ret = xTaskCreate(
         session_timer_task,
         "wg_timer",
