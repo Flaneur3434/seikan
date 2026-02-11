@@ -1472,11 +1472,18 @@ class TestEsp32SessionLifecycle:
 
     A single test walks through the full timeline:
       T=0    Handshake completes (session active)
-      T~120  Rekey initiation fires (REKEY_AFTER_TIME)
-      T~120  Rekey flag set (no duplicate initiation)
-      T~180  Session expires (REJECT_AFTER_TIME, Python never responded)
+      T=0    Python sends one data packet (sets ESP32 Last_Received)
+      T~15   §6.2 unresponsive peer detection fires (since_recv >= 15)
+      T~15   Rekey flag set, retries every 5 s
+      T~105  Rekey attempt times out (90 s window) → session expired
 
-    Duration: ~200 s.
+    Because Python sends data in Phase 1 (setting Last_Received) and
+    then goes silent, the §6.2 path triggers at ~15 s — much earlier
+    than the §6.1 REKEY_AFTER_TIME (120 s) path.  The 90 s rekey
+    window then expires at ~105 s via "rekey timed out", well before
+    REJECT_AFTER_TIME (180 s).
+
+    Duration: ~120 s.
     """
 
     @pytest.fixture(autouse=True)
@@ -1492,7 +1499,9 @@ class TestEsp32SessionLifecycle:
         sock, send_key, _, rx_idx = _do_handshake(dut, ip)
         try:
             # ── Phase 1: Fresh session (0–10 s) ──
-            # Send a transport packet to prove session is alive
+            # Send a transport packet to prove session is alive.
+            # This sets ESP32's Last_Received, so going silent will
+            # trigger §6.2 unresponsive peer detection at ~T=15.
             pkt = build_transport_packet(
                 send_key, rx_idx, 0, b"lifecycle-test"
             )
@@ -1503,13 +1512,16 @@ class TestEsp32SessionLifecycle:
             time.sleep(5)
             with pytest.raises(Exception):
                 dut.expect(
-                    re.compile(rb"(?:initiating rekey|session expired)"),
+                    re.compile(rb"(?:initiating rekey|expiring session)"),
                     timeout=2,
                 )
 
-            # ── Phase 2: Wait for rekey (→ ~120 s) ──
+            # ── Phase 2: Wait for rekey (→ ~15 s via §6.2) ──
+            # Python is silent → since_recv grows past 15 s →
+            # unresponsive peer detection fires initiate_rekey.
             dut.expect(
-                "initiating rekey", timeout=REKEY_AFTER_TIME + 10
+                "initiating rekey",
+                timeout=KEEPALIVE_TIMEOUT + REKEY_TIMEOUT + 15,
             )
 
             # ── Phase 3: No immediate duplicate (retry gated to 5 s) ──
@@ -1519,10 +1531,14 @@ class TestEsp32SessionLifecycle:
             # Retry arrives within the next ~6 s
             dut.expect("initiating rekey", timeout=REKEY_TIMEOUT + 5)
 
-            # ── Phase 4: Session expires (→ ~180 s) ──
-            # Remaining wait: ~180 - ~130 = ~50 s plus margin
+            # ── Phase 4: Session ends (rekey timed out at ~T=105) ──
+            # The 90 s rekey-attempt window started at ~T=15 and
+            # expires at ~T=105.  Match "expiring session" which is
+            # the common log suffix for both session_expired and
+            # rekey_timed_out paths.
             dut.expect(
-                "session expired", timeout=REJECT_AFTER_TIME - REKEY_AFTER_TIME + 20
+                "expiring session",
+                timeout=REKEY_ATTEMPT_TIME + 15,
             )
 
             # ── Phase 5: After expiry, timer is quiet again ──
@@ -1530,7 +1546,7 @@ class TestEsp32SessionLifecycle:
             with pytest.raises(Exception):
                 dut.expect(
                     re.compile(
-                        rb"(?:initiating rekey|session expired|rekey timed)"
+                        rb"(?:initiating rekey|expiring session)"
                     ),
                     timeout=2,
                 )
