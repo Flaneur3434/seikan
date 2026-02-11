@@ -22,6 +22,7 @@ from wg_noise import (
     derive_transport_keys,
     build_transport_packet,
     parse_transport_packet,
+    build_echo_mode_command,
     aead_encrypt,
     aead_decrypt,
     MSG_TYPE_TRANSPORT,
@@ -343,9 +344,10 @@ class TestEsp32Transport:
 
     @pytest.fixture
     def transport_session(self, dut, wg_peer, esp32_addr):
-        """Complete handshake, yield (sock, send_key, recv_key, receiver_index).
+        """Complete handshake, enable echo mode, yield (sock, send_key, recv_key, receiver_index).
 
         The socket is automatically closed after the test.
+        Echo mode is enabled so the ESP32 echoes decrypted data back.
         """
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(UDP_TIMEOUT)
@@ -363,6 +365,10 @@ class TestEsp32Transport:
 
             # — Derive transport keys (initiator side) —
             send_key, recv_key = derive_transport_keys(final_state.chaining_key)
+
+            # — Enable echo mode so ESP32 echoes transport data —
+            sock.sendto(build_echo_mode_command(True), esp32_addr)
+            dut.expect("Echo mode ON", timeout=5)
 
             yield sock, send_key, recv_key, final_state.remote_index
         finally:

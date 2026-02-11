@@ -24,6 +24,10 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 # ── Protocol constants ────────────────────────────────────────────────
 
+# ── Test-command IDs (must match platform/main/wg_commands.h) ─────────
+WG_CMD_INITIATE_HANDSHAKE = 0xFF
+WG_CMD_SET_ECHO_MODE      = 0xFE
+
 CONSTRUCTION = b"Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
 IDENTIFIER = b"WireGuard v1 zx2c4 Jason@zx2c4.com"
 LABEL_MAC1 = b"mac1----"
@@ -180,6 +184,9 @@ def parse_transport_packet(
 
     Returns (receiver_index, counter, plaintext).
     Raises on authentication failure.
+
+    For data packets the plaintext length is > 0.  Use
+    :func:`parse_keepalive_packet` for zero-length payloads.
     """
     assert len(packet) > TRANSPORT_HEADER_SIZE + AEAD_TAG_SIZE
     assert packet[0] == MSG_TYPE_TRANSPORT
@@ -189,6 +196,54 @@ def parse_transport_packet(
     ciphertext_tag = packet[TRANSPORT_HEADER_SIZE:]
     plaintext = aead_decrypt(key, counter, ciphertext_tag, header)
     return receiver_index, counter, plaintext
+
+
+# Keepalive = Type 4 with zero-length plaintext.
+# On the wire: 16-byte header + 16-byte AEAD tag = 32 bytes.
+KEEPALIVE_SIZE = TRANSPORT_HEADER_SIZE + AEAD_TAG_SIZE
+
+
+def build_keepalive_packet(
+    key: bytes,
+    receiver_index: int,
+    counter: int,
+) -> bytes:
+    """Build a WireGuard keepalive packet (Type 4, empty plaintext)."""
+    return build_transport_packet(key, receiver_index, counter, plaintext=b"")
+
+
+def parse_keepalive_packet(
+    key: bytes,
+    packet: bytes,
+) -> tuple[int, int]:
+    """Parse and authenticate a WireGuard keepalive packet.
+
+    Returns (receiver_index, counter).
+    Raises on authentication failure.  Asserts the decrypted plaintext
+    is empty (zero-length).
+    """
+    assert len(packet) == KEEPALIVE_SIZE, (
+        f"keepalive must be {KEEPALIVE_SIZE} bytes, got {len(packet)}"
+    )
+    assert packet[0] == MSG_TYPE_TRANSPORT
+
+    header = packet[:TRANSPORT_HEADER_SIZE]
+    _, receiver_index, counter = struct.unpack("<BxxxIQ", header)
+    ciphertext_tag = packet[TRANSPORT_HEADER_SIZE:]
+    plaintext = aead_decrypt(key, counter, ciphertext_tag, header)
+    assert plaintext == b"", f"keepalive plaintext must be empty, got {len(plaintext)} bytes"
+    return receiver_index, counter
+
+
+# ── Test-suite command packets ───────────────────────────────────────
+
+def build_echo_mode_command(enable: bool) -> bytes:
+    """Build a 2-byte echo-mode command packet for the ESP32.
+
+    Byte 0: WG_CMD_SET_ECHO_MODE (0xFE)
+    Byte 1: 0x01 (enable) or 0x00 (disable)
+    """
+    return bytes([WG_CMD_SET_ECHO_MODE, 0x01 if enable else 0x00])
 
 
 # ── WireGuard peer ───────────────────────────────────────────────────
