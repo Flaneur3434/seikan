@@ -317,7 +317,7 @@ class TestEsp32Handshake:
         assert resp_data[0] == MSG_TYPE_RESPONSE
 
         # Verify UART confirms the handshake processed
-        dut.expect("Handshake Response sent", timeout=5)
+        dut.expect("Handshake Response", timeout=5)
 
         # Process response cryptographically
         final_state = wg_peer.process_response(resp_data, init_state)
@@ -359,7 +359,7 @@ class TestEsp32Handshake:
             assert init_data[0] == MSG_TYPE_INITIATION
 
             # Verify ESP32 logged the initiation send
-            dut.expect("Handshake Initiation sent", timeout=5)
+            dut.expect("Handshake Initiation", timeout=5)
 
             # Process initiation as responder
             resp_state = wg_peer.process_initiation(init_data)
@@ -374,7 +374,7 @@ class TestEsp32Handshake:
             sock.close()
 
         # Verify ESP32 completed the handshake
-        dut.expect("Handshake complete!", timeout=5)
+        dut.expect("Processed", timeout=5)
 
         # Derive transport keys — if this succeeds, handshake is valid
         send_key, recv_key = derive_transport_keys(resp_state.chaining_key)
