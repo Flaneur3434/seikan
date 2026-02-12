@@ -1,6 +1,5 @@
 --  Session.Timer - Implementation
 
-with Session.Timers;
 package body Session.Timers
   with SPARK_Mode => On
 is
@@ -28,12 +27,12 @@ is
      (Peer : Peer_State;
       Now  : Timer.Clock.Timestamp) return Timer_Action
    is
-      A : Timer_Action;
+      A : Timer_Action := No_Action;
       Age : Unsigned_64;
    begin
       --  Skip inactive peers
       if not Peer.Active or else not Peer.Current.Valid then
-         return A; -- Empty Timer_Action
+         return No_Action;
       end if;
 
       --  How old is the current session?
@@ -42,7 +41,7 @@ is
       --  1. Session expiry — Reject_After_Time exceeded
       --     This is the hardest deadline: drop the session entirely.
       if Age >= Reject_After_Time_S then
-         A.Primary := Session.Timers.Primary_Session_Expired;
+         A.Session_Expired := True;
          --  No point checking other timers if session is dead
          return A;
       end if;
@@ -51,21 +50,19 @@ is
       --     Reject_After_Messages → expire immediately
       --     Rekey_After_Messages  → initiate rekey
       if Peer.Current.Send_Counter >= Reject_After_Messages then
-         A.Primary := Session.Timers.Primary_Session_Expired;
+         A.Session_Expired := True;
          return A;
       end if;
 
       if Peer.Current.Send_Counter >= Rekey_After_Messages then
-         if Peer.Rekey.Phase = Retry_Ready then
-            A.Primary := Session.Timers.Primary_Initiate_Rekey;
-            Peer.Rekey.Phase := Waiting_For_Response;
+         if not Peer.Rekey_Attempted then
+            A.Initiate_Rekey := True;
          end if;
       end if;
 
       --  3. Time-based rekey — Rekey_After_Time exceeded
-      if Age >= Rekey_After_Time_S and then Peer.Rekey.Phase = Retry_Ready then
-         A.Primary := Session.Timers.Primary_Initiate_Rekey;
-         Peer.Rekey.Phase := Waiting_For_Response;
+      if Age >= Rekey_After_Time_S and then not Peer.Rekey_Attempted then
+         A.Initiate_Rekey := True;
       end if;
 
       --  4. Rekey attempt timeout — Rekey_Attempt_Time exceeded
@@ -76,7 +73,7 @@ is
       --     response.  Retry every Rekey_Timeout (5 s).  If the whole
       --     attempt has been going for >= Rekey_Attempt_Time (90 s),
       --     give up.
-      if Peer.Rekey.Phase = Waiting_For_Response then
+      if Peer.Rekey_Attempted then
          declare
             Attempt_Elapsed : constant Unsigned_64 :=
               Elapsed (Peer.Rekey_Attempt_Start, Now);
@@ -84,9 +81,9 @@ is
               Elapsed (Peer.Rekey_Last_Sent, Now);
          begin
             if Attempt_Elapsed >= Rekey_Attempt_Time_S then
-               A.Primary := Session.Timers.Primary_Rekey_Timed_Out;
+               A.Rekey_Timed_Out := True;
             elsif Since_Last_Init >= Rekey_Timeout_S then
-               A.Primary := Session.Timers.Primary_Initiate_Rekey;
+               A.Initiate_Rekey := True;
             end if;
          end;
       end if;
@@ -104,7 +101,7 @@ is
             if Since_Recv < Keepalive_Timeout_S
               and then Since_Sent >= Keepalive_Timeout_S
             then
-               A.Effects (Effect_Send_Keepalive) := True;
+               A.Send_Keepalive := True;
             end if;
          end;
       end if;
@@ -116,14 +113,14 @@ is
       --     a handshake.  Retries are handled by condition 4 above
       --     (once Rekey_Attempted is True after the C side sends).
       if Peer.Last_Received /= Timer.Clock.Never
-        and then Peer.Rekey.Phase = Waiting_For_Response
+        and then not Peer.Rekey_Attempted
       then
          declare
             Since_Recv : constant Unsigned_64 :=
               Elapsed (Peer.Last_Received, Now);
          begin
             if Since_Recv >= Keepalive_Timeout_S + Rekey_Timeout_S then
-               A.Primary := Primary_Initiate_Rekey;
+               A.Initiate_Rekey := True;
             end if;
          end;
       end if;
