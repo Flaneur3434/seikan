@@ -2,7 +2,6 @@
 
 with Crypto.KDF;
 with Crypto.Helper;
-with Session;
 
 package body Session
   with SPARK_Mode => On
@@ -13,7 +12,8 @@ is
    ---------------------------------------------------------------------------
 
    --  Instantiate secure wipe for key and handshake types
-   procedure Wipe_Keypair_Rec is new Crypto.Helper.Generic_Memzero (Keypair);
+   procedure Wipe_Keypair_Rec is new
+     Crypto.Helper.Generic_Memzero (Keypair);
 
    procedure Wipe_HS_State is new
      Crypto.Helper.Generic_Memzero (Handshake.Handshake_State);
@@ -91,22 +91,21 @@ is
       --  Build keypair based on role
       case HS.Role is
          when Handshake.Role_Initiator =>
-            KP.Send_Key := Key1;
+            KP.Send_Key    := Key1;
             KP.Receive_Key := Key2;
-
          when Handshake.Role_Responder =>
-            KP.Send_Key := Key2;
+            KP.Send_Key    := Key2;
             KP.Receive_Key := Key1;
       end case;
 
-      KP.Sender_Index := Unsigned_32 (HS.Local_Index);
+      KP.Sender_Index   := Unsigned_32 (HS.Local_Index);
       KP.Receiver_Index := Unsigned_32 (HS.Remote_Index);
-      KP.Send_Counter := 0;
+      KP.Send_Counter   := 0;
       Replay.Reset (KP.Replay_Filter);
-      KP.Created_At := Now;
-      KP.ID := Next_KP_ID;
-      KP.Valid := True;
-      Next_KP_ID := Next_KP_ID + 1;
+      KP.Created_At     := Now;
+      KP.ID             := Next_KP_ID;
+      KP.Valid          := True;
+      Next_KP_ID        := Next_KP_ID + 1;
 
       --  Place in the Next slot
       if Peers (Peer).Next.Valid then
@@ -136,16 +135,16 @@ is
 
       --  Rotate: Previous ← Current, Current ← Next, Next ← null
       Peers (Peer).Previous := Peers (Peer).Current;
-      Peers (Peer).Current := Peers (Peer).Next;
-      Peers (Peer).Next := Null_Keypair;
+      Peers (Peer).Current  := Peers (Peer).Next;
+      Peers (Peer).Next     := Null_Keypair;
 
       --  Update handshake timestamp
       Peers (Peer).Last_Handshake := Peers (Peer).Current.Created_At;
 
       --  Clear rekey state since we have a new session
-      Peers (Peer).Rekey_Attempted := False;
+      Peers (Peer).Rekey_Attempted     := False;
       Peers (Peer).Rekey_Attempt_Start := Timer.Clock.Never;
-      Peers (Peer).Rekey_Last_Sent := Timer.Clock.Never;
+      Peers (Peer).Rekey_Last_Sent     := Timer.Clock.Never;
    end Activate_Next;
 
    ---------------------------------------------------------------------------
@@ -156,7 +155,8 @@ is
      (Peer   : Peer_Index;
       HS     : in out Handshake.Handshake_State;
       Now    : Timer.Clock.Timestamp;
-      Result : out Status) is
+      Result : out Status)
+   is
    begin
       Lock;
       Derive_Keypair (Peer, HS, Now, Result);
@@ -212,7 +212,9 @@ is
       Unlock;
    end Mark_Sent;
 
-   procedure Mark_Received (Peer : Peer_Index; Now : Timer.Clock.Timestamp) is
+   procedure Mark_Received
+     (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
+   is
    begin
       Lock;
       Peers (Peer).Last_Received := Now;
@@ -224,7 +226,8 @@ is
    ---------------------------------------------------------------------------
 
    procedure Increment_Send_Counter
-     (Peer : Peer_Index; Counter : out Unsigned_64) is
+     (Peer : Peer_Index; Counter : out Unsigned_64)
+   is
    begin
       Lock;
       Counter := Peers (Peer).Current.Send_Counter;
@@ -237,13 +240,11 @@ is
    ---------------------------------------------------------------------------
 
    procedure Expire_Session (Peer : Peer_Index)
-   with
-     Refined_Post =>
-       Is_Mtx_Initialized
-       and then not Threads.Mutex.Is_Locked (Mtx)
-       and then not Peers (Peer).Current.Valid
-       and then not Peers (Peer).Previous.Valid
-       and then not Peers (Peer).Next.Valid
+   with Refined_Post => Is_Mtx_Initialized
+                        and then not Threads.Mutex.Is_Locked (Mtx)
+                        and then not Peers (Peer).Current.Valid
+                        and then not Peers (Peer).Previous.Valid
+                        and then not Peers (Peer).Next.Valid
    is
    begin
       Lock;
@@ -256,30 +257,31 @@ is
       if Peers (Peer).Next.Valid then
          Wipe_Keypair_Rec (Peers (Peer).Next);
       end if;
-      Peers (Peer).Current := Null_Keypair;
+      Peers (Peer).Current  := Null_Keypair;
       Peers (Peer).Previous := Null_Keypair;
-      Peers (Peer).Next := Null_Keypair;
+      Peers (Peer).Next     := Null_Keypair;
 
       --  Clear rekey state so the peer isn't stuck with
       --  Rekey_Attempted = True after expiry.
-      Peers (Peer).Mode := Inactive;
-      Peers (Peer).Rekey.Start_At := Timer.Clock.Never;
-      Peers (Peer).Rekey.Last_Sent := Timer.Clock.Never;
+      Peers (Peer).Rekey_Attempted     := False;
+      Peers (Peer).Rekey_Attempt_Start := Timer.Clock.Never;
+      Peers (Peer).Rekey_Last_Sent     := Timer.Clock.Never;
 
       Unlock;
    end Expire_Session;
 
-   procedure Set_Rekey_Flag (Peer : Peer_Index; Now : Timer.Clock.Timestamp) is
+   procedure Set_Rekey_Flag
+     (Peer : Peer_Index; Now : Timer.Clock.Timestamp) is
    begin
       Lock;
       --  Only set the attempt window start on the FIRST call.
       --  Retries must not reset the 90 s Rekey_Attempt_Time window.
       if not Peers (Peer).Rekey_Attempted then
-         Peers (Peer).Mode := Rekeying;
-         Peers (Peer).Rekey.Start_At := Now;
+         Peers (Peer).Rekey_Attempted     := True;
+         Peers (Peer).Rekey_Attempt_Start := Now;
       end if;
       --  Always record when the last initiation was sent (retry gating).
-      Peers (Peer).Rekey.Last_Sent := Now;
+      Peers (Peer).Rekey_Last_Sent := Now;
       Unlock;
    end Set_Rekey_Flag;
 
@@ -288,7 +290,10 @@ is
    ---------------------------------------------------------------------------
 
    procedure Validate_And_Update_Replay
-     (Peer : Peer_Index; Counter : Unsigned_64; Accepted : out Boolean) is
+     (Peer     : Peer_Index;
+      Counter  : Unsigned_64;
+      Accepted : out Boolean)
+   is
    begin
       Lock;
       Replay.Validate_Counter
