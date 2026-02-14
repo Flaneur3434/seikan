@@ -19,7 +19,7 @@ is
    generic
       type T (<>) is private;
    procedure Generic_Memzero (Item : in out T)
-   with Global => null, Depends => (Item => null);
+   with Global => null, Depends => (Item => Item);
 
    --  Constant-time comparison of two buffers
    --  Returns Success if equal, Error_Failed if different
