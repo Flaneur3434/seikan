@@ -64,6 +64,7 @@ is
       Result : out Keypair_Result.Result)
    with
      Global => (In_Out => KP_State),
+     Pre    => not Result'Constrained,
      Post   => HS.Kind = Handshake.State_Empty;
 
    ---------------------------------------------------------------------------
