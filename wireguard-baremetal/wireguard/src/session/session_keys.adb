@@ -65,6 +65,7 @@ is
       if KDF_Result /= Success then
          Wipe_Handshake (HS);
          Result := Keypair_Result.Err (KDF_Error);
+         return;
       end if;
 
       --  Build keypair based on role
