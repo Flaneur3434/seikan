@@ -2,14 +2,14 @@ with Handshake;
 with Replay;
 with Crypto.AEAD;
 with Utils.Result;
-with Timer;
-with Replay;
+with Timer.Clock;
+with Interfaces; use Interfaces;
 
 use type Handshake.Handshake_State_Kind;
 
-private package Session.Keys
+package Session_Keys
   with SPARK_Mode => On,
-  Abstract_State => (KP_State with Part_Of => Session.Peer_States)
+  Abstract_State => (KP_State)
 is
    ---------------------------------------------------------------------------
    --  Keypair — One direction's transport keys + counters
@@ -38,8 +38,8 @@ is
    end record;
 
    Null_Keypair : constant Keypair :=
-     (Send_Key       => [],
-      Receive_Key    => [],
+     (Send_Key       => [others => 0],
+      Receive_Key    => [others => 0],
       Sender_Index   => 0,
       Receiver_Index => 0,
       Send_Counter   => 0,
@@ -47,7 +47,6 @@ is
       Created_At     => Timer.Clock.Never,
       ID             => Null_Keypair_ID,
       Valid          => False);
-
 
    type Keypair_Err is (KDF_Error);
    package Keypair_Result is new Utils.Result (T => Keypair, E => Keypair_Err);
@@ -79,4 +78,4 @@ is
 private
    Next_KP_ID : Keypair_ID := 1 with Part_Of => KP_State;
 
-end Session.Keys;
+end Session_Keys;

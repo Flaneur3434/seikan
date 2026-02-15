@@ -1,7 +1,8 @@
 with Crypto.KDF;
 with Crypto.Helper;
+with Utils; use Utils;
 
-package body Session.Keys
+package body Session_Keys
   with SPARK_Mode => On, Refined_State => (KP_State => Next_KP_ID)
 is
 
@@ -112,4 +113,4 @@ is
    begin
       return KP.Receiver_Index;
    end Receiver_Index;
-end Session.Keys;
+end Session_Keys;
