@@ -28,7 +28,7 @@ is
         else True);
 
    function Tick
-     (Peer : Peer_State; Now : Timer.Clock.Timestamp) return Timer_Action
+     (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp) return Timer_Action
    with Pre => Now > Timer.Clock.Never;
 
    type Timer_Actions is array (Peer_Index) of Timer_Action;
