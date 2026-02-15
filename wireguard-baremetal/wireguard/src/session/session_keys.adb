@@ -87,6 +87,9 @@ is
       KP.Valid := True;
       Next_KP_ID := Next_KP_ID + 1;
 
+      --  Forward secrecy: wipe all ephemeral handshake material
+      Wipe_Handshake (HS);
+
       Result := Keypair_Result.Ok (KP);
    end Derive_Keypair;
 
