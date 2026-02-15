@@ -40,6 +40,22 @@ is
    subtype Peer_Index is Positive range 1 .. Max_Peers;
 
    ---------------------------------------------------------------------------
+   --  Backward-compatible keypair API (re-exported from Session_Keys)
+   ---------------------------------------------------------------------------
+
+   subtype Keypair is Session_Keys.Keypair;
+   subtype Session_Key is Session_Keys.Session_Key;
+
+   function Is_Valid (KP : Keypair) return Boolean
+   renames Session_Keys.Is_Valid;
+   function Send_Key (KP : Keypair) return Session_Key
+   renames Session_Keys.Send_Key;
+   function Receive_Key (KP : Keypair) return Session_Key
+   renames Session_Keys.Receive_Key;
+   function Receiver_Index (KP : Keypair) return Unsigned_32
+   renames Session_Keys.Receiver_Index;
+
+   ---------------------------------------------------------------------------
    --  Peer_State — limited private, visible only to child packages
    ---------------------------------------------------------------------------
 
@@ -102,7 +118,7 @@ is
 
    --  Snapshot the current keypair for a peer into KP.
    --  KP is the sole snapshot — limited type prevents copies.
-   procedure Get_Current (Peer : Peer_Index; KP : out Session_Keys.Keypair)
+   procedure Get_Current (Peer : Peer_Index; KP : out Keypair)
    with
      Global => (Input => Peer_States, In_Out => Mutex_State),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
