@@ -2,11 +2,14 @@
 
 with Crypto.KDF;
 with Crypto.Helper;
-with Session;
+with Utils.Result;
 
 package body Session
-  with SPARK_Mode => On
+  with
+    SPARK_Mode    => On,
+    Refined_State => (Peer_States => Peers, Mutex_State => Mtx)
 is
+   use Session_Keys;
 
    ---------------------------------------------------------------------------
    --  Internal Helpers
@@ -14,25 +17,6 @@ is
 
    --  Instantiate secure wipe for key and handshake types
    procedure Wipe_Keypair_Rec is new Crypto.Helper.Generic_Memzero (Keypair);
-
-   procedure Wipe_HS_State is new
-     Crypto.Helper.Generic_Memzero (Handshake.Handshake_State);
-
-   --  Wipe all handshake ephemeral material and reset to State_Empty.
-   --  Wraps Generic_Memzero with a postcondition SPARK can verify.
-   --  After memzero the Kind field is bit-zero (= State_Empty as the
-   --  first enum literal), but the prover can't see through memzero's
-   --  untyped wipe, so we set Kind explicitly.
-   procedure Wipe_Handshake (HS : in out Handshake.Handshake_State)
-   with Depends => (HS => null), Post => HS.Kind = Handshake.State_Empty
-   is
-   begin
-      Wipe_HS_State (HS);
-      HS.Kind := Handshake.State_Empty;
-   end Wipe_Handshake;
-
-   --  Empty input for KDF2(C, "") derivation
-   Empty_Input : constant Byte_Array (1 .. 0) := (others => 0);
 
    ---------------------------------------------------------------------------
    --  Init
@@ -42,7 +26,7 @@ is
    begin
       Threads.Mutex.Init_From_Handle (Mtx, Sem);
       Peers := (others => Null_Peer);
-      Next_KP_ID := 1;
+      Session_Keys.Init;
    end Init;
 
    ---------------------------------------------------------------------------
@@ -58,66 +42,6 @@ is
    begin
       Threads.Mutex.Unlock (Mtx);
    end Unlock;
-
-   ---------------------------------------------------------------------------
-   --  Derive_Keypair
-   ---------------------------------------------------------------------------
-
-   procedure Derive_Keypair
-     (Peer   : Peer_Index;
-      HS     : in out Handshake.Handshake_State;
-      Now    : Timer.Clock.Timestamp;
-      Result : out Status)
-   is
-      Key1 : Crypto.KDF.KDF_Key;
-      Key2 : Crypto.KDF.KDF_Key;
-      KP   : Keypair;
-   begin
-      --  Derive two keys: KDF2(Chaining_Key, "")
-      --    Key1 = τ1 (initiator's send key)
-      --    Key2 = τ2 (initiator's receive key)
-      Crypto.KDF.KDF2
-        (Key     => HS.Chaining,
-         Input   => Empty_Input,
-         Output1 => Key1,
-         Output2 => Key2,
-         Result  => Result);
-
-      if Result /= Success then
-         Wipe_Handshake (HS);
-         return;
-      end if;
-
-      --  Build keypair based on role
-      case HS.Role is
-         when Handshake.Role_Initiator =>
-            KP.Send_Key := Key1;
-            KP.Receive_Key := Key2;
-
-         when Handshake.Role_Responder =>
-            KP.Send_Key := Key2;
-            KP.Receive_Key := Key1;
-      end case;
-
-      KP.Sender_Index := Unsigned_32 (HS.Local_Index);
-      KP.Receiver_Index := Unsigned_32 (HS.Remote_Index);
-      KP.Send_Counter := 0;
-      Replay.Reset (KP.Replay_Filter);
-      KP.Created_At := Now;
-      KP.ID := Next_KP_ID;
-      KP.Valid := True;
-      Next_KP_ID := Next_KP_ID + 1;
-
-      --  Place in the Next slot
-      if Peers (Peer).Next.Valid then
-         Wipe_Keypair_Rec (Peers (Peer).Next);
-      end if;
-      Peers (Peer).Next := KP;
-      Peers (Peer).Active := True;
-
-      --  Forward secrecy: wipe all ephemeral handshake material
-      Wipe_Handshake (HS);
-   end Derive_Keypair;
 
    ---------------------------------------------------------------------------
    --  Activate_Next
@@ -143,52 +67,52 @@ is
       Peers (Peer).Last_Handshake := Peers (Peer).Current.Created_At;
 
       --  Clear rekey state since we have a new session
-      Peers (Peer).Rekey_Attempted := False;
-      Peers (Peer).Rekey_Attempt_Start := Timer.Clock.Never;
-      Peers (Peer).Rekey_Last_Sent := Timer.Clock.Never;
+      Peers (Peer).Rekey.Phase := Retry_Ready;
+      Peers (Peer).Rekey.Start_At := Timer.Clock.Never;
+      Peers (Peer).Rekey.Last_Sent := Timer.Clock.Never;
    end Activate_Next;
 
    ---------------------------------------------------------------------------
    --  Derive_And_Activate (atomic compound operation)
    ---------------------------------------------------------------------------
 
+   function Mode_Of (P : Peer_Index) return Peer_Mode
+   with Ghost, Global => (Input => Peers)
+   is
+   begin
+      return Peers (P).Mode;
+   end Mode_Of;
+
    procedure Derive_And_Activate
      (Peer   : Peer_Index;
       HS     : in out Handshake.Handshake_State;
       Now    : Timer.Clock.Timestamp;
-      Result : out Status) is
+      Result : out Status)
+   with Refined_Post => Mode_Of (Peer) = Established
+   is
+      Derive_Result : Keypair_Result.Result;
    begin
       Lock;
-      Derive_Keypair (Peer, HS, Now, Result);
-      if Result = Success then
-         Activate_Next (Peer);
-      end if;
+
+      Session_Keys.Derive_Keypair (HS, Now, Derive_Result);
+      case Derive_Result.Kind is
+         when Keypair_Result.Is_Ok  =>
+            --  Place in the Next slot
+            if Peers (Peer).Next.Valid then
+               Wipe_Keypair_Rec (Peers (Peer).Next);
+            end if;
+
+            Peers (Peer).Next := Derive_Result.Ok;
+            Peers (Peer).Active := True;
+
+            Activate_Next (Peer);
+
+         when Keypair_Result.Is_Err =>
+            null;
+      end case;
+
       Unlock;
    end Derive_And_Activate;
-
-   ---------------------------------------------------------------------------
-   --  Keypair Accessors
-   ---------------------------------------------------------------------------
-
-   function Is_Valid (KP : Keypair) return Boolean is
-   begin
-      return KP.Valid;
-   end Is_Valid;
-
-   function Send_Key (KP : Keypair) return Session_Key is
-   begin
-      return KP.Send_Key;
-   end Send_Key;
-
-   function Receive_Key (KP : Keypair) return Session_Key is
-   begin
-      return KP.Receive_Key;
-   end Receive_Key;
-
-   function Receiver_Index (KP : Keypair) return Unsigned_32 is
-   begin
-      return KP.Receiver_Index;
-   end Receiver_Index;
 
    ---------------------------------------------------------------------------
    --  Get_Current
@@ -272,14 +196,16 @@ is
    procedure Set_Rekey_Flag (Peer : Peer_Index; Now : Timer.Clock.Timestamp) is
    begin
       Lock;
+
       --  Only set the attempt window start on the FIRST call.
       --  Retries must not reset the 90 s Rekey_Attempt_Time window.
-      if not Peers (Peer).Rekey_Attempted then
+      if Peers (Peer).Rekey.Phase = Retry_Ready then
          Peers (Peer).Mode := Rekeying;
          Peers (Peer).Rekey.Start_At := Now;
       end if;
       --  Always record when the last initiation was sent (retry gating).
       Peers (Peer).Rekey.Last_Sent := Now;
+
       Unlock;
    end Set_Rekey_Flag;
 

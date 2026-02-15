@@ -5,13 +5,14 @@ with Handshake;
 with Replay;
 with Timer.Clock;
 with Threads.Mutex;
+with Session_Keys;
 
 use type Handshake.Handshake_State_Kind;
 
 package Session
-   with SPARK_Mode => On,
-   Abstract_State => (Peer_States, Mtx, Next_KP_ID)
+  with SPARK_Mode => On, Abstract_State => (Peer_States, Mutex_State)
 is
+
    ---------------------------------------------------------------------------
    --  Constants
    ---------------------------------------------------------------------------
@@ -39,38 +40,10 @@ is
    subtype Peer_Index is Positive range 1 .. Max_Peers;
 
    ---------------------------------------------------------------------------
-   --  Keypair — One direction's transport keys + counters
-   --
-   --  Limited private: callers get exactly one snapshot at a time
-   --  via Get_Current. No copies, no aliases — thread safe by
-   --  construction. Internal slot rotation uses the non-limited
-   --  full type visible in the private section.
-   ---------------------------------------------------------------------------
-
-   subtype Session_Key is Crypto.AEAD.Key_Buffer;
-
-   type Keypair_ID is new Unsigned_32;
-   Null_Keypair_ID : constant Keypair_ID := 0;
-
-   type Keypair is limited private;
-
-   ---------------------------------------------------------------------------
-   --  Keypair accessors (read-only)
-   ---------------------------------------------------------------------------
-
-   function Is_Valid (KP : Keypair) return Boolean;
-   function Send_Key (KP : Keypair) return Session_Key;
-   function Receive_Key (KP : Keypair) return Session_Key;
-   function Receiver_Index (KP : Keypair) return Unsigned_32;
-
-   ---------------------------------------------------------------------------
    --  Peer_State — limited private, visible only to child packages
    ---------------------------------------------------------------------------
 
    type Peer_State is limited private;
-
-   --  TODO: Move to private section later ...
-   type Peer_Mode is (Inactive, Established, Rekeying);
 
    ---------------------------------------------------------------------------
    --  Ghost state — bridges private Mtx into public contracts
@@ -99,11 +72,6 @@ is
    --  Session lifecycle
    ---------------------------------------------------------------------------
 
-   --  TODO: Move to body and use in Refined_Post
-   function Mode_Of (P : Peer_Index) return Peer_Mode
-   with Ghost, Global => (Input => Peer_States);
-
-
    --  Atomic compound operation: derive transport keys from a completed
    --  handshake AND immediately promote the new keypair to Current.
    --
@@ -121,14 +89,12 @@ is
       Now    : Timer.Clock.Timestamp;
       Result : out Status)
    with
-     Global => (In_Out => (Peer_States, Mtx)),
+     Global => (In_Out => (Peer_States, Mutex_State)),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   =>
        Is_Mtx_Initialized
        and then not Is_Mtx_Locked
-       and then HS.Kind = Handshake.State_Empty
-       --  Move to Refined_Post
-       and then Mode_Of (Peer) = Established;
+       and then HS.Kind = Handshake.State_Empty;
 
    ---------------------------------------------------------------------------
    --  Session lookup
@@ -136,9 +102,9 @@ is
 
    --  Snapshot the current keypair for a peer into KP.
    --  KP is the sole snapshot — limited type prevents copies.
-   procedure Get_Current (Peer : Peer_Index; KP : out Keypair)
+   procedure Get_Current (Peer : Peer_Index; KP : out Session_Keys.Keypair)
    with
-     Global => (Input => Peer_States, In_Out => Mtx),
+     Global => (Input => Peer_States, In_Out => Mutex_State),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
@@ -149,14 +115,14 @@ is
    --  Record that we sent a packet to this peer.
    procedure Mark_Sent (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
-     Global => (Output => Peer_States, In_Out => Mtx),
+     Global => (Output => Peer_States, In_Out => Mutex_State),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
    --  Record that we received a valid packet from this peer.
    procedure Mark_Received (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
-     Global => (Output => Peer_States, In_Out => Mtx),
+     Global => (Output => Peer_States, In_Out => Mutex_State),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
@@ -169,7 +135,7 @@ is
    procedure Increment_Send_Counter
      (Peer : Peer_Index; Counter : out Unsigned_64)
    with
-     Global => (In_Out => (Peer_States, Mtx)),
+     Global => (In_Out => (Peer_States, Mutex_State)),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
@@ -182,7 +148,7 @@ is
    procedure Validate_And_Update_Replay
      (Peer : Peer_Index; Counter : Unsigned_64; Accepted : out Boolean)
    with
-     Global => (In_Out => (Peer_States, Mtx)),
+     Global => (In_Out => (Peer_States, Mutex_State)),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
@@ -196,42 +162,19 @@ is
    --  Called on Session_Expired and Rekey_Timed_Out.
    procedure Expire_Session (Peer : Peer_Index)
    with
-     Global => (In_Out => (Peer_States, Mtx)),
+     Global => (In_Out => (Peer_States, Mutex_State)),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
    --  Mark rekey in progress before sending initiation.
    procedure Set_Rekey_Flag (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
-     Global => (In_Out => (Peer_States, Mtx)),
+     Global => (In_Out => (Peer_States, Mutex_State)),
      Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
 
 private
-
-   type Keypair is record
-      Send_Key       : Session_Key;
-      Receive_Key    : Session_Key;
-      Sender_Index   : Unsigned_32;
-      Receiver_Index : Unsigned_32;
-      Send_Counter   : Unsigned_64;
-      Replay_Filter  : Replay.Filter;
-      Created_At     : Timer.Clock.Timestamp;
-      ID             : Keypair_ID;
-      Valid          : Boolean;
-   end record;
-
-   Null_Keypair : constant Keypair :=
-     (Send_Key       => (others => 0),
-      Receive_Key    => (others => 0),
-      Sender_Index   => 0,
-      Receiver_Index => 0,
-      Send_Counter   => 0,
-      Replay_Filter  => Replay.Empty_Filter,
-      Created_At     => Timer.Clock.Never,
-      ID             => Null_Keypair_ID,
-      Valid          => False);
 
    type Peer_Mode is (Inactive, Established, Rekeying);
 
@@ -243,12 +186,11 @@ private
       Phase     : Rekey_Substate;
    end record;
 
-
    type Peer_State is record
       --  Three session slots
-      Current  : Keypair;
-      Previous : Keypair;
-      Next     : Keypair;
+      Current  : Session_Keys.Keypair;
+      Previous : Session_Keys.Keypair;
+      Next     : Session_Keys.Keypair;
 
       --  Timestamps used by timer state machine (checked by Session.Timers.Tick)
       Last_Sent      : Timer.Clock.Timestamp;  --  Last outbound packet
@@ -276,9 +218,9 @@ private
             and then Rekey.Last_Sent /= Timer.Clock.Never);
 
    Null_Peer : constant Peer_State :=
-     (Current        => Null_Keypair,
-      Previous       => Null_Keypair,
-      Next           => Null_Keypair,
+     (Current        => Session_Keys.Null_Keypair,
+      Previous       => Session_Keys.Null_Keypair,
+      Next           => Session_Keys.Null_Keypair,
       Last_Sent      => Timer.Clock.Never,
       Last_Received  => Timer.Clock.Never,
       Last_Handshake => Timer.Clock.Never,
@@ -289,9 +231,10 @@ private
       Active         => False,
       Mode           => Inactive);
 
-   Peers      : array (Peer_Index) of Peer_State := (others => Null_Peer);
-   Mtx        : Threads.Mutex.Mutex_Handle;
-   Next_KP_ID : Keypair_ID := 1;
+   Peers : array (Peer_Index) of Peer_State := (others => Null_Peer)
+   with Part_Of => Peer_States;
+   Mtx   : Threads.Mutex.Mutex_Handle
+   with Part_Of => Mutex_State;
 
    --  Ghost bridge completions
    function Is_Mtx_Initialized return Boolean
@@ -301,29 +244,15 @@ private
 
    procedure Lock
    with
-     Global => (In_Out => Mtx),
+     Global => (In_Out => Mutex_State),
      Pre    => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx),
      Post   => Is_Mtx_Initialized and then Threads.Mutex.Is_Locked (Mtx);
 
    procedure Unlock
    with
-     Global => (In_Out => Mtx),
+     Global => (In_Out => Mutex_State),
      Pre    => Is_Mtx_Initialized and then Threads.Mutex.Is_Locked (Mtx),
      Post   => Is_Mtx_Initialized and then not Threads.Mutex.Is_Locked (Mtx);
-
-   --  Derive transport keys from completed handshake chaining key.
-   --  Places new keypair in the peer's Next slot.
-   --  Wipes handshake ephemeral material — ALWAYS, even on failure.
-   --  Forward secrecy: Post guarantees no handshake material survives.
-   --  Caller holds lock.
-   procedure Derive_Keypair
-     (Peer   : Peer_Index;
-      HS     : in out Handshake.Handshake_State;
-      Now    : Timer.Clock.Timestamp;
-      Result : out Status)
-   with
-     Global => (In_Out => (Peers, Next_KP_ID)),
-     Post   => HS.Kind = Handshake.State_Empty;
 
    --  Promote Next → Current, Current → Previous, Previous → wiped.
    --  Post guarantees: Next slot is always cleared after rotation.
