@@ -45,7 +45,7 @@ is
       --  Order matters: save Current before overwriting.
       Peers (Peer).Previous        := Peers (Peer).Current;
       Peers (Peer).Current         := Peers (Peer).Next;
-      Peers (Peer).Next            := Null_Keypair;
+      Peers (Peer).Next            := (others => <>);
       Peers (Peer).Last_Handshake  := Peers (Peer).Current.Created_At;
       Peers (Peer).Rekey_Start     := Timer.Clock.Never;
       Peers (Peer).Rekey_Last_Sent := Timer.Clock.Never;

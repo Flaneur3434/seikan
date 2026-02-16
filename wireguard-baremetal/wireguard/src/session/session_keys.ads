@@ -23,30 +23,18 @@ is
    subtype Session_Key is Crypto.AEAD.Key_Buffer;
 
    type Keypair_ID is new Unsigned_32;
-   Null_Keypair_ID : constant Keypair_ID := 0;
 
    type Keypair is record
-      Send_Key       : Session_Key;
-      Receive_Key    : Session_Key;
-      Sender_Index   : Unsigned_32;
-      Receiver_Index : Unsigned_32;
-      Send_Counter   : Unsigned_64;
+      Send_Key       : Session_Key := [others => 0];
+      Receive_Key    : Session_Key := [others => 0];
+      Sender_Index   : Unsigned_32 := 0;
+      Receiver_Index : Unsigned_32 := 0;
+      Send_Counter   : Unsigned_64 := 0;
       Replay_Filter  : Replay.Filter;
-      Created_At     : Timer.Clock.Timestamp;
-      ID             : Keypair_ID;
-      Valid          : Boolean;
+      Created_At     : Timer.Clock.Timestamp := Timer.Clock.Never;
+      ID             : Keypair_ID := 0;
+      Valid          : Boolean := False;
    end record;
-
-   Null_Keypair : constant Keypair :=
-     (Send_Key       => [others => 0],
-      Receive_Key    => [others => 0],
-      Sender_Index   => 0,
-      Receiver_Index => 0,
-      Send_Counter   => 0,
-      Replay_Filter  => Replay.Empty_Filter,
-      Created_At     => Timer.Clock.Never,
-      ID             => Null_Keypair_ID,
-      Valid          => False);
 
    type Keypair_Err is (KDF_Error);
    package Keypair_Result is new Utils.Result (T => Keypair, E => Keypair_Err);
