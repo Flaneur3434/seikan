@@ -66,18 +66,20 @@ static struct sockaddr_in get_peer_endpoint(unsigned int peer)
     return empty;
 }
 
-static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
+static void wg_session_action(wg_timer_action_t action, unsigned int peer)
 {
-    if (a->session_expired || a->rekey_timed_out)
+    switch (action)
     {
+    case WG_TIMER_SESSION_EXPIRED:
+    case WG_TIMER_REKEY_TIMED_OUT:
         ESP_LOGW(TAG, "Peer %u: %s — expiring session",
                  peer,
-                 a->session_expired ? "session expired"
-                                    : "rekey timed out");
+                 action == WG_TIMER_SESSION_EXPIRED ? "session expired"
+                                                    : "rekey timed out");
         session_expire(peer);
-    }
+        break;
 
-    if (a->initiate_rekey)
+    case WG_TIMER_INITIATE_REKEY:
     {
         ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
 
@@ -95,16 +97,12 @@ static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
             
             if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
             {
-                // Sent — mark rekey in progress so the timer doesn't fire
-                // initiate_rekey again while we wait for the handshake
-                // response.
                 session_set_rekey_flag(peer, wg_clock_now());
                 ESP_LOGI(TAG, "<< Rekey Initiation (%u bytes)",
                          init_len);
             }
             else
             {
-                // TX queue full — free the buffer, retry next tick
                 tx_pool_free(init_pkt);
                 ESP_LOGW(TAG, "TX queue full, rekey retry next tick");
             }
@@ -113,9 +111,10 @@ static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
         {
             ESP_LOGE(TAG, "Rekey initiation failed, retry next tick");
         }
+        break;
     }
 
-    if (a->send_keepalive)
+    case WG_TIMER_SEND_KEEPALIVE:
     {
         uint16_t ka_len = 0;
         packet_buffer_t *ka_pkt =
@@ -146,6 +145,12 @@ static void wg_session_action(const wg_timer_action_t *a, unsigned int peer)
         {
             ESP_LOGW(TAG, "Peer %u: keepalive failed (no session?)", peer);
         }
+        break;
+    }
+
+    case WG_TIMER_NO_ACTION:
+    default:
+        break;
     }
 }
 
@@ -166,10 +171,7 @@ static void wg_task(void *pvParameters)
         wg_timer_msg_t tmr_msg;
         while (xQueueReceive(g_wg_timer_queue, &tmr_msg, 0) == pdTRUE)
         {
-            const wg_timer_action_t *a = &tmr_msg.action;
-            unsigned int peer = tmr_msg.peer;
-
-            wg_session_action(a, peer);
+            wg_session_action(tmr_msg.action, tmr_msg.peer);
         }
 
         // Block until the IO thread sends us a packet

@@ -6,10 +6,6 @@ package body WG_Sessions
    with SPARK_Mode => Off
 is
 
-   --  Boolean → Unsigned_8 for C struct (0 = false, 1 = true)
-   function B2U (V : Boolean) return Interfaces.Unsigned_8 is
-     (if V then 1 else 0);
-
    ---------------------------------------------------------------------------
    --  Initialization
    ---------------------------------------------------------------------------
@@ -32,16 +28,8 @@ is
    begin
       Session.Timers.Tick_All (Now, Ada_Actions);
       for I in Session.Peer_Index loop
-         declare
-            A : Session.Timers.Timer_Action renames
-              Ada_Actions (I);
-         begin
-            Actions (I - 1) :=
-              (Send_Keepalive  => B2U (A.Send_Keepalive),
-               Initiate_Rekey  => B2U (A.Initiate_Rekey),
-               Session_Expired => B2U (A.Session_Expired),
-               Rekey_Timed_Out => B2U (A.Rekey_Timed_Out));
-         end;
+         Actions (I - 1) :=
+           Session.Timers.Timer_Action'Pos (Ada_Actions (I));
       end loop;
    end C_Session_Tick_All;
 

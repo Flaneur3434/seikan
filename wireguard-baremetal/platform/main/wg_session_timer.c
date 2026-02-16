@@ -30,7 +30,7 @@ static const char *TAG = "wg_timer";
 #define TIMER_QUEUE_DEPTH 4
 
 /* Ada-exported */
-extern void session_tick_all(uint64_t now, wg_timer_action_t actions[]);
+extern void session_tick_all(uint64_t now, uint8_t actions[]);
 
 static StaticQueue_t s_timer_queue_buf;
 static uint8_t s_timer_queue_storage[TIMER_QUEUE_DEPTH * sizeof(wg_timer_msg_t)];
@@ -45,7 +45,6 @@ QueueHandle_t g_wg_timer_queue = NULL;
 static void session_timer_task(void *pvParameters)
 {
     (void)pvParameters;
-    wg_timer_action_t actions[WG_MAX_PEERS];
 
     while (1)
     {
@@ -54,21 +53,19 @@ static void session_timer_task(void *pvParameters)
         uint64_t now = wg_clock_now();
 
         // Ada evaluates all peer timers under session mutex
+        uint8_t actions[WG_MAX_PEERS];
         session_tick_all(now, actions);
 
-        // Enqueue any non-empty actions for the WG task to dispatch
+        // Enqueue any non-idle actions for the WG task to dispatch
         for (unsigned int i = 0; i < WG_MAX_PEERS; i++)
         {
-            const wg_timer_action_t *a = &actions[i];
-            if (a->send_keepalive  || a->initiate_rekey ||
-                a->session_expired || a->rekey_timed_out)
+            wg_timer_action_t action = (wg_timer_action_t)actions[i];
+            if (action != WG_TIMER_NO_ACTION)
             {
                 wg_timer_msg_t msg = {
                     .peer   = i + 1,  /* Ada Peer_Index is 1-based */
-                    .action = *a,
+                    .action = action,
                 };
-                // Non-blocking: if queue is full, drop (timer will re-evaluate
-                // next tick anyway).
                 if (xQueueSend(g_wg_timer_queue, &msg, 0) != pdTRUE)
                 {
                     ESP_LOGW(TAG, "Timer queue full, dropping peer %u", i + 1);

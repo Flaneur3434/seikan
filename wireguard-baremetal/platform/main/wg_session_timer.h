@@ -19,18 +19,19 @@ extern "C" {
  * Queue message types
  * -------------------------------------------------------------------- */
 
-/* Per-peer timer action flags (matches Ada's C_Timer_Action layout exactly) */
-typedef struct {
-    uint8_t send_keepalive;   // Send empty transport as keepalive
-    uint8_t initiate_rekey;   // Start new handshake (rekey)
-    uint8_t session_expired;  // Wipe all keypair slots
-    uint8_t rekey_timed_out;  // Rekey attempt exceeded timeout
+/* Per-peer timer action — flat enum matching Ada Timer_Action */
+typedef enum {
+    WG_TIMER_NO_ACTION       = 0,
+    WG_TIMER_SEND_KEEPALIVE  = 1,
+    WG_TIMER_INITIATE_REKEY  = 2,
+    WG_TIMER_REKEY_TIMED_OUT = 3,
+    WG_TIMER_SESSION_EXPIRED = 4,
 } wg_timer_action_t;
 
 /* Timer -> WG task: action needed for a specific peer */
 typedef struct {
     unsigned int        peer;    // 1-based peer index
-    wg_timer_action_t   action;  // Which timer events fired
+    wg_timer_action_t   action;  // What C needs to do
 } wg_timer_msg_t;
 
 /* --------------------------------------------------------------------

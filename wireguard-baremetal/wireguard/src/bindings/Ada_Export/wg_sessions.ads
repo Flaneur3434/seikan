@@ -29,13 +29,9 @@ is
    --  Timer tick — called once/second by the timer task (pri 7)
    ---------------------------------------------------------------------------
 
-   type C_Timer_Action is record
-      Send_Keepalive  : Interfaces.Unsigned_8;
-      Initiate_Rekey  : Interfaces.Unsigned_8;
-      Session_Expired : Interfaces.Unsigned_8;
-      Rekey_Timed_Out : Interfaces.Unsigned_8;
-   end record
-   with Convention => C;
+   --  Maps to Ada Timer_Action enum.
+   --  C sees: 0=none, 1=keepalive, 2=rekey, 3=rekey_timeout, 4=expired
+   subtype C_Timer_Action is Interfaces.Unsigned_8;
 
    type C_Action_Array is
      array (0 .. Session.Max_Peers - 1) of C_Timer_Action
