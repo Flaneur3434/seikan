@@ -28,12 +28,9 @@ is
    Window_Size : constant := 64;
 
    type Filter is record
-      Last   : Unsigned_64;  --  H: highest accepted counter
-      Bitmap : Unsigned_64;  --  B: sliding window bitmap
+      Last   : Unsigned_64 := 0;  --  H: highest accepted counter
+      Bitmap : Unsigned_64 := 0;  --  B: sliding window bitmap
    end record;
-
-   Empty_Filter : constant Filter :=
-     (Last => 0, Bitmap => 0);
 
    --  Reset -- Clear filter to initial state
    procedure Reset (F : out Filter)

@@ -207,9 +207,9 @@ private
 
    type Peer_State is record
       --  Three session slots
-      Current  : Session_Keys.Keypair := Session_Keys.Null_Keypair;
-      Previous : Session_Keys.Keypair := Session_Keys.Null_Keypair;
-      Next     : Session_Keys.Keypair := Session_Keys.Null_Keypair;
+      Current  : Session_Keys.Keypair;
+      Previous : Session_Keys.Keypair;
+      Next     : Session_Keys.Keypair;
 
       --  Packet timestamps (data path)
       Last_Sent      : Timer.Clock.Timestamp := Timer.Clock.Never;
