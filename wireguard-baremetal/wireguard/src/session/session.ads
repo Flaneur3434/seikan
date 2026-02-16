@@ -1,8 +1,6 @@
 with Interfaces; use Interfaces;
 with Utils;      use Utils;
-with Crypto.AEAD;
 with Handshake;
-with Replay;
 with Timer.Clock;
 with Threads.Mutex;
 with Session_Keys;
@@ -75,6 +73,11 @@ is
    function Is_Mtx_Locked return Boolean
    with Ghost;
 
+   --  Structural invariant holds for all peer slots.
+   --  Bridges the private Valid_Peer predicate into public contracts.
+   function All_Peers_Valid return Boolean
+   with Ghost, Global => (Input => Peer_States);
+
    ---------------------------------------------------------------------------
    --  Initialization
    ---------------------------------------------------------------------------
@@ -82,7 +85,10 @@ is
    --  Initialize the session table and mutex.
    --  Must be called once at startup before any session operations.
    procedure Init (Sem : not null Threads.Mutex.Semaphore_Ref)
-   with Post => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+   with Post =>
+     Is_Mtx_Initialized
+     and then not Is_Mtx_Locked
+     and then All_Peers_Valid;
 
    ---------------------------------------------------------------------------
    --  Session lifecycle
@@ -105,11 +111,15 @@ is
       Now    : Timer.Clock.Timestamp;
       Result : out Status)
    with
-     Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
+     Global => (In_Out => (Peer_States, Mutex_State, Session_Keys.KP_State)),
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid,
      Post   =>
        Is_Mtx_Initialized
        and then not Is_Mtx_Locked
+       and then All_Peers_Valid
        and then HS.Kind = Handshake.State_Empty;
 
    ---------------------------------------------------------------------------
@@ -121,7 +131,10 @@ is
    procedure Get_Current (Peer : Peer_Index; KP : out Keypair)
    with
      Global => (Input => Peer_States, In_Out => Mutex_State),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid,
      Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
    ---------------------------------------------------------------------------
@@ -131,16 +144,29 @@ is
    --  Record that we sent a packet to this peer.
    procedure Mark_Sent (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
-     Global => (Output => Peer_States, In_Out => Mutex_State),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
-     Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+     Global => (In_Out => (Peer_States, Mutex_State)),
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid,
+     Post   =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid;
 
    --  Record that we received a valid packet from this peer.
-   procedure Mark_Received (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
+   procedure Mark_Received
+     (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
-     Global => (Output => Peer_States, In_Out => Mutex_State),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
-     Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+     Global => (In_Out => (Peer_States, Mutex_State)),
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid,
+     Post   =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid;
 
    ---------------------------------------------------------------------------
    --  Counter management
@@ -152,8 +178,14 @@ is
      (Peer : Peer_Index; Counter : out Unsigned_64)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
-     Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid,
+     Post   =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid;
 
    ---------------------------------------------------------------------------
    --  Replay validation
@@ -162,11 +194,19 @@ is
    --  Check the counter against the peer's current keypair replay filter.
    --  If valid, updates the filter to include this counter value.
    procedure Validate_And_Update_Replay
-     (Peer : Peer_Index; Counter : Unsigned_64; Accepted : out Boolean)
+     (Peer    : Peer_Index;
+      Counter : Unsigned_64;
+      Accepted : out Boolean)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
-     Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid,
+     Post   =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid;
 
    ---------------------------------------------------------------------------
    --  Timer-driven session management
@@ -179,82 +219,99 @@ is
    procedure Expire_Session (Peer : Peer_Index)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
-     Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid,
+     Post   =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid;
 
    --  Mark rekey in progress before sending initiation.
-   procedure Set_Rekey_Flag (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
+   procedure Set_Rekey_Flag
+     (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    => Is_Mtx_Initialized and then not Is_Mtx_Locked,
-     Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
-
+     Pre    =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid
+       and then Now /= Timer.Clock.Never,
+     Post   =>
+       Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid;
 
 private
 
    type Peer_Mode is (Inactive, Established, Rekeying);
 
-   type Rekey_Substate is (Waiting_For_Response, Retry_Ready);
-
-   type Rekey_State is record
-      Start_At  : Timer.Clock.Timestamp;  --  When rekey began
-      Last_Sent : Timer.Clock.Timestamp;  --  When last initiation sent
-      Phase     : Rekey_Substate;
-   end record;
-
    type Peer_State is record
       --  Three session slots
-      Current  : Session_Keys.Keypair;
-      Previous : Session_Keys.Keypair;
-      Next     : Session_Keys.Keypair;
+      Current  : Session_Keys.Keypair := Session_Keys.Null_Keypair;
+      Previous : Session_Keys.Keypair := Session_Keys.Null_Keypair;
+      Next     : Session_Keys.Keypair := Session_Keys.Null_Keypair;
 
-      --  Timestamps used by timer state machine (checked by Session.Timers.Tick)
-      Last_Sent      : Timer.Clock.Timestamp;  --  Last outbound packet
-      Last_Received  : Timer.Clock.Timestamp;  --  Last inbound packet
-      Last_Handshake : Timer.Clock.Timestamp;  --  When current was born
-      Rekey          : Rekey_State;
+      --  Packet timestamps (data path)
+      Last_Sent      : Timer.Clock.Timestamp := Timer.Clock.Never;
+      Last_Received  : Timer.Clock.Timestamp := Timer.Clock.Never;
+      Last_Handshake : Timer.Clock.Timestamp := Timer.Clock.Never;
 
-      Active : Boolean; --  Is this peer slot in use?
-      Mode   : Peer_Mode;
-   end record
-   with
-     --  Check structural invariant
-     Type_Invariant =>
-       (case Mode is
-          when Inactive    => not Active or not Current.Valid,
-          when Established =>
-            Active
-            and then Current.Valid
-            and then Rekey.Start_At = Timer.Clock.Never
-            and then Rekey.Last_Sent = Timer.Clock.Never,
-          when Rekeying    =>
-            Active
-            and then Current.Valid
-            and then Rekey.Start_At /= Timer.Clock.Never
-            and then Rekey.Last_Sent /= Timer.Clock.Never);
+      --  Rekey timestamps (timer path)
+      Rekey_Start     : Timer.Clock.Timestamp := Timer.Clock.Never;
+      Rekey_Last_Sent : Timer.Clock.Timestamp := Timer.Clock.Never;
+
+      Active : Boolean    := False;
+      Mode   : Peer_Mode  := Inactive;
+   end record;
+
+   --  Structural invariant as a ghost predicate.
+   --  We use an explicit function instead of Type_Invariant because
+   --  SPARK does not assume Type_Invariant holds for package-level
+   --  state on procedure entry — only for parameter values.
+   --  With a ghost predicate we control exactly where the prover
+   --  assumes (Pre) and must prove (Post) the invariant.
+   function Valid_Peer (P : Peer_State) return Boolean is
+     (case P.Mode is
+        when Inactive    =>
+          not P.Active or else not P.Current.Valid,
+        when Established =>
+          P.Active
+          and then P.Current.Valid
+          and then P.Rekey_Start = Timer.Clock.Never
+          and then P.Rekey_Last_Sent = Timer.Clock.Never,
+        when Rekeying    =>
+          P.Active
+          and then P.Current.Valid
+          and then P.Rekey_Start /= Timer.Clock.Never)
+   with Ghost;
 
    Null_Peer : constant Peer_State :=
-     (Current        => Session_Keys.Null_Keypair,
-      Previous       => Session_Keys.Null_Keypair,
-      Next           => Session_Keys.Null_Keypair,
-      Last_Sent      => Timer.Clock.Never,
-      Last_Received  => Timer.Clock.Never,
-      Last_Handshake => Timer.Clock.Never,
-      Rekey          =>
-        (Start_At  => Timer.Clock.Never,
-         Last_Sent => Timer.Clock.Never,
-         Phase     => Waiting_For_Response),
-      Active         => False,
-      Mode           => Inactive);
+     (Current         => Session_Keys.Null_Keypair,
+      Previous        => Session_Keys.Null_Keypair,
+      Next            => Session_Keys.Null_Keypair,
+      Last_Sent       => Timer.Clock.Never,
+      Last_Received   => Timer.Clock.Never,
+      Last_Handshake  => Timer.Clock.Never,
+      Rekey_Start     => Timer.Clock.Never,
+      Rekey_Last_Sent => Timer.Clock.Never,
+      Active          => False,
+      Mode            => Inactive);
 
    Peers : array (Peer_Index) of Peer_State := (others => Null_Peer)
    with Part_Of => Peer_States;
-   Mtx   : Threads.Mutex.Mutex_Handle
+
+   Mtx : Threads.Mutex.Mutex_Handle
    with Part_Of => Mutex_State;
+
+   function All_Peers_Valid return Boolean
+   is (for all I in Peer_Index => Valid_Peer (Peers (I)));
 
    --  Ghost bridge completions
    function Is_Mtx_Initialized return Boolean
    is (Threads.Mutex.Is_Initialized (Mtx));
+
    function Is_Mtx_Locked return Boolean
    is (Threads.Mutex.Is_Locked (Mtx));
 
@@ -275,6 +332,14 @@ private
    --  If Next was invalid on entry, this is a no-op (still not Valid).
    --  Caller holds lock.
    procedure Activate_Next (Peer : Peer_Index)
-   with Global => (In_Out => Peers), Post => not Peers (Peer).Next.Valid;
+   with
+     Global => (In_Out => Peers),
+     Pre    =>
+       All_Peers_Valid
+       and then Peers (Peer).Next.Valid,
+     Post   =>
+       All_Peers_Valid
+       and then not Peers (Peer).Next.Valid
+       and then Peers (Peer).Mode = Established;
 
 end Session;

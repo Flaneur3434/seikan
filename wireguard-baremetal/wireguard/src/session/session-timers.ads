@@ -1,44 +1,41 @@
+--  Session.Timers — WireGuard Timer Decision Logic
+--
+--  Pure decision: given current time + peer state, returns what C
+--  needs to do.  Priority is implicit in evaluation order:
+--
+--    Session_Expired > Rekey_Timed_Out > Initiate_Rekey > Send_Keepalive
+--
+--  Everything else (timestamps, replay, counters) is Ada-internal
+--  and happens passively in the normal packet flow.
+
 package Session.Timers
   with SPARK_Mode => On
 is
-   --  State transitions of the session state machine
-   type Primary_Action is
-     (Primary_None,
-      Primary_Initiate_Rekey,
-      Primary_Rekey_Timed_Out,
-      Primary_Session_Expired,
-      Primary_Rekey_Success,
-      Primary_Activate_Next);
 
-   --  Effects represent orthogonal actions that can arise along side the main
-   --  state machine
-   type Effect_Action is (Effect_Send_Keepalive);
-
-   type Effects_Set is array (Effect_Action) of Boolean with Pack;
-
-   type Timer_Action is record
-      Primary : Primary_Action := Primary_None;
-      Effects : Effects_Set := (others => False);
-   end record
-   with
-     --  Session Expired states takes precedence over everything else
-     Predicate =>
-       (if Primary = Primary_Session_Expired
-        then (for all E in Effect_Action => not Effects (E))
-        else True);
+   --  The only actions C needs to act on.
+   --  One action per peer per tick — mutually exclusive.
+   type Timer_Action is
+     (No_Action,
+      Send_Keepalive,
+      Initiate_Rekey,
+      Rekey_Timed_Out,
+      Session_Expired);
 
    function Tick
-     (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp) return Timer_Action
+     (Peer_Idx : Peer_Index;
+      Now      : Timer.Clock.Timestamp) return Timer_Action
    with Pre => Now > Timer.Clock.Never;
 
-   type Timer_Actions is array (Peer_Index) of Timer_Action;
+   type Action_Array is array (Peer_Index) of Timer_Action;
 
    procedure Tick_All
-     (Now : Timer.Clock.Timestamp; Actions : out Timer_Actions)
+     (Now     : Timer.Clock.Timestamp;
+      Actions : out Action_Array)
    with
-     Gloabl => (In_Out => (Peer_States, Mtx)),
+     Global => (Input => Peer_States, In_Out => Mutex_State),
      Pre    =>
        Is_Mtx_Initialized
        and then not Is_Mtx_Locked
        and then Now > Timer.Clock.Never;
+
 end Session.Timers;
