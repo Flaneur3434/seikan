@@ -1,12 +1,11 @@
---  Session.Timer - Implementation
+--  Session.Timers — Implementation
 
-with Session.Timers;
 package body Session.Timers
   with SPARK_Mode => On
 is
 
    ---------------------------------------------------------------------------
-   --  Elapsed — Compute seconds elapsed since a timestamp
+   --  Elapsed — Seconds since a timestamp (clamped to 0)
    ---------------------------------------------------------------------------
 
    function Elapsed
@@ -21,30 +20,122 @@ is
    end Elapsed;
 
    ---------------------------------------------------------------------------
-   --  Tick — Evaluate one peer's timer conditions
+   --  Tick — Evaluate one peer, return what C should do
+   --
+   --  Priority is implicit in evaluation order (first match wins):
+   --    1. Session expired   (hard deadline — drop everything)
+   --    2. Rekey timed out   (give up trying)
+   --    3. Initiate rekey    (time/counter/unresponsive triggers)
+   --    4. Send keepalive    (idle peer needs a ping)
+   --    5. No action
    ---------------------------------------------------------------------------
 
    function Tick
      (Peer_Idx : Peer_Index;
-      Now  : Timer.Clock.Timestamp) return Timer_Action
+      Now      : Timer.Clock.Timestamp) return Timer_Action
    is
-      Peer : Peer_State := Peers (Peer_Idx);
+      Peer : constant Peer_State := Peers (Peer_Idx);
+      Age  : Unsigned_64;
    begin
+      --  Inactive/invalid peers need nothing
+      if not Peer.Active or else not Peer.Current.Valid then
+         return No_Action;
+      end if;
+
+      Age := Elapsed (Peer.Current.Created_At, Now);
+
+      --  1. Hard expiry — reject-after limits
+      if Age >= Reject_After_Time_S
+        or else Peer.Current.Send_Counter >= Reject_After_Messages
+      then
+         return Session_Expired;
+      end if;
+
+      --  2. Rekey attempt timed out (90 s window exhausted)
+      if Peer.Mode = Rekeying then
+         declare
+            Attempt_Elapsed : constant Unsigned_64 :=
+              Elapsed (Peer.Rekey_Start, Now);
+         begin
+            if Attempt_Elapsed >= Rekey_Attempt_Time_S then
+               return Rekey_Timed_Out;
+            end if;
+         end;
+      end if;
+
+      --  3. Rekey triggers
+      case Peer.Mode is
+         when Established =>
+            --  Time or message-count threshold
+            if Age >= Rekey_After_Time_S
+              or else Peer.Current.Send_Counter >= Rekey_After_Messages
+            then
+               return Initiate_Rekey;
+            end if;
+
+            --  Unresponsive peer (§6.2): no data for 15 s
+            if Peer.Last_Received /= Timer.Clock.Never then
+               declare
+                  Since_Recv : constant Unsigned_64 :=
+                    Elapsed (Peer.Last_Received, Now);
+               begin
+                  if Since_Recv >=
+                    Keepalive_Timeout_S + Rekey_Timeout_S
+                  then
+                     return Initiate_Rekey;
+                  end if;
+               end;
+            end if;
+
+         when Rekeying =>
+            --  Retry gating: re-send initiation every 5 s
+            declare
+               Since_Last : constant Unsigned_64 :=
+                 Elapsed (Peer.Rekey_Last_Sent, Now);
+            begin
+               if Since_Last >= Rekey_Timeout_S then
+                  return Initiate_Rekey;
+               end if;
+            end;
+
+         when Inactive =>
+            null;
+      end case;
+
+      --  4. Keepalive — received recently, haven't sent back
+      if Peer.Last_Received /= Timer.Clock.Never then
+         declare
+            Since_Recv : constant Unsigned_64 :=
+              Elapsed (Peer.Last_Received, Now);
+            Since_Sent : constant Unsigned_64 :=
+              Elapsed (Peer.Last_Sent, Now);
+         begin
+            if Since_Recv < Keepalive_Timeout_S
+              and then Since_Sent >= Keepalive_Timeout_S
+            then
+               return Send_Keepalive;
+            end if;
+         end;
+      end if;
+
+      return No_Action;
    end Tick;
 
    ---------------------------------------------------------------------------
-   --  Tick_All — Scan every active peer
+   --  Tick_All — Evaluate all peers under lock
    ---------------------------------------------------------------------------
 
    procedure Tick_All
      (Now     : Timer.Clock.Timestamp;
-      Actions : out Timer_Actions)
+      Actions : out Action_Array)
    is
    begin
       Lock;
+
       for I in Peer_Index loop
          Actions (I) := Tick (I, Now);
       end loop;
+
       Unlock;
    end Tick_All;
 
