@@ -16,7 +16,7 @@ is
    Buffers      : array (Pool_Index) of aliased Buffer;
    Free_Stack   : array (Pool_Index) of Pool_Index;
    Free_Top     : Integer := -1;  --  -1 means empty
-   Borrow_Flags : array (Pool_Index) of Boolean := (others => False);
+   Borrow_Flags : array (Pool_Index) of Boolean := [others => False];
 
    --  Mutex protecting Free_Stack / Free_Top (cross-thread Allocate/Free)
    Pool_Lock : Threads.Mutex.Mutex_Handle;
@@ -45,7 +45,7 @@ is
          Buffers (I).Index := Null_Index;  --  Mark as not allocated
          Buffers (I).Len := 0;
          Buffers (I).Offset := 0;
-         Buffers (I).Data := (others => 0);
+         Buffers (I).Data := [others => 0];
          Free_Stack (I) := I;
          Borrow_Flags (I) := False;
       end loop;
@@ -88,7 +88,7 @@ is
       Handle.Ptr.Index := Null_Index;  --  Mark as not allocated
       Handle.Ptr.Len := 0;
       Handle.Ptr.Offset := 0;
-      Handle.Ptr.Data := (others => 0);
+      Handle.Ptr.Data := [others => 0];
       Handle.Ptr := null;
 
       Free_Top := Free_Top + 1;
@@ -203,7 +203,7 @@ is
       Buf.Index := Null_Index;
       Buf.Len := 0;
       Buf.Offset := 0;
-      Buf.Data := (others => 0);
+      Buf.Data := [others => 0];
 
       Free_Top := Free_Top + 1;
       Free_Stack (Free_Top) := Idx;

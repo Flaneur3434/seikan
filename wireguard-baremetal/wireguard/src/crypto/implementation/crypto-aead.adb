@@ -185,7 +185,7 @@ is
       --  Handle backends with no external nonce
       if Nonce_Bytes = 0 then
          --  Empty nonce, counter handled internally by backend
-         N := (others => 0);
+         N := [others => 0];
          return;
       end if;
 

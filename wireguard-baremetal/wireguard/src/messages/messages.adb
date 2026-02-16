@@ -35,7 +35,7 @@ is
    function To_Mac1_Prefix
      (Msg : Message_Handshake_Initiation) return Initiation_Mac1_Prefix_Bytes
    is
-      Result : Initiation_Mac1_Prefix_Bytes := (others => 0);
+      Result : Initiation_Mac1_Prefix_Bytes := [others => 0];
       Offset : Natural := 0;
    begin
       Result (Offset) := Msg.Msg_Type;
@@ -64,7 +64,7 @@ is
    function To_Mac1_Prefix
      (Msg : Message_Handshake_Response) return Response_Mac1_Prefix_Bytes
    is
-      Result : Response_Mac1_Prefix_Bytes := (others => 0);
+      Result : Response_Mac1_Prefix_Bytes := [others => 0];
       Offset : Natural := 0;
    begin
       Result (Offset) := Msg.Msg_Type;

@@ -30,7 +30,7 @@ is
       Result : out Status)
    is
       --  Padded key (block size)
-      K_Pad : aliased Byte_Array (0 .. Block_Size - 1) := (others => 0);
+      K_Pad : aliased Byte_Array (0 .. Block_Size - 1) := [others => 0];
 
       --  Inner and outer padded keys
       K_Ipad : aliased Byte_Array (0 .. Block_Size - 1);
@@ -57,7 +57,7 @@ is
             Key_In          => System.Null_Address,
             Key_In_Size     => 0);
          if Ret /= 0 then
-            Output := (others => 0);
+            Output := [others => 0];
             Result := Error_Failed;
             return;
          end if;
@@ -73,7 +73,7 @@ is
       Ret := Crypto.Blake2_Ref.Blake2s_Init
         (State'Unchecked_Access, Hash_Len);
       if Ret /= 0 then
-         Output := (others => 0);
+         Output := [others => 0];
          Result := Error_Failed;
          return;
       end if;
@@ -81,7 +81,7 @@ is
       Ret := Crypto.Blake2_Ref.Blake2s_Update
         (State'Unchecked_Access, K_Ipad'Address, K_Ipad'Length);
       if Ret /= 0 then
-         Output := (others => 0);
+         Output := [others => 0];
          Result := Error_Failed;
          return;
       end if;
@@ -90,7 +90,7 @@ is
          Ret := Crypto.Blake2_Ref.Blake2s_Update
            (State'Unchecked_Access, Data'Address, Data'Length);
          if Ret /= 0 then
-            Output := (others => 0);
+            Output := [others => 0];
             Result := Error_Failed;
             return;
          end if;
@@ -99,7 +99,7 @@ is
       Ret := Crypto.Blake2_Ref.Blake2s_Final
         (State'Unchecked_Access, Inner_Hash'Address, Hash_Len);
       if Ret /= 0 then
-         Output := (others => 0);
+         Output := [others => 0];
          Result := Error_Failed;
          return;
       end if;
@@ -108,7 +108,7 @@ is
       Ret := Crypto.Blake2_Ref.Blake2s_Init
         (State'Unchecked_Access, Hash_Len);
       if Ret /= 0 then
-         Output := (others => 0);
+         Output := [others => 0];
          Result := Error_Failed;
          return;
       end if;
@@ -116,7 +116,7 @@ is
       Ret := Crypto.Blake2_Ref.Blake2s_Update
         (State'Unchecked_Access, K_Opad'Address, K_Opad'Length);
       if Ret /= 0 then
-         Output := (others => 0);
+         Output := [others => 0];
          Result := Error_Failed;
          return;
       end if;
@@ -124,7 +124,7 @@ is
       Ret := Crypto.Blake2_Ref.Blake2s_Update
         (State'Unchecked_Access, Inner_Hash'Address, Hash_Len);
       if Ret /= 0 then
-         Output := (others => 0);
+         Output := [others => 0];
          Result := Error_Failed;
          return;
       end if;
@@ -132,7 +132,7 @@ is
       Ret := Crypto.Blake2_Ref.Blake2s_Final
         (State'Unchecked_Access, Output'Address, Hash_Len);
       if Ret /= 0 then
-         Output := (others => 0);
+         Output := [others => 0];
          Result := Error_Failed;
          return;
       end if;
@@ -152,14 +152,14 @@ is
       --  τ0 := HMAC(key, input)
       HMAC_Blake2s (Key, Input, Tau0, Result);
       if Result /= Success then
-         Output := (others => 0);
+         Output := [others => 0];
          return;
       end if;
 
       --  τ1 := HMAC(τ0, 0x01)
       HMAC_Blake2s (Tau0, Label, Output, Result);
       if Result /= Success then
-         Output := (others => 0);
+         Output := [others => 0];
       end if;
 
       --  Clear intermediate value
@@ -180,17 +180,17 @@ is
       --  τ0 := HMAC(key, input)
       HMAC_Blake2s (Key, Input, Tau0, Result);
       if Result /= Success then
-         Output1 := (others => 0);
-         Output2 := (others => 0);
+         Output1 := [others => 0];
+         Output2 := [others => 0];
          return;
       end if;
 
       --  τ1 := HMAC(τ0, 0x01)
       HMAC_Blake2s (Tau0, Label1, Output1, Result);
       if Result /= Success then
-         Output1 := (others => 0);
-         Output2 := (others => 0);
-         Tau0 := (others => 0);
+         Output1 := [others => 0];
+         Output2 := [others => 0];
+         Tau0 := [others => 0];
          return;
       end if;
 
@@ -199,8 +199,8 @@ is
       Tau1_Cat (Hash_Len) := 16#02#;
       HMAC_Blake2s (Tau0, Tau1_Cat, Output2, Result);
       if Result /= Success then
-         Output1 := (others => 0);
-         Output2 := (others => 0);
+         Output1 := [others => 0];
+         Output2 := [others => 0];
       end if;
 
       --  Clear intermediate values
@@ -223,19 +223,19 @@ is
       --  τ0 := HMAC(key, input)
       HMAC_Blake2s (Key, Input, Tau0, Result);
       if Result /= Success then
-         Output1 := (others => 0);
-         Output2 := (others => 0);
-         Output3 := (others => 0);
+         Output1 := [others => 0];
+         Output2 := [others => 0];
+         Output3 := [others => 0];
          return;
       end if;
 
       --  τ1 := HMAC(τ0, 0x01)
       HMAC_Blake2s (Tau0, Label1, Output1, Result);
       if Result /= Success then
-         Output1 := (others => 0);
-         Output2 := (others => 0);
-         Output3 := (others => 0);
-         Tau0 := (others => 0);
+         Output1 := [others => 0];
+         Output2 := [others => 0];
+         Output3 := [others => 0];
+         Tau0 := [others => 0];
          return;
       end if;
 
@@ -244,11 +244,11 @@ is
       Prev_Cat (Hash_Len) := 16#02#;
       HMAC_Blake2s (Tau0, Prev_Cat, Output2, Result);
       if Result /= Success then
-         Output1 := (others => 0);
-         Output2 := (others => 0);
-         Output3 := (others => 0);
-         Tau0 := (others => 0);
-         Prev_Cat := (others => 0);
+         Output1 := [others => 0];
+         Output2 := [others => 0];
+         Output3 := [others => 0];
+         Tau0 := [others => 0];
+         Prev_Cat := [others => 0];
          return;
       end if;
 
@@ -257,9 +257,9 @@ is
       Prev_Cat (Hash_Len) := 16#03#;
       HMAC_Blake2s (Tau0, Prev_Cat, Output3, Result);
       if Result /= Success then
-         Output1 := (others => 0);
-         Output2 := (others => 0);
-         Output3 := (others => 0);
+         Output1 := [others => 0];
+         Output2 := [others => 0];
+         Output3 := [others => 0];
       end if;
 
       --  Clear intermediate values

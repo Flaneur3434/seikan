@@ -573,7 +573,7 @@ is
       --  Zero-length = keepalive, otherwise overlay caller's buffer
       if Payload_Len = 0 then
          declare
-            Empty : constant Byte_Array (1 .. 0) := (others => 0);
+            Empty : constant Byte_Array (1 .. 0) := [others => 0];
          begin
             if not Build_And_Encrypt_TX (Peer, Empty, Addr, Len) then
                return Null_Address;

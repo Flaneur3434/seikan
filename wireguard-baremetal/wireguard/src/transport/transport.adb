@@ -25,7 +25,7 @@ is
       Nonce       : Crypto.AEAD.Nonce_Buffer;
    begin
       --  Initialize full output packet (ensures bytes beyond Total_Len are 0)
-      Packet := (others => 0);
+      Packet := [others => 0];
       Length := 0;
 
       ----------------------------------------------------------------------
