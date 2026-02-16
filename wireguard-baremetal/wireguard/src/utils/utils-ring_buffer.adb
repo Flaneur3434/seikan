@@ -14,7 +14,7 @@ is
    begin
       Ring_Buffer_Instance.Head_Idx := 0;
       Ring_Buffer_Instance.Tail_Idx := 0;
-      Ring_Buffer_Instance.Memory_Pool := (others => 0);
+      Ring_Buffer_Instance.Memory_Pool := [others => 0];
    end Initialize;
 
    function Is_Empty return Boolean is

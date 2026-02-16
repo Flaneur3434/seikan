@@ -44,14 +44,14 @@ is
       16#2D#, 16#2D#, 16#2D#, 16#2D#); --  "----"
 
    --  Reserved bytes (3 zeros)
-   Reserved_Zero : constant Messages.Reserved_Bytes := (others => 0);
+   Reserved_Zero : constant Messages.Reserved_Bytes := [others => 0];
 
    --!format on
 
    --  Pre-shared symmetric key placeholder.
    --  When no PSK is configured, Q = 0^32 (32 zero bytes).
    --  The KDF3 step is still performed per the Noise IKpsk2 pattern.
-   No_PSK : constant Byte_Array (0 .. 31) := (others => 0);
+   No_PSK : constant Byte_Array (0 .. 31) := [others => 0];
 
    ---------------------
    --  Random Session Index Generation
@@ -104,7 +104,7 @@ is
          Result => Local_Result);
       if not Is_Success (Local_Result) then
          Result := Local_Result;
-         Output := (others => 0);
+         Output := [others => 0];
          return;
       end if;
 
@@ -114,7 +114,7 @@ is
          Result => Local_Result);
       if not Is_Success (Local_Result) then
          Result := Local_Result;
-         Output := (others => 0);
+         Output := [others => 0];
          return;
       end if;
 
@@ -124,7 +124,7 @@ is
          Result => Local_Result);
       if not Is_Success (Local_Result) then
          Result := Local_Result;
-         Output := (others => 0);
+         Output := [others => 0];
          return;
       end if;
 
@@ -181,7 +181,7 @@ is
       if Is_Success (Result) then
          C := New_C;
       else
-         K := (others => 0);
+         K := [others => 0];
       end if;
    end Mix_Key;
 
@@ -203,8 +203,8 @@ is
       if Is_Success (Result) then
          C := New_C;
       else
-         Tau := (others => 0);
-         K := (others => 0);
+         Tau := [others => 0];
+         K := [others => 0];
       end if;
    end Mix_Key;
 
@@ -230,7 +230,7 @@ is
          State  => State,
          Result => Local_Result);
       if not Is_Success (Local_Result) then
-         Mac := (others => 0);
+         Mac := [others => 0];
          Result := Local_Result;
          return;
       end if;
@@ -240,7 +240,7 @@ is
          State  => State,
          Result => Local_Result);
       if not Is_Success (Local_Result) then
-         Mac := (others => 0);
+         Mac := [others => 0];
          Result := Local_Result;
          return;
       end if;
@@ -250,7 +250,7 @@ is
          Digest => Mac,
          Result => Result);
       if not Is_Success (Result) then
-         Mac := (others => 0);
+         Mac := [others => 0];
       end if;
    end Compute_Mac;
 
@@ -300,17 +300,17 @@ is
       Shared       : Crypto.KX.Shared_Secret;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
-      Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
+      Nonce : constant Crypto.AEAD.Nonce_Buffer := [others => 0];
    begin
       --  Initialize outputs
       Msg := (Msg_Type            => 0,
-              Reserved            => (others => 0),
-              Sender              => (others => 0),
-              Ephemeral           => (others => 0),
-              Encrypted_Static    => (others => 0),
-              Encrypted_Timestamp => (others => 0),
-              Mac1                => (others => 0),
-              Mac2                => (others => 0));
+              Reserved            => [others => 0],
+              Sender              => [others => 0],
+              Ephemeral           => [others => 0],
+              Encrypted_Static    => [others => 0],
+              Encrypted_Timestamp => [others => 0],
+              Mac1                => [others => 0],
+              Mac2                => [others => 0]);
       Result := (Success => False, Length => 0);
 
       --  Allocate local session index
@@ -464,7 +464,7 @@ is
       Shared       : Crypto.KX.Shared_Secret;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
-      Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
+      Nonce : constant Crypto.AEAD.Nonce_Buffer := [others => 0];
 
       --  Decrypted values
       Decrypted_Static    : Byte_Array (0 .. Crypto.KX.Public_Key_Bytes - 1);
@@ -645,20 +645,20 @@ is
       Tau          : Hash_State;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
-      Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
+      Nonce : constant Crypto.AEAD.Nonce_Buffer := [others => 0];
 
       --  Empty payload for AEAD (Noise "empty" encryption)
-      Empty_Payload : constant Byte_Array (1 .. 0) := (others => 0);
+      Empty_Payload : constant Byte_Array (1 .. 0) := [others => 0];
    begin
       --  Initialize outputs
       Msg := (Msg_Type        => 0,
-              Reserved        => (others => 0),
-              Sender          => (others => 0),
-              Receiver        => (others => 0),
-              Ephemeral       => (others => 0),
-              Encrypted_Empty => (others => 0),
-              Mac1            => (others => 0),
-              Mac2            => (others => 0));
+              Reserved        => [others => 0],
+              Sender          => [others => 0],
+              Receiver        => [others => 0],
+              Ephemeral       => [others => 0],
+              Encrypted_Empty => [others => 0],
+              Mac1            => [others => 0],
+              Mac2            => [others => 0]);
       Result := (Success => False, Length => 0);
 
       --  Generate responder ephemeral keypair
@@ -798,7 +798,7 @@ is
       Tau          : Hash_State;
 
       --  Noise protocol uses nonce=0 for all handshake AEAD operations.
-      Nonce : constant Crypto.AEAD.Nonce_Buffer := (others => 0);
+      Nonce : constant Crypto.AEAD.Nonce_Buffer := [others => 0];
 
       --  Decrypted empty payload (should be zero-length after stripping tag)
       Decrypted_Empty : Byte_Array (1 .. 0);

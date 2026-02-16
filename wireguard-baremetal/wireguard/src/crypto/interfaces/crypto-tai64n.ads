@@ -27,7 +27,7 @@ is
    subtype Timestamp is Byte_Array (0 .. Timestamp_Length - 1);
 
    --  Zero timestamp (useful for initialization)
-   Zero : constant Timestamp := (others => 0);
+   Zero : constant Timestamp := [others => 0];
 
    --  Get next monotonically increasing TAI64N timestamp
    --  Each call returns a value strictly greater than the previous

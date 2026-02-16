@@ -299,7 +299,7 @@ private
       Active          => False,
       Mode            => Inactive);
 
-   Peers : array (Peer_Index) of Peer_State := (others => Null_Peer)
+   Peers : array (Peer_Index) of Peer_State := [others => Null_Peer]
    with Part_Of => Peer_States;
 
    Mtx : Threads.Mutex.Mutex_Handle

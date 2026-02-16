@@ -17,7 +17,7 @@ is
    is
    begin
       Threads.Mutex.Init_From_Handle (Mtx, Sem);
-      Peers := (others => Null_Peer);
+      Peers := [others => Null_Peer];
       Session_Keys.Init;
    end Init;
 

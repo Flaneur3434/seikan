@@ -309,11 +309,11 @@ private
    Empty_Handshake : constant Handshake_State :=
      (Kind             => State_Empty,
       Role             => Role_Initiator,
-      Chaining         => (others => 0),
-      Hash             => (others => 0),
-      Ephemeral        => (Pub => (others => 0), Sec => (others => 0)),
-      Remote_Ephemeral => (others => 0),
-      Remote_Static    => (others => 0),
+      Chaining         => [others => 0],
+      Hash             => [others => 0],
+      Ephemeral        => (Pub => [others => 0], Sec => [others => 0]),
+      Remote_Ephemeral => [others => 0],
+      Remote_Static    => [others => 0],
       Local_Index      => 0,
       Remote_Index     => 0,
       Last_Timestamp   => Crypto.TAI64N.Zero);
