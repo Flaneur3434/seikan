@@ -78,6 +78,12 @@ is
    function All_Peers_Valid return Boolean
    with Ghost, Global => (Input => Peer_States);
 
+   --  Convenience bundle: mutex initialized, not locked, all peers valid.
+   --  Reduces contract boilerplate on every public procedure.
+   function Session_Ready return Boolean
+   with Ghost,
+        Global => (Input => (Peer_States, Mutex_State));
+
    ---------------------------------------------------------------------------
    --  Initialization
    ---------------------------------------------------------------------------
@@ -85,10 +91,7 @@ is
    --  Initialize the session table and mutex.
    --  Must be called once at startup before any session operations.
    procedure Init (Sem : not null Threads.Mutex.Semaphore_Ref)
-   with Post =>
-     Is_Mtx_Initialized
-     and then not Is_Mtx_Locked
-     and then All_Peers_Valid;
+   with Post => Session_Ready;
 
    ---------------------------------------------------------------------------
    --  Session lifecycle
@@ -112,14 +115,9 @@ is
       Result : out Status)
    with
      Global => (In_Out => (Peer_States, Mutex_State, Session_Keys.KP_State)),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid,
-     Post   =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid
+     Pre  => Session_Ready,
+     Post =>
+       Session_Ready
        and then HS.Kind = Handshake.State_Empty;
 
    ---------------------------------------------------------------------------
@@ -131,11 +129,8 @@ is
    procedure Get_Current (Peer : Peer_Index; KP : out Keypair)
    with
      Global => (Input => Peer_States, In_Out => Mutex_State),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid,
-     Post   => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+     Pre  => Session_Ready,
+     Post => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
    ---------------------------------------------------------------------------
    --  Send/Receive timestamp updates
@@ -145,28 +140,16 @@ is
    procedure Mark_Sent (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid,
-     Post   =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid;
+     Pre  => Session_Ready,
+     Post => Session_Ready;
 
    --  Record that we received a valid packet from this peer.
    procedure Mark_Received
      (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid,
-     Post   =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid;
+     Pre  => Session_Ready,
+     Post => Session_Ready;
 
    ---------------------------------------------------------------------------
    --  Counter management
@@ -178,14 +161,8 @@ is
      (Peer : Peer_Index; Counter : out Unsigned_64)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid,
-     Post   =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid;
+     Pre  => Session_Ready,
+     Post => Session_Ready;
 
    ---------------------------------------------------------------------------
    --  Replay validation
@@ -199,14 +176,8 @@ is
       Accepted : out Boolean)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid,
-     Post   =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid;
+     Pre  => Session_Ready,
+     Post => Session_Ready;
 
    ---------------------------------------------------------------------------
    --  Timer-driven session management
@@ -219,29 +190,16 @@ is
    procedure Expire_Session (Peer : Peer_Index)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid,
-     Post   =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid;
+     Pre  => Session_Ready,
+     Post => Session_Ready;
 
    --  Mark rekey in progress before sending initiation.
    procedure Set_Rekey_Flag
      (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid
-       and then Now /= Timer.Clock.Never,
-     Post   =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid;
+     Pre  => Session_Ready and then Now /= Timer.Clock.Never,
+     Post => Session_Ready;
 
 private
 
@@ -287,19 +245,7 @@ private
           and then P.Rekey_Start /= Timer.Clock.Never)
    with Ghost;
 
-   Null_Peer : constant Peer_State :=
-     (Current         => Session_Keys.Null_Keypair,
-      Previous        => Session_Keys.Null_Keypair,
-      Next            => Session_Keys.Null_Keypair,
-      Last_Sent       => Timer.Clock.Never,
-      Last_Received   => Timer.Clock.Never,
-      Last_Handshake  => Timer.Clock.Never,
-      Rekey_Start     => Timer.Clock.Never,
-      Rekey_Last_Sent => Timer.Clock.Never,
-      Active          => False,
-      Mode            => Inactive);
-
-   Peers : array (Peer_Index) of Peer_State := [others => Null_Peer]
+   Peers : array (Peer_Index) of Peer_State := [others => <>]
    with Part_Of => Peer_States;
 
    Mtx : Threads.Mutex.Mutex_Handle
@@ -307,6 +253,11 @@ private
 
    function All_Peers_Valid return Boolean
    is (for all I in Peer_Index => Valid_Peer (Peers (I)));
+
+   function Session_Ready return Boolean
+   is (Is_Mtx_Initialized
+       and then not Is_Mtx_Locked
+       and then All_Peers_Valid);
 
    --  Ghost bridge completions
    function Is_Mtx_Initialized return Boolean

@@ -17,7 +17,7 @@ is
    is
    begin
       Threads.Mutex.Init_From_Handle (Mtx, Sem);
-      Peers := [others => Null_Peer];
+      Peers := [others => <>];
       Session_Keys.Init;
    end Init;
 
@@ -67,9 +67,7 @@ is
       Result : out Status)
    with
      Refined_Post =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid
+       Session_Ready
        and then HS.Kind = Handshake.State_Empty
        and then (if Result = Success then Mode_Of (Peer) = Established)
    is
@@ -148,9 +146,7 @@ is
    procedure Expire_Session (Peer : Peer_Index)
    with
      Refined_Post =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
-       and then All_Peers_Valid
+       Session_Ready
        and then not Peers (Peer).Current.Valid
        and then not Peers (Peer).Previous.Valid
        and then not Peers (Peer).Next.Valid
@@ -158,7 +154,7 @@ is
    begin
       Lock;
 
-      Peers (Peer) := Null_Peer;
+      Peers (Peer) := (others => <>);
 
       Unlock;
    end Expire_Session;
