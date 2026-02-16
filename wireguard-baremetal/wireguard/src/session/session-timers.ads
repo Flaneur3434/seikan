@@ -33,9 +33,8 @@ is
       Actions : out Action_Array)
    with
      Global => (Input => Peer_States, In_Out => Mutex_State),
-     Pre    =>
-       Is_Mtx_Initialized
-       and then not Is_Mtx_Locked
+     Pre =>
+       Session_Ready
        and then Now > Timer.Clock.Never;
 
 end Session.Timers;
