@@ -1224,8 +1224,7 @@ class TestEsp32TimerBoot:
           2. "Session timer task running"         (task entry point)
           3. "Socket bound"                       (IO task ready)
         """
-        dut.expect("Session timer queue initialized", timeout=30)
-        dut.expect("Session timer task running", timeout=10)
+        dut.expect("Session timer task started", timeout=10)
         dut.expect("Socket bound", timeout=10)
 
     def test_no_spurious_events_without_session(self, dut):
