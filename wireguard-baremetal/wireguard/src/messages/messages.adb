@@ -139,4 +139,26 @@ is
       Length := View.Buf_Ptr.Len;
    end Acquire_RX_From_C;
 
+   procedure Release_RX_To_C
+     (Handle : in out RX_Buffer_Handle;
+      Addr   : out System.Address)
+     with SPARK_Mode => Off
+   is
+      use System;
+      Ref : RX_Buffer_Ref;
+   begin
+      if RX_Pool.Is_Null (Handle) then
+         Addr := Null_Address;
+         return;
+      end if;
+
+      --  Borrow mutably just to get the address
+      RX_Pool.Borrow_Mut (Handle, Ref);
+      Addr := Ref.Buf_Ptr.all'Address;
+      RX_Pool.Return_Ref (Handle, Ref);
+
+      --  Null out the handle - C now owns the buffer
+      RX_Pool.Reset_Handle (Handle);
+   end Release_RX_To_C;
+
 end Messages;

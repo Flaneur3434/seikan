@@ -31,10 +31,11 @@ is
    --  Packet Pools - Separate RX and TX buffer pools
    --
    --  Two pools ensure RX can never starve TX and vice versa.
-   --  256 bytes is sufficient for handshake messages (max 148 bytes).
+  --  Sized for transport data path packets.
+  --  1560 gives headroom for 1500-byte class paths.
    ---------------------------------------------------------------------------
 
-   Packet_Size : constant := 256;
+  Packet_Size : constant := 1560;
    Pool_Size   : constant := 4;
 
    package RX_Pool is new Utils.Memory_Pool
@@ -211,6 +212,15 @@ is
      (Addr   : System.Address;
       Handle : out RX_Buffer_Handle;
       Length : out Packet_Length)
+     with SPARK_Mode => Off;
+
+   --  Release RX buffer back to C layer (no-copy netif RX path).
+   --  Called by Handle_Transport_RX_Netif after in-place decryption.
+   --  Ada gives up ownership; C wraps the buffer in a pbuf_custom for
+   --  zero-copy injection into lwIP.  Handle becomes null after call.
+   procedure Release_RX_To_C
+     (Handle : in out RX_Buffer_Handle;
+      Addr   : out System.Address)
      with SPARK_Mode => Off;
 
    --  Note: Access buffer fields directly via Borrow/Borrow_Mut:

@@ -594,4 +594,157 @@ is
       return Addr;
    end Send;
 
+   ---------------------------------------------------------------------------
+   --  Handle_Transport_RX_Netif — Zero-copy variant of Handle_Transport_RX
+   --
+   --  Decrypts in-place in the RX pool buffer, then releases that buffer
+   --  back to C rather than copying plaintext to a stack buffer.
+   --  Plaintext sits at buf->data[Transport_Header_Size .. +len-1] when done.
+   --  C takes ownership; it MUST eventually call rx_pool_free().
+   ---------------------------------------------------------------------------
+
+   function Handle_Transport_RX_Netif
+     (RX_Handle : in out Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length;
+      PT_Len    : access Unsigned_16) return WG_Action
+   is
+      Header_Size : constant Natural := Messages.Transport_Header_Size;
+
+      Decrypt_Len    : Unsigned_16;
+      Counter        : Unsigned_64;
+      Decrypt_Result : Status;
+      Replay_OK      : Boolean;
+
+      KP     : Session.Keypair;
+      PT_Act : Natural := 0;
+   begin
+      PT_Len.all := 0;
+
+      Session.Get_Current (Peer_Idx, KP);
+
+      if not Session.Is_Valid (KP) then
+         Messages.RX_Pool.Free (RX_Handle);
+         return Action_Error;
+      end if;
+
+      --  Decrypt in-place in the RX pool buffer
+      declare
+         RX_Ref : Messages.RX_Buffer_Ref;
+      begin
+         Messages.RX_Pool.Borrow_Mut (RX_Handle, RX_Ref);
+
+         declare
+            Pkt : Byte_Array (0 .. Natural (RX_Length) - 1)
+            with Import, Address => RX_Ref.Buf_Ptr.Data'Address;
+         begin
+            Transport.Decrypt_Packet
+              (Key     => Session.Receive_Key (KP),
+               Packet  => Pkt,
+               Length  => Decrypt_Len,
+               Counter => Counter,
+               Result  => Decrypt_Result);
+
+            if Is_Success (Decrypt_Result) then
+               Session.Validate_And_Update_Replay
+                 (Peer     => Peer_Idx,
+                  Counter  => Counter,
+                  Accepted => Replay_OK);
+               if Replay_OK then
+                  Session.Mark_Received (Peer_Idx, Timer.Clock.Now);
+               end if;
+               if not Replay_OK then
+                  Decrypt_Result := Error_Failed;
+               end if;
+            end if;
+
+            if Is_Success (Decrypt_Result) then
+               PT_Act := Natural (Decrypt_Len);
+            end if;
+         end;
+
+         Messages.RX_Pool.Return_Ref (RX_Handle, RX_Ref);
+      end;
+
+      if not Is_Success (Decrypt_Result) then
+         Messages.RX_Pool.Free (RX_Handle);
+         return Action_Error;
+      end if;
+
+      --  Zero-length plaintext = keepalive.  Authentic, already
+      --  Mark_Received'd.  Free the buffer here; C gets nothing.
+      if PT_Act = 0 then
+         Messages.RX_Pool.Free (RX_Handle);
+         return Action_None;
+      end if;
+
+      --  Decryption succeeded with real payload.
+      --  Release the pool buffer to C.  C is now responsible for
+      --  calling rx_pool_free() (either directly or via pbuf_custom).
+      --  We do NOT call RX_Pool.Free here.
+      PT_Len.all := Unsigned_16 (PT_Act);
+
+      --  Return the physical RX buffer handle to C.
+      --  We deliberately leave RX_Handle as non-null so the address
+      --  survives; Receive_Netif will read it back via Release_RX_To_C.
+      return RX_Decryption_Success;
+   end Handle_Transport_RX_Netif;
+
+   ---------------------------------------------------------------------------
+   --  Receive_Netif — Zero-copy-RX dispatch
+   --
+   --  Mirrors Receive but for the wg_netif path:
+   --    * Handshake messages are handled identically to Receive.
+   --    * Transport data (type 4): decrypts in-place, then hands the RX
+   --      pool buffer back to C via the return value.  Plaintext starts
+   --      at offset Transport_Header_Size (16) inside the buffer.
+   --      C receives PT_Len and uses buf->data + 16 directly.
+   ---------------------------------------------------------------------------
+
+   function Receive_Netif
+     (RX_Buf : System.Address;
+      PT_Len : access Unsigned_16) return WG_Action
+   is
+      RX_Handle : Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length;
+   begin
+      PT_Len.all := 0;
+
+      if not Initialized then
+         return Action_Error;
+      end if;
+
+      Messages.Acquire_RX_From_C (RX_Buf, RX_Handle, RX_Length);
+
+      if Messages.RX_Pool.Is_Null (RX_Handle) then
+         return Action_Error;
+      end if;
+
+      if RX_Length = 0 then
+         Messages.RX_Pool.Free (RX_Handle);
+         return Action_Error;
+      end if;
+
+      declare
+         RX_View  : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         Msg_Kind : constant Messages.Message_Kind :=
+           Messages.Get_Message_Kind (RX_View.Buf_Ptr.Data (0));
+      begin
+         case Msg_Kind is
+            when Messages.Kind_Handshake_Initiation =>
+               return Handle_Initiation_RX (RX_Handle, RX_Length);
+
+            when Messages.Kind_Handshake_Response =>
+               return Handle_Response_RX (RX_Handle, RX_Length);
+
+            when Messages.Kind_Transport_Data =>
+               return Handle_Transport_RX_Netif (RX_Handle, RX_Length, PT_Len);
+
+            when Messages.Kind_Cookie_Reply | Messages.Kind_Unknown =>
+               Messages.RX_Pool.Free (RX_Handle);
+               return Action_Error;
+         end case;
+      end;
+   end Receive_Netif;
+
 end Wireguard;
