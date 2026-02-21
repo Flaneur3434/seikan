@@ -4,10 +4,11 @@
 --  C decides WHAT to send; Ada decides HOW.
 --
 --  RX path:
---    action = wg_receive (rx_buf, pt_out, &pt_len)
+--    action = wg_receive_netif (rx_buf, &pt_len)
 --    Ada processes the packet and returns an action code.
---    If transport data, decrypted plaintext is written to pt_out.
---    C decides what to do: echo, forward to TUN, drop, etc.
+--    If transport data, Ada decrypts in-place in rx_buf (zero-copy).
+--    On RX_Decryption_Success, C re-owns rx_buf with plaintext at offset 16.
+--    C injects into lwIP via wg_netif_inject_plaintext() or echoes back.
 --
 --  TX path:
 --    tx_buf = wg_send (peer, payload, len, &out_len)
@@ -54,27 +55,6 @@ is
 
    function Init return Interfaces.C.C_bool
    with Export, Convention => C, External_Name => "wg_init";
-
-   ---------------------------------------------------------------------------
-   --  wg_receive - Process an incoming packet (RX only, no TX allocation)
-   --
-   --  Ada takes ownership of RX_Buf (freed internally).
-   --
-   --  Action_Send_Response:  Handshake initiation processed.
-   --                         C should call wg_create_response().
-   --  Action_Send_Transport: Transport data decrypted.
-   --                         Plaintext written to PT_Out, length in *PT_Len.
-   --                         C decides what to do (echo, TUN, drop).
-   --  Action_None:           Handshake response processed, or keepalive.
-   --                         PT_Len = 0.
-   --  Action_Error:          Failed. PT_Len = 0.
-   ---------------------------------------------------------------------------
-
-   function Receive
-     (RX_Buf : System.Address;
-      PT_Out : System.Address;
-      PT_Len : access Interfaces.Unsigned_16) return WG_Action
-   with Export, Convention => C, External_Name => "wg_receive";
 
    ---------------------------------------------------------------------------
    --  wg_create_initiation - Build a handshake initiation
