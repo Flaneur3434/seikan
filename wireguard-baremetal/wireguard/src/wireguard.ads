@@ -116,4 +116,28 @@ is
       Out_Len     : access Interfaces.Unsigned_16) return System.Address
    with Export, Convention => C, External_Name => "wg_send";
 
+   ---------------------------------------------------------------------------
+   --  wg_receive_netif - Process incoming packet, zero-copy RX path
+   --
+   --  Like wg_receive, but for transport data (type 4), Ada decrypts
+   --  in-place and returns the RX pool buffer to C instead of copying
+   --  plaintext to a stack buffer.
+   --
+   --  On WG_ACTION_RX_DECRYPTION_SUCCESS:
+   --    Ada has returned the pool buffer to C ownership.
+   --    Plaintext occupies rx_buf->data[Transport_Header_Size .. +pt_len-1].
+   --    *pt_len = plaintext length.
+   --    C must either inject via wg_netif_inject_plaintext (transfers
+   --    ownership to lwIP) or call rx_pool_free(rx_buf) directly.
+   --
+   --  On Action_Send_Response / Action_None / Action_Error:
+   --    Ada has freed the buffer.  C must NOT touch rx_buf.
+   --    *pt_len = 0.
+   ---------------------------------------------------------------------------
+
+   function Receive_Netif
+     (RX_Buf : System.Address;
+      PT_Len : access Interfaces.Unsigned_16) return WG_Action
+   with Export, Convention => C, External_Name => "wg_receive_netif";
+
 end Wireguard;
