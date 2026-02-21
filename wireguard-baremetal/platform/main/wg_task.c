@@ -4,11 +4,9 @@
  *
  * This task owns all Ada/SPARK protocol state. It:
  *   1. Initializes WireGuard (wg_init)
- *   2. Dequeues RX packets from the IO thread
- *   3. Calls wg_receive() (Ada dispatches handshake/transport)
- *   4. Enqueues TX results back to the IO thread for sendto()
- *
- * No socket I/O happens here — that's the IO thread's job.
+ *   2. Dequeues outer RX packets from wg_netif (UDP callback)
+ *   3. Dequeues inner plaintext packets from wg0 output callback
+ *   4. Calls Ada APIs for decrypt / encrypt / handshake and sends via wg_netif
  */
 
 #include "wg_task.h"
@@ -16,6 +14,7 @@
 #include "wg_session_timer.h"
 #include "wg_sessions.h"
 #include "wg_clock.h"
+#include "wg_netif.h"
 
 #include <string.h>
 #include <esp_log.h>
@@ -27,18 +26,18 @@
 static const char *TAG = "wg_task";
 
 /* Queue depth: how many packets can be in-flight between threads */
-#define RX_QUEUE_DEPTH 4
-#define TX_QUEUE_DEPTH 4
+#define RX_QUEUE_DEPTH    4
+#define INNER_QUEUE_DEPTH 4
 
 /* Static backing storage */
 static StaticQueue_t s_rx_queue_buf;
 static uint8_t s_rx_queue_storage[RX_QUEUE_DEPTH * sizeof(wg_rx_msg_t)];
-static StaticQueue_t s_tx_queue_buf;
-static uint8_t s_tx_queue_storage[TX_QUEUE_DEPTH * sizeof(wg_tx_msg_t)];
+static StaticQueue_t s_inner_queue_buf;
+static uint8_t s_inner_queue_storage[INNER_QUEUE_DEPTH * sizeof(wg_inner_msg_t)];
 
 /* Queue handles (extern'd in wg_task.h) */
 QueueHandle_t g_wg_rx_queue = NULL;
-QueueHandle_t g_wg_tx_queue = NULL;
+QueueHandle_t g_wg_inner_queue = NULL;
 
 /* -----------------------------------------------------------------------
  * Peer endpoint table — remember the last known address for each peer
@@ -66,6 +65,50 @@ static struct sockaddr_in get_peer_endpoint(unsigned int peer)
     return empty;
 }
 
+bool wg_task_get_peer_endpoint(unsigned int peer, struct sockaddr_in *out)
+{
+    if (out == NULL) {
+        return false;
+    }
+
+    if (peer < 1 || peer > WG_MAX_PEERS) {
+        return false;
+    }
+
+    struct sockaddr_in ep = get_peer_endpoint(peer);
+    if (ep.sin_family != AF_INET || ep.sin_port == 0) {
+        return false;
+    }
+
+    *out = ep;
+    return true;
+}
+
+/* send_outer_packet — transmit then free.
+ *
+ * wg_netif_send_outer() uses PBUF_REF: on success the pbuf_custom callback
+ * (tx_custom_free) calls tx_pool_free() once lwIP is done with the buffer.
+ * We must NOT double-free on success.  On failure the buffer was never
+ * handed to lwIP, so we free it here to avoid a leak.
+ */
+static bool send_outer_packet(packet_buffer_t *pkt,
+                              uint16_t len,
+                              const struct sockaddr_in *peer)
+{
+    if (pkt == NULL || len == 0 || peer == NULL) {
+        return false;
+    }
+
+    if (!wg_netif_send_outer(pkt, len, peer)) {
+        /* Ownership NOT transferred on failure — free here */
+        tx_pool_free(pkt);
+        return false;
+    }
+
+    /* Ownership transferred — pbuf_custom callback will call tx_pool_free */
+    return true;
+}
+
 static void wg_session_action(wg_timer_action_t action, unsigned int peer)
 {
     switch (action)
@@ -82,6 +125,7 @@ static void wg_session_action(wg_timer_action_t action, unsigned int peer)
     case WG_TIMER_INITIATE_REKEY:
     {
         ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
+        struct sockaddr_in endpoint = get_peer_endpoint(peer);
 
         uint16_t init_len = 0;
         packet_buffer_t *init_pkt =
@@ -89,13 +133,7 @@ static void wg_session_action(wg_timer_action_t action, unsigned int peer)
 
         if (init_pkt != NULL && init_len > 0)
         {
-            wg_tx_msg_t tx_msg = {
-                .tx_buf = init_pkt,
-                .tx_len = init_len,
-                .peer = get_peer_endpoint(peer),
-            };
-            
-            if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
+            if (send_outer_packet(init_pkt, init_len, &endpoint))
             {
                 session_set_rekey_flag(peer, wg_clock_now());
                 ESP_LOGI(TAG, "<< Rekey Initiation (%u bytes)",
@@ -104,7 +142,7 @@ static void wg_session_action(wg_timer_action_t action, unsigned int peer)
             else
             {
                 tx_pool_free(init_pkt);
-                ESP_LOGW(TAG, "TX queue full, rekey retry next tick");
+                ESP_LOGW(TAG, "Failed to send rekey initiation, retry next tick");
             }
         }
         else
@@ -116,29 +154,22 @@ static void wg_session_action(wg_timer_action_t action, unsigned int peer)
 
     case WG_TIMER_SEND_KEEPALIVE:
     {
+        struct sockaddr_in endpoint = get_peer_endpoint(peer);
         uint16_t ka_len = 0;
         packet_buffer_t *ka_pkt =
             (packet_buffer_t *)wg_send(peer, NULL, 0, &ka_len);
 
         if (ka_pkt != NULL && ka_len > 0)
         {
-            wg_tx_msg_t tx_msg = {
-                .tx_buf = ka_pkt,
-                .tx_len = ka_len,
-                .peer = get_peer_endpoint(peer),
-            };
-
-            if (xQueueSend(g_wg_tx_queue, &tx_msg, 0) == pdTRUE)
+            if (send_outer_packet(ka_pkt, ka_len, &endpoint))
             {
                 ESP_LOGI(TAG, "Peer %u: keepalive sent (%u bytes)",
                          peer, ka_len);
             }
             else
             {
-                // TX queue full — free the buffer, drop keepalive message
-                // (re-try next keepalive epoch)
                 tx_pool_free(ka_pkt);
-                ESP_LOGW(TAG, "TX queue full, keepalive dropped");
+                ESP_LOGW(TAG, "Peer %u: keepalive send failed", peer);
             }
         }
         else
@@ -162,6 +193,7 @@ static void wg_task(void *pvParameters)
 {
     (void)pvParameters;
     wg_rx_msg_t rx_msg;
+    wg_inner_msg_t inner_msg;
 
     ESP_LOGI(TAG, "WireGuard protocol task running");
 
@@ -174,7 +206,41 @@ static void wg_task(void *pvParameters)
             wg_session_action(tmr_msg.action, tmr_msg.peer);
         }
 
-        // Block until the IO thread sends us a packet
+        // Drain inner plaintext queue from wg0 output callback.
+        // Each entry holds a TX pool buffer with plaintext at offset 16;
+        // wg_send() writes the WG header into [0..15] and encrypts in-place,
+        // then returns that same buffer as the encrypted packet.
+        while (xQueueReceive(g_wg_inner_queue, &inner_msg, 0) == pdTRUE)
+        {
+            // Plaintext sits at data[WG_TRANSPORT_HEADER_SIZE..+pt_len-1].
+            // We pass the whole buffer to wg_send so Ada can encrypt in-place.
+            uint16_t tx_len = 0;
+            packet_buffer_t *tx_pkt =
+                (packet_buffer_t *)wg_send(1,
+                                           inner_msg.buf->data + WG_TRANSPORT_HEADER_SIZE,
+                                           inner_msg.pt_len,
+                                           &tx_len);
+
+            // inner_msg.buf is NOT the same buffer as tx_pkt — wg_send
+            // allocates a fresh TX buffer internally.  Free the inner one.
+            tx_pool_free(inner_msg.buf);
+
+            if (tx_pkt == NULL || tx_len == 0)
+            {
+                ESP_LOGW(TAG, "wg_send failed for inner packet");
+                continue;
+            }
+
+            struct sockaddr_in endpoint = get_peer_endpoint(1);
+            // send_outer_packet frees tx_pkt on failure; on success the
+            // pbuf_custom callback owns it.
+            if (!send_outer_packet(tx_pkt, tx_len, &endpoint)) {
+                ESP_LOGW(TAG, "Failed to send encrypted inner packet");
+                // Already freed by send_outer_packet on failure path
+            }
+        }
+
+        // Block until outer RX packet arrives
         // Use 100 ms timeout so timer actions get drained even when
         // no packets arrive (idle peer keepalive, rekey, expiry).
         if (xQueueReceive(g_wg_rx_queue, &rx_msg, pdMS_TO_TICKS(100)) != pdTRUE)
@@ -198,11 +264,13 @@ static void wg_task(void *pvParameters)
             continue;
         }
 
-        // Nominal path: hand to Ada
-        uint8_t pt_buf[WG_MAX_PLAINTEXT];
+        // Nominal path: hand to Ada via zero-copy netif path.
+        // wg_receive_netif() decrypts transport data in-place in the RX pool
+        // buffer; on WG_ACTION_RX_DECRYPTION_SUCCESS, C re-owns rx_buf.
         uint16_t pt_len = 0;
-        wg_action_t action = wg_receive(rx_buf, pt_buf, &pt_len);
-        // rx_buf is now owned by Ada (freed internally)
+        wg_action_t action = wg_receive_netif(rx_buf, &pt_len);
+        // rx_buf ownership: returned to C only on RX_DECRYPTION_SUCCESS;
+        // Ada has freed it for all other return values.
 
         switch (action)
         {
@@ -224,20 +292,18 @@ static void wg_task(void *pvParameters)
             // §6.5: crypto succeeded — safe to learn endpoint
             update_peer_endpoint(1, &rx_msg.peer);
 
-            wg_tx_msg_t tx_msg = {
-                .tx_buf = resp_pkt,
-                .tx_len = resp_len,
-                .peer   = rx_msg.peer,
-            };
-
-            // Network I/O handed by different thread, enqueue response (blocking)
-            xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY);
+            if (!send_outer_packet(resp_pkt, resp_len, &rx_msg.peer)) {
+                ESP_LOGW(TAG, "Failed to send handshake response");
+                tx_pool_free(resp_pkt);
+            }
             break;
         }
 
         case WG_ACTION_RX_DECRYPTION_SUCCESS:
         {
-            // Transport data decrypted successfully
+            // Transport data decrypted in-place.  Plaintext is at
+            // rx_buf->data[WG_TRANSPORT_HEADER_SIZE .. +pt_len-1].
+            // C owns rx_buf and must free it (directly or via pbuf_custom).
             update_peer_endpoint(1, &rx_msg.peer);
 
             ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext)", pt_len);
@@ -245,9 +311,17 @@ static void wg_task(void *pvParameters)
             // Echo mode: re-encrypt and send back (test-only)
             if (wg_echo_enabled())
             {
+                // For echo we copy the plaintext into wg_send, then free rx_buf.
                 uint16_t tx_len = 0;
                 packet_buffer_t *tx_pkt =
-                    (packet_buffer_t *)wg_send(1, pt_buf, pt_len, &tx_len);
+                    (packet_buffer_t *)wg_send(
+                        1,
+                        rx_buf->data + WG_TRANSPORT_HEADER_SIZE,
+                        pt_len,
+                        &tx_len);
+
+                // Done with RX buffer
+                rx_pool_free(rx_buf);
 
                 if (tx_pkt == NULL || tx_len == 0)
                 {
@@ -257,15 +331,24 @@ static void wg_task(void *pvParameters)
 
                 ESP_LOGI(TAG, "<< Echo Transport (%u bytes)", tx_len);
 
-                wg_tx_msg_t tx_msg = {
-                    .tx_buf = tx_pkt,
-                    .tx_len = tx_len,
-                    .peer   = rx_msg.peer,
-                };
-                xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY);
+                if (!send_outer_packet(tx_pkt, tx_len, &rx_msg.peer)) {
+                    ESP_LOGW(TAG, "Failed to send echo transport packet");
+                    // Already freed by send_outer_packet on failure
+                }
             }
-
-            // TODO: do something with plaintext in the future
+            else
+            {
+                // Zero-copy netif inject.  On success, rx_buf ownership
+                // transfers to pbuf_custom callback -> rx_pool_free.
+                // On failure, we retain rx_buf and must free it.
+                if (!wg_netif_inject_plaintext(rx_buf,
+                                               WG_TRANSPORT_HEADER_SIZE,
+                                               pt_len))
+                {
+                    ESP_LOGW(TAG, "Failed to inject plaintext into wg0 netif");
+                    rx_pool_free(rx_buf);
+                }
+            }
             break;
         }
 
@@ -294,9 +377,9 @@ bool wg_task_init(void)
     g_wg_rx_queue = xQueueCreateStatic(
         RX_QUEUE_DEPTH, sizeof(wg_rx_msg_t),
         s_rx_queue_storage, &s_rx_queue_buf);
-    g_wg_tx_queue = xQueueCreateStatic(
-        TX_QUEUE_DEPTH, sizeof(wg_tx_msg_t),
-        s_tx_queue_storage, &s_tx_queue_buf);
+    g_wg_inner_queue = xQueueCreateStatic(
+        INNER_QUEUE_DEPTH, sizeof(wg_inner_msg_t),
+        s_inner_queue_storage, &s_inner_queue_buf);
 
     // Initialize pools with static semaphores and Ada subsystem structures
     packet_pool_init();

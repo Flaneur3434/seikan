@@ -11,6 +11,7 @@
 #include "wg_commands.h"
 #include "wireguard.h"
 #include "packet_pool.h"
+#include "wg_netif.h"
 
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -55,17 +56,15 @@ static void cmd_initiate_handshake(const wg_rx_msg_t *rx_msg)
 
     ESP_LOGI(TAG, "<< Handshake Initiation (%u bytes)", init_len);
 
-    wg_tx_msg_t tx_msg = {
-        .tx_buf = init_pkt,
-        .tx_len = init_len,
-        .peer   = rx_msg->peer,
-    };
-
-    if (xQueueSend(g_wg_tx_queue, &tx_msg, portMAX_DELAY) != pdTRUE)
+    if (!wg_netif_send_outer(init_pkt, init_len, &rx_msg->peer))
     {
+        /* Ownership NOT transferred on failure — free here */
         tx_pool_free(init_pkt);
-        ESP_LOGE(TAG, "TX queue full, initiation dropped");
+        ESP_LOGE(TAG, "Failed to send initiation");
+        return;
     }
+
+    /* Ownership transferred to pbuf_custom callback — do NOT free here */
 }
 
 /**

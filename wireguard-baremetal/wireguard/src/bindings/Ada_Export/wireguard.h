@@ -44,19 +44,6 @@ typedef enum
 bool wg_init(void);
 
 /**
- * Process an incoming packet (RX only - never allocates TX buffers).
- *
- * Ada takes ownership of rx_buf (freed internally — do NOT free in C).
- *
- * @param[in]  rx_buf   RX pool buffer.  Ownership transferred to Ada.
- * @param[out] pt_out   Buffer for decrypted plaintext (>= WG_MAX_PLAINTEXT).
- *                      Written only when action == SEND_TRANSPORT.
- * @param[out] pt_len   Plaintext length.  0 unless action == SEND_TRANSPORT.
- * @return Action code telling C what to do next.
- */
-wg_action_t wg_receive(void *rx_buf, uint8_t *pt_out, uint16_t *pt_len);
-
-/**
  * Process an incoming packet — zero-copy netif RX path.
  *
  * Like wg_receive(), but for WG_ACTION_RX_DECRYPTION_SUCCESS Ada does NOT

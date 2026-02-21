@@ -5,8 +5,8 @@
 #include <nvs_flash.h>
 
 #include "wg_task.h"
+#include "wg_netif.h"
 #include "wg_session_timer.h"
-#include "udp_server.h"
 #include "wifi_station.h"
 
 static const char *TAG = "main";
@@ -58,8 +58,13 @@ void app_main(void)
         return;
     }
 
-    if (!udp_server_task_start()) {
-        ESP_LOGE(TAG, "UDP I/O task failed to start");
+    if (!wg_netif_init()) {
+        ESP_LOGE(TAG, "WG netif init failed");
+        return;
+    }
+
+    if (!wg_netif_start()) {
+        ESP_LOGE(TAG, "WG netif start failed");
         return;
     }
 
