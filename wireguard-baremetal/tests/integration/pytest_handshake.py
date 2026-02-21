@@ -280,7 +280,7 @@ class TestEsp32Handshake:
         """Wait for ESP32 to boot and return (ip, port) tuple."""
         ip = _get_esp32_ip(dut, timeout=30)
         dut.expect("WireGuard initialized", timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
         return (ip, WG_PORT)
 
     def test_python_initiates(self, dut, wg_peer, esp32_addr):
