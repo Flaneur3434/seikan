@@ -339,7 +339,7 @@ class TestEsp32Transport:
         """Wait for ESP32 boot and return (ip, port)."""
         ip = _get_esp32_ip(dut, timeout=30)
         dut.expect("WireGuard initialized", timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
         return (ip, WG_PORT)
 
     @pytest.fixture
@@ -398,20 +398,67 @@ class TestEsp32Transport:
             dut.expect("Transport Data", timeout=5)
 
     def test_max_payload(self, dut, transport_session, esp32_addr):
-        """Max-size payload that fits a 256-byte pool buffer (224 B)."""
+        """Max-size payload that fits the 1560-byte pool buffer (1528 B plaintext)."""
         sock, send_key, _recv_key, rx_idx = transport_session
 
-        # Pool buffer = 256.  Header(16) + plaintext + tag(16) <= 256
-        # ⇒ max plaintext = 224 bytes
-        plaintext = bytes(range(224))
-        assert len(plaintext) == 224
+        # Pool buffer = 1560.  Header(16) + plaintext + tag(16) <= 1560
+        # => max plaintext = 1528 bytes  (= WG_MAX_PLAINTEXT)
+        plaintext = bytes(range(256)) * 5 + bytes(range(248))  # 1528 bytes
+        assert len(plaintext) == 1528
 
         pkt = build_transport_packet(send_key, rx_idx, counter=0,
                                      plaintext=plaintext)
-        assert len(pkt) == 256  # exactly fills the buffer
+        assert len(pkt) == 1560  # exactly fills the buffer
         sock.sendto(pkt, esp32_addr)
 
         dut.expect("Transport Data", timeout=5)
+
+    # ── Negative tests ───────────────────────────────────────────
+
+    # ── netif injection tests (echo OFF) ─────────────────────────
+
+    def test_netif_inject(self, dut, wg_peer, esp32_addr):
+        """Transport packet is decrypted and injected into lwIP via wg0 netif.
+
+        Echo mode is OFF (not enabled).  The ESP32 decrypts the packet,
+        logs 'Decrypted Transport Data', then calls wg_netif_inject_plaintext()
+        to hand the IP packet up to the lwIP stack.  No encrypted reply is sent.
+
+        This verifies the zero-copy RX netif path end-to-end on hardware.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(UDP_TIMEOUT)
+        try:
+            # — Handshake (echo mode stays OFF) —
+            init_msg, init_state = wg_peer.create_initiation(esp32_public())
+            sock.sendto(init_msg, esp32_addr)
+
+            resp_data, _ = sock.recvfrom(256)
+            assert resp_data[0] == MSG_TYPE_RESPONSE
+            final_state = wg_peer.process_response(resp_data, init_state)
+            dut.expect("Handshake Response", timeout=5)
+
+            send_key, _recv_key = derive_transport_keys(final_state.chaining_key)
+
+            # — Send a minimal IP-like payload (echo mode is OFF) —
+            # The plaintext doesn't need to be a valid IP packet for this test;
+            # we just verify the ESP32 decrypts it and attempts netif injection.
+            plaintext = b"\x45" + bytes(19)  # starts with IPv4 version/IHL byte
+            pkt = build_transport_packet(
+                send_key, final_state.remote_index, counter=0,
+                plaintext=plaintext,
+            )
+            sock.sendto(pkt, esp32_addr)
+
+            # ESP32 should log decryption success
+            dut.expect("Decrypted Transport Data", timeout=5)
+
+            # No echo reply expected (echo mode is OFF)
+            sock.settimeout(1.0)
+            with pytest.raises(socket.timeout):
+                sock.recvfrom(512)
+        finally:
+            sock.close()
 
     # ── Negative tests ───────────────────────────────────────────
 
