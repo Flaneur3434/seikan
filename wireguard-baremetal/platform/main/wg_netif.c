@@ -342,11 +342,15 @@ bool wg_netif_send_outer(packet_buffer_t *tx_buf,
     wp->pool_buf                = tx_buf;
     wp->pc.custom_free_function = tx_custom_free;
 
-    struct pbuf *p = pbuf_alloced_custom(PBUF_TRANSPORT, tx_len, PBUF_REF,
+    /* PBUF_RAW: offset=0, so payload points directly at tx_buf->data[0].
+     * The WireGuard packet is already fully built; udp_sendto() prepends
+     * UDP/IP/Ethernet headers from lwIP's own memory, not ours. */
+    struct pbuf *p = pbuf_alloced_custom(PBUF_RAW, tx_len, PBUF_REF,
                                          &wp->pc,
                                          tx_buf->data, tx_len);
     if (p == NULL) {
         wp->in_use = false;
+        ESP_LOGE(TAG, "custom alloc failed");
         return false;
     }
 
