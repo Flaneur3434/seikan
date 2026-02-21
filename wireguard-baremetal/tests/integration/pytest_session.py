@@ -1221,11 +1221,11 @@ class TestEsp32TimerBoot:
 
         Checks all three boot banners in the order they appear on UART:
           1. "Session timer queue initialized"   (wg_session_timer_init)
-          2. "Session timer task running"         (task entry point)
-          3. "Socket bound"                       (IO task ready)
+          2. "Session timer task started"         (task entry point)
+          3. "wg0 netif"                           (wg_netif ready)
         """
         dut.expect("Session timer task started", timeout=10)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_no_spurious_events_without_session(self, dut):
         """All peers inactive → timer produces No_Action for 5 seconds.
@@ -1234,7 +1234,7 @@ class TestEsp32TimerBoot:
         timer action log messages should appear because no peer has
         an active session.
         """
-        dut.expect("Socket bound", timeout=30)
+        dut.expect("wg0 netif", timeout=30)
         time.sleep(5)
         with pytest.raises(Exception):
             dut.expect(
@@ -1255,7 +1255,7 @@ class TestEsp32FreshSession:
     def _boot(self, dut):
         """Wait for full boot and capture IP."""
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_no_events_first_15_seconds(self, dut):
         """For the first 15 s after handshake, no timer events fire.
@@ -1322,7 +1322,7 @@ class TestEsp32RekeyAfterTime:
     @pytest.fixture(autouse=True)
     def _boot(self, dut):
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_rekey_initiated_at_120s(self, dut):
         """Rekey initiation fires at REKEY_AFTER_TIME = 120 s.
@@ -1383,7 +1383,7 @@ class TestEsp32RekeyFlag:
     @pytest.fixture(autouse=True)
     def _boot(self, dut):
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_no_immediate_duplicate_rekey(self, dut):
         """No immediate duplicate rekey — retries are gated to every 5 s.
@@ -1425,7 +1425,7 @@ class TestEsp32RejectAfterTime:
     @pytest.fixture(autouse=True)
     def _boot(self, dut):
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_session_expires_at_180s(self, dut):
         """Session expiry fires at REJECT_AFTER_TIME = 180 s.
@@ -1488,7 +1488,7 @@ class TestEsp32SessionLifecycle:
     @pytest.fixture(autouse=True)
     def _boot(self, dut):
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_full_lifecycle(self, dut):
         """Walk the complete timer state machine on real hardware."""
@@ -1571,7 +1571,7 @@ class TestEsp32KeepaliveRx:
     @pytest.fixture(autouse=True)
     def _boot(self, dut):
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_keepalive_accepted_silently(self, dut):
         """ESP32 processes a keepalive without error or echo.
@@ -1686,7 +1686,7 @@ class TestEsp32KeepaliveTx:
     @pytest.fixture(autouse=True)
     def _boot(self, dut):
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_keepalive_fires_after_timeout(self, dut):
         """ESP32 sends a keepalive ~10 s after last receiving data.
@@ -1857,7 +1857,7 @@ class TestEsp32UnresponsivePeer:
     @pytest.fixture(autouse=True)
     def _boot(self, dut):
         self._ip = _get_esp32_ip(dut, timeout=30)
-        dut.expect("Socket bound", timeout=10)
+        dut.expect("wg0 netif", timeout=10)
 
     def test_rekey_after_silence(self, dut):
         """ESP32 initiates rekey ~15 s after Python stops sending.
