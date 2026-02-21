@@ -2,7 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <netinet/in.h>
+#include <sys/socket.h>
 
 #include "packet_pool.h"
 
