@@ -9,11 +9,12 @@ is
    ---------------------------------------------------------------------------
 
    function Elapsed
-     (Start : Timer.Clock.Timestamp;
-      Now   : Timer.Clock.Timestamp) return Unsigned_64
+     (Start : Timer.Clock.Timestamp; Now : Timer.Clock.Timestamp)
+      return Unsigned_64
+   with Post => (if Now > Start then Elapsed'Result > 0)
    is
    begin
-      if Now < Start then
+      if Now <= Start then
          return 0;
       end if;
       return Now - Start;
@@ -31,8 +32,22 @@ is
    ---------------------------------------------------------------------------
 
    function Tick
-     (Peer_Idx : Peer_Index;
-      Now      : Timer.Clock.Timestamp) return Timer_Action
+     (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp) return Timer_Action
+   with
+     Refined_Post =>
+       -- Priority: expired dominates everything
+       (if Tick'Result = Session_Expired
+        then
+          Elapsed (Peers (Peer_Idx).Current.Created_At, Now)
+          >= Reject_After_Time_S
+          or else
+            Peers (Peer_Idx).Current.Send_Counter >= Reject_After_Messages)
+       -- Priority: timed_out dominates rekey
+       and then
+         (if Tick'Result = Initiate_Rekey
+            and then Peers (Peer_Idx).Mode = Rekeying
+          then
+            Elapsed (Peers (Peer_Idx).Rekey_Start, Now) < Rekey_Attempt_Time_S)
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
       Age  : Unsigned_64;
@@ -44,26 +59,13 @@ is
 
       Age := Elapsed (Peer.Current.Created_At, Now);
 
-      --  1. Hard expiry — reject-after limits
+      --  Hard expiry — reject-after limits
       if Age >= Reject_After_Time_S
         or else Peer.Current.Send_Counter >= Reject_After_Messages
       then
          return Session_Expired;
       end if;
 
-      --  2. Rekey attempt timed out (90 s window exhausted)
-      if Peer.Mode = Rekeying then
-         declare
-            Attempt_Elapsed : constant Unsigned_64 :=
-              Elapsed (Peer.Rekey_Start, Now);
-         begin
-            if Attempt_Elapsed >= Rekey_Attempt_Time_S then
-               return Rekey_Timed_Out;
-            end if;
-         end;
-      end if;
-
-      --  3. Rekey triggers
       case Peer.Mode is
          when Established =>
             --  Time or message-count threshold
@@ -73,21 +75,31 @@ is
                return Initiate_Rekey;
             end if;
 
-            --  Unresponsive peer (§6.2): no data for 15 s
+            --  Unresponsive peer: no data for 15 s
             if Peer.Last_Received /= Timer.Clock.Never then
                declare
                   Since_Recv : constant Unsigned_64 :=
                     Elapsed (Peer.Last_Received, Now);
                begin
-                  if Since_Recv >=
-                    Keepalive_Timeout_S + Rekey_Timeout_S
-                  then
+                  if Since_Recv >= Keepalive_Timeout_S + Rekey_Timeout_S then
                      return Initiate_Rekey;
                   end if;
                end;
             end if;
 
-         when Rekeying =>
+         when Rekeying    =>
+            --  Rekey attempt timed out (90 s window exhausted)
+            --  Must be checked BEFORE retry gating so we don't
+            --  keep retrying after the attempt window is exhausted.
+            declare
+               Attempt_Elapsed : constant Unsigned_64 :=
+                 Elapsed (Peer.Rekey_Start, Now);
+            begin
+               if Attempt_Elapsed >= Rekey_Attempt_Time_S then
+                  return Rekey_Timed_Out;
+               end if;
+            end;
+
             --  Retry gating: re-send initiation every 5 s
             declare
                Since_Last : constant Unsigned_64 :=
@@ -98,7 +110,7 @@ is
                end if;
             end;
 
-         when Inactive =>
+         when Inactive    =>
             null;
       end case;
 
@@ -107,8 +119,7 @@ is
          declare
             Since_Recv : constant Unsigned_64 :=
               Elapsed (Peer.Last_Received, Now);
-            Since_Sent : constant Unsigned_64 :=
-              Elapsed (Peer.Last_Sent, Now);
+            Since_Sent : constant Unsigned_64 := Elapsed (Peer.Last_Sent, Now);
          begin
             if Since_Recv < Keepalive_Timeout_S
               and then Since_Sent >= Keepalive_Timeout_S
@@ -125,9 +136,7 @@ is
    --  Tick_All — Evaluate all peers under lock
    ---------------------------------------------------------------------------
 
-   procedure Tick_All
-     (Now     : Timer.Clock.Timestamp;
-      Actions : out Action_Array)
+   procedure Tick_All (Now : Timer.Clock.Timestamp; Actions : out Action_Array)
    is
    begin
       Lock;

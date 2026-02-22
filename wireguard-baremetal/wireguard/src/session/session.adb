@@ -47,6 +47,8 @@ is
       Peers (Peer).Current         := Peers (Peer).Next;
       Peers (Peer).Next            := (others => <>);
       Peers (Peer).Last_Handshake  := Peers (Peer).Current.Created_At;
+      Peers (Peer).Last_Sent       := Peers (Peer).Current.Created_At;
+      Peers (Peer).Last_Received   := Peers (Peer).Current.Created_At;
       Peers (Peer).Rekey_Start     := Timer.Clock.Never;
       Peers (Peer).Rekey_Last_Sent := Timer.Clock.Never;
       Peers (Peer).Active          := True;

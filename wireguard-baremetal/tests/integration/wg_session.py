@@ -169,14 +169,16 @@ def tick(peer: PeerState, now: int) -> TimerAction:
         a.initiate_rekey = True
 
     # 4. Rekey retry / attempt timeout (§6.4)
-    #    Retry every Rekey_Timeout (5 s).  Give up after Rekey_Attempt_Time (90 s).
+    #    Check timeout FIRST (90 s window exhausted), then retry (5 s interval).
+    #    This prevents retrying after the attempt window is exhausted.
     if peer.rekey_attempted:
         attempt_elapsed = _elapsed(peer.rekey_attempt_start, now)
-        since_last_init = _elapsed(peer.rekey_last_sent, now)
         if attempt_elapsed >= REKEY_ATTEMPT_TIME:
             a.rekey_timed_out = True
-        elif since_last_init >= REKEY_TIMEOUT:
-            a.initiate_rekey = True
+        else:
+            since_last_init = _elapsed(peer.rekey_last_sent, now)
+            if since_last_init >= REKEY_TIMEOUT:
+                a.initiate_rekey = True
 
     # 5. Keepalive
     #    _elapsed(NEVER, now) = now (large), so "never sent" correctly
@@ -223,6 +225,12 @@ def activate_next(peer: PeerState) -> PeerState:
 
     # Update handshake timestamp
     p.last_handshake = p.current.created_at
+
+    # Reset data-path timestamps — the handshake itself counts as
+    # a send/receive event, preventing the unresponsive-peer check
+    # from immediately triggering another rekey.
+    p.last_sent = p.current.created_at
+    p.last_received = p.current.created_at
 
     # Clear rekey state
     p.rekey_attempted = False

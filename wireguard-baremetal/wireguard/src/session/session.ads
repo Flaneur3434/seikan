@@ -285,12 +285,12 @@ private
    procedure Activate_Next (Peer : Peer_Index)
    with
      Global => (In_Out => Peers),
-     Pre    =>
-       All_Peers_Valid
-       and then Peers (Peer).Next.Valid,
+     Pre    => All_Peers_Valid and then Peers (Peer).Next.Valid,
      Post   =>
        All_Peers_Valid
        and then not Peers (Peer).Next.Valid
-       and then Peers (Peer).Mode = Established;
+       and then Peers (Peer).Mode = Established
+       and then Peers (Peer).Last_Sent = Peers (Peer).Current.Created_At
+       and then Peers (Peer).Last_Received = Peers (Peer).Current.Created_At;
 
 end Session;
