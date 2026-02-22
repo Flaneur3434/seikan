@@ -368,50 +368,76 @@ class TestKeepalive:
 #  Layer 1b-2 — Unresponsive peer detection (§6.2) + retry (§6.4)
 # =====================================================================
 
-class TestUnresponsivePeer:
-    """If no transport data received for Keepalive_Timeout + Rekey_Timeout
-    (15 s), the peer is unresponsive → initiate handshake."""
+class TestResponderNoTimeRekey:
+    """Responders must NOT do time-based rekeying (§6.2 paragraph 2).
 
-    def test_unresponsive_at_threshold(self):
-        """since_recv == 15 → initiate_rekey."""
-        now = 1000
+    Only the initiator of the current session does time-based rekeying
+    to prevent the 'thundering herd' problem.  Responders rely on the
+    initiator to rekey.
+    """
+
+    def test_responder_no_rekey_at_120s(self):
+        """Responder at Rekey_After_Time → no rekey."""
         peer = make_active_peer(
-            created_at=now - 30,
-            last_received=now - (KEEPALIVE_TIMEOUT + REKEY_TIMEOUT),
+            created_at=100,
+            is_initiator=False,
         )
-        action = tick(peer, now)
+        action = tick(peer, now=100 + REKEY_AFTER_TIME)
+        assert action.initiate_rekey is False
+
+    def test_responder_no_rekey_at_165s(self):
+        """Responder at 165 s (receive-side threshold) → no rekey."""
+        peer = make_active_peer(
+            created_at=100,
+            is_initiator=False,
+        )
+        action = tick(peer, now=100 + REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT - REKEY_TIMEOUT)
+        assert action.initiate_rekey is False
+
+    def test_responder_counter_rekey_still_works(self):
+        """Responder at counter threshold → rekey fires (§6.2 paragraph 1).
+
+        Counter-based rekey is NOT gated on is_initiator — matches
+        wireguard-go keepKeyFreshSending(): nonce > RekeyAfterMessages.
+        """
+        peer = make_active_peer(
+            created_at=100,
+            send_counter=REKEY_AFTER_MESSAGES,
+            is_initiator=False,
+        )
+        action = tick(peer, now=110)
         assert action.initiate_rekey is True
 
-    def test_not_unresponsive_before_threshold(self):
-        """since_recv == 14 → no rekey (still in keepalive territory)."""
-        now = 1000
+    def test_initiator_rekeys_at_120s(self):
+        """Initiator at Rekey_After_Time → rekey fires."""
         peer = make_active_peer(
-            created_at=now - 30,
-            last_received=now - (KEEPALIVE_TIMEOUT + REKEY_TIMEOUT - 1),
+            created_at=100,
+            is_initiator=True,
         )
-        action = tick(peer, now)
+        action = tick(peer, now=100 + REKEY_AFTER_TIME)
+        assert action.initiate_rekey is True
+
+    def test_responder_still_expires(self):
+        """Responder at Reject_After_Time → session expired (not rekey)."""
+        peer = make_active_peer(
+            created_at=100,
+            is_initiator=False,
+        )
+        action = tick(peer, now=100 + REJECT_AFTER_TIME)
+        assert action.session_expired is True
         assert action.initiate_rekey is False
 
-    def test_no_unresponsive_if_never_received(self):
-        """last_received == NEVER → condition 6 skipped."""
-        now = 1000
-        peer = make_active_peer(created_at=now - 30)
-        assert peer.last_received == NEVER
-        action = tick(peer, now)
-        assert action.initiate_rekey is False
-
-    def test_unresponsive_suppressed_by_rekey_attempted(self):
-        """Already attempting rekey → condition 6 doesn't fire
-        (retries handled by condition 4)."""
+    def test_responder_keepalive_still_works(self):
+        """Responder keepalive is not affected by is_initiator."""
         now = 1000
         peer = make_active_peer(
-            created_at=now - 30,
-            last_received=now - 20,
-            rekey_attempted=True,
-            rekey_attempt_start=now - 6,
-            rekey_last_sent=now - 1,  # recent → no retry either
+            created_at=900,
+            last_received=now - 5,
+            last_sent=now - KEEPALIVE_TIMEOUT,
+            is_initiator=False,
         )
         action = tick(peer, now)
+        assert action.send_keepalive is True
         assert action.initiate_rekey is False
 
 

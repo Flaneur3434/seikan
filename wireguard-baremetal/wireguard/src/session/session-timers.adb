@@ -48,12 +48,14 @@ is
             and then Peers (Peer_Idx).Mode = Rekeying
           then
             Elapsed (Peers (Peer_Idx).Rekey_Start, Now) < Rekey_Attempt_Time_S)
-       -- Initiator-only: Established rekey never fires for responder
+       -- Established rekey: initiator-only for time, any peer for counter
        and then
          (if Tick'Result = Initiate_Rekey
             and then Peers (Peer_Idx).Mode = Established
           then
-            Peers (Peer_Idx).Is_Initiator)
+            Peers (Peer_Idx).Is_Initiator
+            or else
+              Peers (Peer_Idx).Current.Send_Counter >= Rekey_After_Messages)
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
       Age  : Unsigned_64;
@@ -74,22 +76,31 @@ is
 
       case Peer.Mode is
          when Established =>
-            --  Per WireGuard §5.4: ONLY the initiator of the current
-            --  session performs time/counter-based rekeying.  The
-            --  responder never initiates a rekey — it relies on the
-            --  initiator to do it (prevents "thundering herd").
+            --  Counter-based rekey: ANY peer (§6.2 paragraph 1).
+            --  "WireGuard will try to create a new session … after
+            --  it has sent Rekey-After-Messages transport data messages."
+            --  No initiator restriction — matches wireguard-go
+            --  keepKeyFreshSending(): nonce > RekeyAfterMessages.
+            if Peer.Current.Send_Counter >= Rekey_After_Messages then
+               return Initiate_Rekey;
+            end if;
+
+            --  Time-based rekey: ONLY initiator (§6.2 paragraph 2).
+            --  Prevents the "thundering herd" problem where both
+            --  peers try to establish a new session simultaneously.
             if Peer.Is_Initiator then
                --  After SENDING: session >= Rekey_After_Time (120 s)
-               --  or send_counter >= Rekey_After_Messages (2^60)
-               if Age >= Rekey_After_Time_S
-                 or else Peer.Current.Send_Counter >= Rekey_After_Messages
-               then
+               --  Matches wireguard-go keepKeyFreshSending():
+               --    keypair.isInitiator && age > RekeyAfterTime
+               if Age >= Rekey_After_Time_S then
                   return Initiate_Rekey;
                end if;
 
                --  After RECEIVING: session >= Reject − Keepalive − Rekey
-               --  (180 − 10 − 5 = 165 s).  This is the "opportunistic
-               --  rekey on receive" from the whitepaper.
+               --  (180 − 10 − 5 = 165 s).  One-shot by construction:
+               --  first Initiate_Rekey → Rekeying, so Established
+               --  branch never fires again.
+               --  Matches wireguard-go keepKeyFreshReceiving().
                if Age >= Reject_After_Time_S
                             - Keepalive_Timeout_S
                             - Rekey_Timeout_S

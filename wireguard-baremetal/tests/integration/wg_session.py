@@ -111,6 +111,10 @@ class PeerState:
 
     active: bool = False
 
+    # True when we initiated the current session's handshake.
+    # Per WireGuard §5.4: only the initiator may do time-based rekeying.
+    is_initiator: bool = False
+
 
 def null_peer() -> PeerState:
     """Return a peer equivalent to Ada's Null_Peer."""
@@ -160,15 +164,32 @@ def tick(peer: PeerState, now: int) -> TimerAction:
         a.session_expired = True
         return a
 
-    if peer.current.send_counter >= REKEY_AFTER_MESSAGES:
-        if not peer.rekey_attempted:
+    # 3. Counter-based rekey: ANY peer (§6.2 paragraph 1)
+    #    "WireGuard will try to create a new session … after it has
+    #    sent Rekey-After-Messages transport data messages."
+    #    No initiator restriction — matches wireguard-go
+    #    keepKeyFreshSending(): nonce > RekeyAfterMessages.
+    if not peer.rekey_attempted:
+        if peer.current.send_counter >= REKEY_AFTER_MESSAGES:
             a.initiate_rekey = True
 
-    # 3. Time-based rekey
-    if age >= REKEY_AFTER_TIME and not peer.rekey_attempted:
-        a.initiate_rekey = True
+    # 4. Time-based rekey: ONLY initiator (§6.2 paragraph 2)
+    #    Prevents the "thundering herd" problem.
+    if not peer.rekey_attempted and peer.is_initiator:
+        # After SENDING: session age >= Rekey_After_Time (120 s)
+        # Matches wireguard-go keepKeyFreshSending():
+        #   keypair.isInitiator && age > RekeyAfterTime
+        if age >= REKEY_AFTER_TIME:
+            a.initiate_rekey = True
 
-    # 4. Rekey retry / attempt timeout (§6.4)
+        # After RECEIVING: session age >= Reject - Keepalive - Rekey (165 s)
+        # One-shot by construction: first Initiate_Rekey transitions to
+        # Rekeying, so the Established branch never fires again.
+        # Matches wireguard-go keepKeyFreshReceiving().
+        if age >= REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT - REKEY_TIMEOUT:
+            a.initiate_rekey = True
+
+    # 5. Rekey retry / attempt timeout (§6.4)
     #    Check timeout FIRST (90 s window exhausted), then retry (5 s interval).
     #    This prevents retrying after the attempt window is exhausted.
     if peer.rekey_attempted:
@@ -180,7 +201,7 @@ def tick(peer: PeerState, now: int) -> TimerAction:
             if since_last_init >= REKEY_TIMEOUT:
                 a.initiate_rekey = True
 
-    # 5. Keepalive
+    # 6. Keepalive (§6.5)
     #    _elapsed(NEVER, now) = now (large), so "never sent" correctly
     #    satisfies since_sent >= KEEPALIVE_TIMEOUT.
     if peer.last_received != NEVER:
@@ -188,14 +209,6 @@ def tick(peer: PeerState, now: int) -> TimerAction:
         since_sent = _elapsed(peer.last_sent, now)
         if since_recv < KEEPALIVE_TIMEOUT and since_sent >= KEEPALIVE_TIMEOUT:
             a.send_keepalive = True
-
-    # 6. Unresponsive peer (§6.2)
-    #    No transport data for Keepalive_Timeout + Rekey_Timeout (15 s).
-    #    Initiate handshake.  Retries handled by condition 4 above.
-    if peer.last_received != NEVER and not peer.rekey_attempted:
-        since_recv = _elapsed(peer.last_received, now)
-        if since_recv >= KEEPALIVE_TIMEOUT + REKEY_TIMEOUT:
-            a.initiate_rekey = True
 
     return a
 
@@ -289,6 +302,7 @@ def make_active_peer(
     rekey_attempted: bool = False,
     rekey_attempt_start: int = NEVER,
     rekey_last_sent: int = NEVER,
+    is_initiator: bool = True,
 ) -> PeerState:
     """Create an active peer with a valid Current keypair for testing."""
     global _next_kp_id
@@ -316,6 +330,7 @@ def make_active_peer(
         rekey_attempt_start=rekey_attempt_start,
         rekey_last_sent=rekey_last_sent,
         active=True,
+        is_initiator=is_initiator,
     )
 
 
