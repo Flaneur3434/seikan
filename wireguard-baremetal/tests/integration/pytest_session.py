@@ -1236,6 +1236,72 @@ def _do_handshake(dut, esp32_ip):
     return sock, send_key, recv_key, final_state.remote_index
 
 
+def _do_esp32_initiated_handshake(dut, esp32_ip):
+    """Trigger ESP32-initiated handshake — ESP32 becomes the *initiator*.
+
+    Flow:
+      1. Python sends WG_CMD_INITIATE_HANDSHAKE (0xFF) to ESP32
+      2. ESP32 builds a Handshake Initiation and sends it to Python
+      3. Python processes the initiation as responder
+      4. Python creates and sends Handshake Response
+      5. ESP32 processes the response → session active
+
+    Returns (sock, send_key, recv_key, rx_idx) from Python's
+    (responder) perspective.  Since derive_transport_keys returns
+    (initiator_send, initiator_recv), the responder must swap them:
+      send_key = initiator_recv   (responder encrypts with this)
+      recv_key = initiator_send   (responder decrypts with this)
+
+    The caller is responsible for closing the socket.
+    """
+    from wg_noise import (
+        WireGuardPeer,
+        build_initiate_command,
+        derive_transport_keys,
+        INITIATION_SIZE,
+        MSG_TYPE_INITIATION,
+        RESPONSE_SIZE,
+    )
+    from test_keys import python_private_key, esp32_public, preshared_key
+
+    peer = WireGuardPeer(
+        private_key=python_private_key(),
+        psk=preshared_key(),
+    )
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(UDP_TIMEOUT)
+
+    # Tell ESP32 to initiate a handshake
+    sock.sendto(build_initiate_command(), (esp32_ip, WG_PORT))
+
+    # Receive ESP32's Handshake Initiation
+    init_data, _ = sock.recvfrom(256)
+    assert len(init_data) == INITIATION_SIZE, (
+        f"Expected {INITIATION_SIZE}-byte initiation, got {len(init_data)}"
+    )
+    assert init_data[0] == MSG_TYPE_INITIATION
+
+    # Process initiation as responder
+    resp_state = peer.process_initiation(init_data)
+
+    # Create and send response
+    resp_msg, resp_state = peer.create_response(resp_state)
+    assert len(resp_msg) == RESPONSE_SIZE
+    sock.sendto(resp_msg, (esp32_ip, WG_PORT))
+
+    dut.expect("Processed", timeout=5)
+
+    # Derive transport keys — swap for responder perspective
+    initiator_send, initiator_recv = derive_transport_keys(
+        resp_state.chaining_key
+    )
+    send_key = initiator_recv   # responder encrypts with initiator's recv key
+    recv_key = initiator_send   # responder decrypts with initiator's send key
+
+    return sock, send_key, recv_key, resp_state.remote_index
+
+
 # ── 2a. Boot and idle ─────────────────────────────────────────────────
 
 @pytest.mark.esp32c6
@@ -1337,10 +1403,13 @@ class TestEsp32FreshSession:
 class TestEsp32RekeyAfterTime:
     """Verify REKEY_AFTER_TIME = 120 s triggers rekey on real hardware.
 
-    After a handshake the ESP32 session ages in real time.  At ~120 s
-    the timer fires ``initiate_rekey`` and the WG task sends a
-    Handshake Initiation packet (visible on UART as
-    "Peer 1: initiating rekey" followed by "<< Rekey Initiation").
+    ESP32 must be the session *initiator* for time-based rekey to fire
+    (§6.2: only the initiator performs opportunistic time-based rekeying
+    to prevent the "thundering herd" problem).
+
+    We use ``_do_esp32_initiated_handshake`` so that the ESP32 creates
+    the Handshake Initiation and is therefore the initiator.  At ~120 s
+    the timer fires ``initiate_rekey``.
 
     Duration: ~135 s per test.
     """
@@ -1353,11 +1422,11 @@ class TestEsp32RekeyAfterTime:
     def test_rekey_initiated_at_120s(self, dut):
         """Rekey initiation fires at REKEY_AFTER_TIME = 120 s.
 
-        We do a handshake, then wait up to 130 s for the log message.
-        The timer ticks every 1 s so the actual rekey may appear at
-        T=120 or T=121.
+        ESP32 initiates the handshake (is_initiator=True), then we
+        wait up to 130 s for the log message.  The timer ticks every
+        1 s so the actual rekey may appear at T=120 or T=121.
         """
-        sock, *_ = _do_handshake(dut, self._ip)
+        sock, *_ = _do_esp32_initiated_handshake(dut, self._ip)
         try:
             dut.expect("initiating rekey", timeout=REKEY_AFTER_TIME + 10)
         finally:
@@ -1369,7 +1438,7 @@ class TestEsp32RekeyAfterTime:
         The WG task logs "<< Rekey Initiation" when it successfully
         queues the initiation packet for the IO thread.
         """
-        sock, *_ = _do_handshake(dut, self._ip)
+        sock, *_ = _do_esp32_initiated_handshake(dut, self._ip)
         try:
             dut.expect("Rekey Initiation", timeout=REKEY_AFTER_TIME + 10)
         finally:
@@ -1382,7 +1451,7 @@ class TestEsp32RekeyAfterTime:
         no "initiating rekey" appears.  This proves the timer respects
         the lower bound, not just the upper.
         """
-        sock, *_ = _do_handshake(dut, self._ip)
+        sock, *_ = _do_esp32_initiated_handshake(dut, self._ip)
         try:
             time.sleep(REKEY_AFTER_TIME - 5)
             with pytest.raises(Exception):
@@ -1398,6 +1467,7 @@ class TestEsp32RekeyAfterTime:
 class TestEsp32RekeyFlag:
     """After rekey flag is set, retries are gated to every 5 s.
 
+    ESP32 must be the session initiator for time-based rekey to fire.
     The C code calls ``session_set_rekey_flag()`` immediately after
     sending the rekey initiation.  This sets ``Rekey_Attempted = True``
     and records ``Rekey_Last_Sent``.  Subsequent ticks will retry the
@@ -1419,7 +1489,7 @@ class TestEsp32RekeyFlag:
         verify no initiation fires within 4 s (under the gate), then
         confirm a retry does arrive within the next few seconds.
         """
-        sock, *_ = _do_handshake(dut, self._ip)
+        sock, *_ = _do_esp32_initiated_handshake(dut, self._ip)
         try:
             # Wait for the first rekey initiation
             dut.expect("initiating rekey", timeout=REKEY_AFTER_TIME + 10)
@@ -1441,9 +1511,10 @@ class TestEsp32RekeyFlag:
 class TestEsp32RejectAfterTime:
     """Verify REJECT_AFTER_TIME = 180 s expires the session.
 
-    The session ages past REKEY_AFTER_TIME (rekey at ~120 s, Python
-    does not respond), then at ~180 s the timer fires
-    ``session_expired`` and the WG task calls ``session_expire()``.
+    Session expiry (REJECT_AFTER_TIME = 180 s) fires for ANY peer,
+    regardless of initiator status.  However, the test that checks
+    "rekey then expiry" needs ESP32 as initiator because time-based
+    rekey is initiator-only (§6.2).
 
     Duration: ~195 s per test.
     """
@@ -1456,9 +1527,9 @@ class TestEsp32RejectAfterTime:
     def test_session_expires_at_180s(self, dut):
         """Session expiry fires at REJECT_AFTER_TIME = 180 s.
 
-        After handshake, we simply wait.  The timer fires rekey at
-        ~120 s (which we ignore) and then expiry at ~180 s.  We look
-        for the "session expired" log message.
+        Expiry is unconditional (not gated on Is_Initiator), so
+        Python-initiated handshake (ESP32 = responder) is fine.
+        The timer fires expiry at ~180 s.
         """
         sock, *_ = _do_handshake(dut, self._ip)
         try:
@@ -1469,13 +1540,14 @@ class TestEsp32RejectAfterTime:
     def test_expiry_beats_rekey_timeout(self, dut):
         """Session expires at 180 s, NOT rekey-timeout at 210 s.
 
-        REKEY_AFTER_TIME (120) + REKEY_ATTEMPT_TIME (90) = 210 s,
-        which exceeds REJECT_AFTER_TIME (180 s).  So time-based
+        ESP32 must be the initiator so the time-based rekey fires at
+        ~120 s.  REKEY_AFTER_TIME (120) + REKEY_ATTEMPT_TIME (90) =
+        210 s, which exceeds REJECT_AFTER_TIME (180 s).  So time-based
         rekey can NEVER reach the timeout path — the session always
         expires first.  We verify "session expired" appears and
         "rekey timed out" does NOT.
         """
-        sock, *_ = _do_handshake(dut, self._ip)
+        sock, *_ = _do_esp32_initiated_handshake(dut, self._ip)
         try:
             # Must see session expired
             dut.expect("session expired", timeout=REJECT_AFTER_TIME + 15)
@@ -1495,20 +1567,18 @@ class TestEsp32RejectAfterTime:
 class TestEsp32SessionLifecycle:
     """End-to-end lifecycle on real hardware: handshake → rekey → expire.
 
-    A single test walks through the full timeline:
-      T=0    Handshake completes (session active)
-      T=0    Python sends one data packet (sets ESP32 Last_Received)
-      T~15   §6.2 unresponsive peer detection fires (since_recv >= 15)
-      T~15   Rekey flag set, retries every 5 s
-      T~105  Rekey attempt times out (90 s window) → session expired
+    ESP32 initiates the handshake so it is the session initiator.
+    The full timeline is:
 
-    Because Python sends data in Phase 1 (setting Last_Received) and
-    then goes silent, the §6.2 path triggers at ~15 s — much earlier
-    than the §6.1 REKEY_AFTER_TIME (120 s) path.  The 90 s rekey
-    window then expires at ~105 s via "rekey timed out", well before
-    REJECT_AFTER_TIME (180 s).
+      T=0    ESP32-initiated handshake completes (session active)
+      T=0    Python sends one data packet (proves transport works)
+      T<120  No timer events (quiet period)
+      T~120  Time-based rekey fires (§6.2, initiator-only)
+      T~120  Rekey flag set, retries every 5 s
+      T~180  REJECT_AFTER_TIME fires → session expired
+             (180 s < 120 + 90 = 210 s, so expiry wins over rekey timeout)
 
-    Duration: ~120 s.
+    Duration: ~195 s.
     """
 
     @pytest.fixture(autouse=True)
@@ -1521,12 +1591,10 @@ class TestEsp32SessionLifecycle:
         from wg_noise import build_transport_packet
 
         ip = self._ip
-        sock, send_key, _, rx_idx = _do_handshake(dut, ip)
+        sock, send_key, _, rx_idx = _do_esp32_initiated_handshake(dut, ip)
         try:
             # ── Phase 1: Fresh session (0–10 s) ──
             # Send a transport packet to prove session is alive.
-            # This sets ESP32's Last_Received, so going silent will
-            # trigger §6.2 unresponsive peer detection at ~T=15.
             pkt = build_transport_packet(
                 send_key, rx_idx, 0, b"lifecycle-test"
             )
@@ -1541,12 +1609,10 @@ class TestEsp32SessionLifecycle:
                     timeout=2,
                 )
 
-            # ── Phase 2: Wait for rekey (→ ~15 s via §6.2) ──
-            # Python is silent → since_recv grows past 15 s →
-            # unresponsive peer detection fires initiate_rekey.
+            # ── Phase 2: Wait for rekey at ~120 s (§6.2, initiator) ──
             dut.expect(
                 "initiating rekey",
-                timeout=KEEPALIVE_TIMEOUT + REKEY_TIMEOUT + 15,
+                timeout=REKEY_AFTER_TIME + 10,
             )
 
             # ── Phase 3: No immediate duplicate (retry gated to 5 s) ──
@@ -1556,15 +1622,18 @@ class TestEsp32SessionLifecycle:
             # Retry arrives within the next ~6 s
             dut.expect("initiating rekey", timeout=REKEY_TIMEOUT + 5)
 
-            # ── Phase 4: Session ends (rekey timed out at ~T=105) ──
-            # The 90 s rekey-attempt window started at ~T=15 and
-            # expires at ~T=105.  Match "expiring session" which is
-            # the common log suffix for both session_expired and
-            # rekey_timed_out paths.
+            # ── Phase 4: Session expires at ~180 s ──
+            # REJECT_AFTER_TIME (180 s) beats rekey-attempt timeout
+            # (120 + 90 = 210 s).  Match "session expired" or
+            # "expiring session".
             dut.expect(
-                "expiring session",
-                timeout=REKEY_ATTEMPT_TIME + 15,
+                re.compile(rb"(?:session expired|expiring session)"),
+                timeout=REJECT_AFTER_TIME - REKEY_AFTER_TIME + 15,
             )
+
+            # Must NOT see rekey timed out (session expired first)
+            with pytest.raises(Exception):
+                dut.expect("rekey timed out", timeout=5)
 
             # ── Phase 5: After expiry, timer is quiet again ──
             time.sleep(3)
@@ -1854,30 +1923,22 @@ class TestEsp32KeepaliveTx:
             sock.close()
 
 
-# ── 2h. Unresponsive peer — rekey on silence (§6.2) ──────────────────
+# ── 2h. Responder-no-rekey — initiator-only gating on hardware ───────
 
 @pytest.mark.esp32c6
 @pytest.mark.slow
-class TestEsp32UnresponsivePeer:
-    """ESP32 detects an unresponsive peer and initiates rekey (§6.2).
+class TestEsp32ResponderNoTimeRekey:
+    """When ESP32 is the responder, time-based rekey does NOT fire.
 
-    Per whitepaper §6.2: if no transport data is received for
-    Keepalive_Timeout + Rekey_Timeout = 15 seconds, the peer is
-    considered unresponsive.  A handshake initiation is sent,
-    then retried every Rekey_Timeout (5 s), until a new session
-    is created or Rekey_Attempt_Time (90 s) passes.
+    Per §6.2: "only the initiator of the current session" performs
+    time-based opportunistic rekeying.  When Python initiates the
+    handshake, ESP32 is the responder and must NOT attempt rekey
+    at REKEY_AFTER_TIME (120 s).
 
-    Test flow:
-      1. Complete handshake
-      2. Send one data packet (sets ESP32's Last_Received)
-      3. Go silent — Python stops sending
-      4. ESP32 sends keepalive at ~T=10 (since_sent >= 10)
-      5. ESP32 detects unresponsive peer at ~T=15 (since_recv >= 15)
-         and sends Handshake Initiation
-      6. ESP32 retries every 5 s (visible in UART log)
-      7. Eventually Rekey_Attempt_Time (90 s) expires → session drops
+    The session still expires at REJECT_AFTER_TIME (180 s) — that
+    is unconditional.
 
-    Duration: ~120 s for the full test.
+    Duration: ~140 s.
     """
 
     @pytest.fixture(autouse=True)
@@ -1885,140 +1946,38 @@ class TestEsp32UnresponsivePeer:
         self._ip = _get_esp32_ip(dut, timeout=30)
         dut.expect("wg0 netif", timeout=10)
 
-    def test_rekey_after_silence(self, dut):
-        """ESP32 initiates rekey ~15 s after Python stops sending.
+    def test_no_rekey_at_130s_as_responder(self, dut):
+        """ESP32 as responder does NOT rekey at REKEY_AFTER_TIME + 10.
 
-        After a handshake and one data packet, Python goes silent.
-        The ESP32 should detect the unresponsive peer and send a
-        Handshake Initiation within Keepalive_Timeout + Rekey_Timeout
-        + margin (25 s).
-
-        Duration: ~30 s.
+        We do a Python-initiated handshake (ESP32 = responder), wait
+        130 s (well past REKEY_AFTER_TIME = 120 s), and verify NO
+        "initiating rekey" appears.
         """
-        from wg_noise import build_transport_packet
-
-        ip = self._ip
-        sock, send_key, recv_key, rx_idx = _do_handshake(dut, ip)
+        sock, *_ = _do_handshake(dut, self._ip)
         try:
-            # Send one data packet so ESP32's Last_Received is set
-            pkt = build_transport_packet(
-                send_key, rx_idx, counter=0, plaintext=b"then silence",
-            )
-            sock.sendto(pkt, (ip, WG_PORT))
-            dut.expect("Transport Data", timeout=5)
-
-            # Go silent — ESP32 should detect unresponsive peer at ~15 s
-            # and initiate a rekey handshake
-            dut.expect(
-                "initiating rekey",
-                timeout=KEEPALIVE_TIMEOUT + REKEY_TIMEOUT + 10,
-            )
-            dut.expect("Rekey Initiation", timeout=5)
-
-        finally:
-            sock.close()
-
-    def test_rekey_retries_every_5s(self, dut):
-        """ESP32 retries the handshake every Rekey_Timeout (5 s).
-
-        After the first rekey initiation, we wait for a second one.
-        With Rekey_Timeout = 5 s it should appear within 10 s.
-
-        Duration: ~40 s.
-        """
-        from wg_noise import build_transport_packet
-
-        ip = self._ip
-        sock, send_key, recv_key, rx_idx = _do_handshake(dut, ip)
-        try:
-            # One data packet then silence
-            pkt = build_transport_packet(
-                send_key, rx_idx, counter=0, plaintext=b"retry test",
-            )
-            sock.sendto(pkt, (ip, WG_PORT))
-            dut.expect("Transport Data", timeout=5)
-
-            # First rekey at ~15 s
-            dut.expect(
-                "initiating rekey",
-                timeout=KEEPALIVE_TIMEOUT + REKEY_TIMEOUT + 10,
-            )
-
-            # Second rekey should follow within ~5 s (+ margin)
-            dut.expect("initiating rekey", timeout=REKEY_TIMEOUT + 5)
-
-        finally:
-            sock.close()
-
-    def test_rekey_times_out_after_90s(self, dut):
-        """Rekey attempt expires after Rekey_Attempt_Time (90 s).
-
-        The ESP32 retries every 5 s for up to 90 s.  After that,
-        rekey_timed_out fires and the session is expired.
-
-        The first rekey fires at ~15 s.  The 90 s window starts
-        then, so rekey_timed_out fires at ~105 s.
-
-        Duration: ~120 s.
-        """
-        from wg_noise import build_transport_packet
-
-        ip = self._ip
-        sock, send_key, recv_key, rx_idx = _do_handshake(dut, ip)
-        try:
-            # One data packet then silence
-            pkt = build_transport_packet(
-                send_key, rx_idx, counter=0, plaintext=b"timeout test",
-            )
-            sock.sendto(pkt, (ip, WG_PORT))
-            dut.expect("Transport Data", timeout=5)
-
-            # Wait for first rekey
-            dut.expect(
-                "initiating rekey",
-                timeout=KEEPALIVE_TIMEOUT + REKEY_TIMEOUT + 10,
-            )
-
-            # Wait for rekey timeout (90 s from first rekey + margin)
-            dut.expect(
-                "rekey timed out",
-                timeout=REKEY_ATTEMPT_TIME + 15,
-            )
-
-            # Session should be expired now — verify by checking
-            # the expiry action happened
-            dut.expect("expiring session", timeout=5)
-
-        finally:
-            sock.close()
-
-    def test_no_rekey_if_peer_responsive(self, dut):
-        """No unresponsive-peer rekey while Python keeps sending data.
-
-        Send data packets every 3 s for 20 s.  Since since_recv
-        never exceeds 15 s, the unresponsive peer condition never
-        triggers.
-
-        Duration: ~25 s.
-        """
-        from wg_noise import build_transport_packet
-
-        ip = self._ip
-        sock, send_key, recv_key, rx_idx = _do_handshake(dut, ip)
-        try:
-            for counter in range(7):
-                pkt = build_transport_packet(
-                    send_key, rx_idx, counter=counter,
-                    plaintext=f"responsive-{counter}".encode(),
-                )
-                sock.sendto(pkt, (ip, WG_PORT))
-                dut.expect("Transport Data", timeout=5)
-                if counter < 6:
-                    time.sleep(3)
-
-            # No rekey should have fired
+            time.sleep(REKEY_AFTER_TIME + 10)
             with pytest.raises(Exception):
-                dut.expect("initiating rekey", timeout=3)
+                dut.expect("initiating rekey", timeout=2)
+        finally:
+            sock.close()
 
+    def test_responder_still_expires_at_180s(self, dut):
+        """ESP32 as responder still expires at REJECT_AFTER_TIME.
+
+        Expiry is unconditional.  Even though the responder does not
+        rekey, the session still expires at 180 s.
+        """
+        sock, *_ = _do_handshake(dut, self._ip)
+        try:
+            # Must NOT see rekey
+            time.sleep(REKEY_AFTER_TIME + 10)
+            with pytest.raises(Exception):
+                dut.expect("initiating rekey", timeout=2)
+
+            # But MUST see session expired
+            dut.expect(
+                "session expired",
+                timeout=REJECT_AFTER_TIME - REKEY_AFTER_TIME + 5,
+            )
         finally:
             sock.close()

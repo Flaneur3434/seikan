@@ -249,6 +249,19 @@ def build_echo_mode_command(enable: bool) -> bytes:
     return bytes([WG_CMD_SET_ECHO_MODE, 0x01 if enable else 0x00])
 
 
+def build_initiate_command() -> bytes:
+    """Build a 1-byte initiate-handshake command for the ESP32.
+
+    Byte 0: WG_CMD_INITIATE_HANDSHAKE (0xFF)
+
+    The ESP32 responds by building a Handshake Initiation message
+    and sending it back to the sender's address.  This makes the
+    ESP32 the session *initiator*, which matters for time-based
+    rekey gating (§6.2).
+    """
+    return bytes([WG_CMD_INITIATE_HANDSHAKE])
+
+
 # ── WireGuard peer ───────────────────────────────────────────────────
 
 class WireGuardPeer:
