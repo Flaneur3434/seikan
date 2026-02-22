@@ -8,6 +8,7 @@ package body Session
     Refined_State => (Peer_States => Peers, Mutex_State => Mtx)
 is
    use Session_Keys;
+   use type Handshake.Handshake_Role;
 
    ---------------------------------------------------------------------------
    --  Init
@@ -73,6 +74,11 @@ is
        and then HS.Kind = Handshake.State_Empty
        and then (if Result = Success then Mode_Of (Peer) = Established)
    is
+      --  Capture role BEFORE Derive_Keypair wipes the handshake state.
+      --  Per WireGuard §5.4: only the initiator may do time-based
+      --  rekeying, so we need to persist this in Peer_State.
+      Initiator     : constant Boolean :=
+        HS.Role = Handshake.Role_Initiator;
       Derive_Result : Keypair_Result.Result;
    begin
       Lock;
@@ -87,6 +93,10 @@ is
             --  Activate_Next does the whole-record rotation
             --  including Mode := Established and rekey clearing
             Activate_Next (Peer);
+
+            --  Record whether we were the initiator of this session.
+            --  Must happen after Activate_Next (which sets Mode, etc).
+            Peers (Peer).Is_Initiator := Initiator;
             Result := Success;
 
          when Keypair_Result.Is_Err =>
