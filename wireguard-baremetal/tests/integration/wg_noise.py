@@ -172,7 +172,8 @@ def build_transport_packet(
     """
     header = struct.pack("<BxxxIQ", MSG_TYPE_TRANSPORT, receiver_index, counter)
     assert len(header) == TRANSPORT_HEADER_SIZE
-    ciphertext_tag = aead_encrypt(key, counter, plaintext, header)
+    # WireGuard spec §5.4.6: transport AEAD uses empty AAD (ε)
+    ciphertext_tag = aead_encrypt(key, counter, plaintext, b"")
     return header + ciphertext_tag
 
 
@@ -194,7 +195,8 @@ def parse_transport_packet(
     header = packet[:TRANSPORT_HEADER_SIZE]
     _, receiver_index, counter = struct.unpack("<BxxxIQ", header)
     ciphertext_tag = packet[TRANSPORT_HEADER_SIZE:]
-    plaintext = aead_decrypt(key, counter, ciphertext_tag, header)
+    # WireGuard spec §5.4.6: transport AEAD uses empty AAD (ε)
+    plaintext = aead_decrypt(key, counter, ciphertext_tag, b"")
     return receiver_index, counter, plaintext
 
 
@@ -230,7 +232,8 @@ def parse_keepalive_packet(
     header = packet[:TRANSPORT_HEADER_SIZE]
     _, receiver_index, counter = struct.unpack("<BxxxIQ", header)
     ciphertext_tag = packet[TRANSPORT_HEADER_SIZE:]
-    plaintext = aead_decrypt(key, counter, ciphertext_tag, header)
+    # WireGuard spec §5.4.6: transport AEAD uses empty AAD (ε)
+    plaintext = aead_decrypt(key, counter, ciphertext_tag, b"")
     assert plaintext == b"", f"keepalive plaintext must be empty, got {len(plaintext)} bytes"
     return receiver_index, counter
 

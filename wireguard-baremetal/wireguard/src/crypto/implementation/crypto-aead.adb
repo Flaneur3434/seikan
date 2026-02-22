@@ -89,9 +89,6 @@ is
    is
       Ret_Val : int;
 
-      --  Header is AAD (bytes 0..Header_Bytes-1)
-      Header_Addr : constant System.Address := Buffer'Address;
-
       --  Plaintext starts at offset Header_Bytes
       Plaintext_Addr : constant System.Address :=
         Buffer'Address + Storage_Offset (Header_Bytes);
@@ -104,14 +101,18 @@ is
       --  Encrypt function writes ciphertext + tag to output
       --  We use the same address for input plaintext and output ciphertext
       --  This works because stream ciphers are XOR-based
+      --
+      --  WireGuard spec §5.4.6: transport AEAD uses empty AAD (ε).
+      --  The header is NOT authenticated data — it is only used to
+      --  locate the payload within the buffer.
       Ret_Val :=
         Crypto.Crypto_Lib.AEAD_Encrypt
           (Ciphertext_Out     => Ciphertext_Addr,
            Ciphertext_Len_Out => System.Null_Address,
            Message_In         => Plaintext_Addr,
            Message_Len        => unsigned_long_long (Plaintext_Len),
-           Ad_In              => Header_Addr,
-           Ad_Len             => unsigned_long_long (Header_Bytes),
+           Ad_In              => System.Null_Address,
+           Ad_Len             => 0,
            Nsec               => System.Null_Address,
            Nonce_In           => Nonce'Address,
            Key_In             => Key'Address);
@@ -136,9 +137,6 @@ is
    is
       Ret_Val : int;
 
-      --  Header is AAD (bytes 0..Header_Bytes-1)
-      Header_Addr : constant System.Address := Buffer'Address;
-
       --  Ciphertext + tag starts at offset Header_Bytes
       Ciphertext_Addr : constant System.Address :=
         Buffer'Address + Storage_Offset (Header_Bytes);
@@ -149,6 +147,8 @@ is
    begin
       --  Decrypt function reads ciphertext + tag from input
       --  and writes plaintext to output. We use the same address.
+      --
+      --  WireGuard spec §5.4.6: transport AEAD uses empty AAD (ε).
       Ret_Val :=
         Crypto.Crypto_Lib.AEAD_Decrypt
           (Message_Out     => Plaintext_Addr,
@@ -156,8 +156,8 @@ is
            Nsec            => System.Null_Address,
            Ciphertext_In   => Ciphertext_Addr,
            Ciphertext_Len  => unsigned_long_long (Ciphertext_Len),
-           Ad_In           => Header_Addr,
-           Ad_Len          => unsigned_long_long (Header_Bytes),
+           Ad_In           => System.Null_Address,
+           Ad_Len          => 0,
            Nonce_In        => Nonce'Address,
            Key_In          => Key'Address);
 
