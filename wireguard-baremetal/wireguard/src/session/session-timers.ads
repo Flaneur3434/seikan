@@ -24,7 +24,8 @@ is
    function Tick
      (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp) return Timer_Action
    with
-     Pre  => Now > Timer.Clock.Never;
+     Global => (Input => Peer_States),
+     Pre    => Now > Timer.Clock.Never;
 
    type Action_Array is array (Peer_Index) of Timer_Action;
 
@@ -33,8 +34,10 @@ is
       Actions : out Action_Array)
    with
      Global => (Input => Peer_States, In_Out => Mutex_State),
-     Pre =>
+     Pre  =>
        Session_Ready
-       and then Now > Timer.Clock.Never;
+       and then Now > Timer.Clock.Never,
+     Post =>
+       Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
 end Session.Timers;
