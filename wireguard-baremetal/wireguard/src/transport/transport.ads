@@ -91,7 +91,7 @@ is
      Global => null,
      Pre    =>
        Packet'Length <= Utils.Max_Packet_Size
-       and then Packet'Length > Messages.Transport_Header_Size
-                                  + Crypto.AEAD.Tag_Bytes;
+       and then Packet'Length >= Messages.Transport_Header_Size
+                                   + Crypto.AEAD.Tag_Bytes;
 
 end Transport;

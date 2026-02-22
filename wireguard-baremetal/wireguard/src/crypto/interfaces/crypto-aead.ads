@@ -13,7 +13,7 @@
 --
 --  IN-PLACE ENCRYPTION (for TX path)
 --    Buffer layout before encryption:
---      [0..Header_Bytes-1]           = Transport header (AAD)
+--      [0..Header_Bytes-1]           = Transport header (NOT used as AAD)
 --      [Header_Bytes..Header+PT-1]   = Plaintext payload
 --      [Header+PT..Header+PT+Tag-1]  = Reserved for auth tag
 --
@@ -21,6 +21,9 @@
 --      [0..Header_Bytes-1]           = Transport header (unchanged)
 --      [Header_Bytes..Header+PT-1]   = Ciphertext (overwrites plaintext)
 --      [Header+PT..Header+PT+Tag-1]  = Authentication tag
+--
+--    WireGuard spec §5.4.6: AAD = ε (empty).  Header_Bytes is used
+--    only to locate the payload offset within the buffer.
 
 with Interfaces;
 with Utils; use Utils;
