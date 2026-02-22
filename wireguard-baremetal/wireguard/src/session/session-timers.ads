@@ -22,9 +22,9 @@ is
       Session_Expired);
 
    function Tick
-     (Peer_Idx : Peer_Index;
-      Now      : Timer.Clock.Timestamp) return Timer_Action
-   with Pre => Now > Timer.Clock.Never;
+     (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp) return Timer_Action
+   with
+     Pre  => Now > Timer.Clock.Never;
 
    type Action_Array is array (Peer_Index) of Timer_Action;
 
