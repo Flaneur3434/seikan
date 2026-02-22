@@ -48,6 +48,12 @@ is
             and then Peers (Peer_Idx).Mode = Rekeying
           then
             Elapsed (Peers (Peer_Idx).Rekey_Start, Now) < Rekey_Attempt_Time_S)
+       -- Initiator-only: Established rekey never fires for responder
+       and then
+         (if Tick'Result = Initiate_Rekey
+            and then Peers (Peer_Idx).Mode = Established
+          then
+            Peers (Peer_Idx).Is_Initiator)
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
       Age  : Unsigned_64;
@@ -68,23 +74,28 @@ is
 
       case Peer.Mode is
          when Established =>
-            --  Time or message-count threshold
-            if Age >= Rekey_After_Time_S
-              or else Peer.Current.Send_Counter >= Rekey_After_Messages
-            then
-               return Initiate_Rekey;
-            end if;
+            --  Per WireGuard §5.4: ONLY the initiator of the current
+            --  session performs time/counter-based rekeying.  The
+            --  responder never initiates a rekey — it relies on the
+            --  initiator to do it (prevents "thundering herd").
+            if Peer.Is_Initiator then
+               --  After SENDING: session >= Rekey_After_Time (120 s)
+               --  or send_counter >= Rekey_After_Messages (2^60)
+               if Age >= Rekey_After_Time_S
+                 or else Peer.Current.Send_Counter >= Rekey_After_Messages
+               then
+                  return Initiate_Rekey;
+               end if;
 
-            --  Unresponsive peer: no data for 15 s
-            if Peer.Last_Received /= Timer.Clock.Never then
-               declare
-                  Since_Recv : constant Unsigned_64 :=
-                    Elapsed (Peer.Last_Received, Now);
-               begin
-                  if Since_Recv >= Keepalive_Timeout_S + Rekey_Timeout_S then
-                     return Initiate_Rekey;
-                  end if;
-               end;
+               --  After RECEIVING: session >= Reject − Keepalive − Rekey
+               --  (180 − 10 − 5 = 165 s).  This is the "opportunistic
+               --  rekey on receive" from the whitepaper.
+               if Age >= Reject_After_Time_S
+                            - Keepalive_Timeout_S
+                            - Rekey_Timeout_S
+               then
+                  return Initiate_Rekey;
+               end if;
             end if;
 
          when Rekeying    =>

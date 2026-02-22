@@ -220,8 +220,14 @@ private
       Rekey_Start     : Timer.Clock.Timestamp := Timer.Clock.Never;
       Rekey_Last_Sent : Timer.Clock.Timestamp := Timer.Clock.Never;
 
-      Active : Boolean    := False;
-      Mode   : Peer_Mode  := Inactive;
+      Active       : Boolean    := False;
+      Mode         : Peer_Mode  := Inactive;
+
+      --  True when we initiated the current session's handshake.
+      --  Per WireGuard §5.4: only the initiator may do time-based
+      --  opportunistic rekeying, to prevent the "thundering herd"
+      --  problem where both peers try to rekey simultaneously.
+      Is_Initiator : Boolean    := False;
    end record;
 
    --  Structural invariant as a ghost predicate.
