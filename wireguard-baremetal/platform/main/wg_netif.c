@@ -48,6 +48,7 @@
 
 #include "packet_pool.h"
 #include "wg_task.h"
+#include "wg_peer_table.h"
 #include "wireguard.h"
 
 #define WG_PORT          51820
@@ -175,9 +176,24 @@ static err_t wg_netif_output(struct netif *netif,
 
     buf->len = (uint16_t)(WG_HEADER_OFFSET + p->tot_len);
 
+    /* Cryptokey routing: determine which peer owns this destination IP.
+     * IPv4 destination address is at offset 16 in the IP header.
+     * Peer_Table stores AllowedIPs in host byte order, so we convert
+     * the network-byte-order address from the packet header. */
+    uint32_t dest_ip_nbo;
+    memcpy(&dest_ip_nbo, buf->data + WG_HEADER_OFFSET + 16,
+           sizeof(dest_ip_nbo));
+    unsigned int peer = wg_peer_lookup_by_ip(ntohl(dest_ip_nbo));
+    if (peer == 0) {
+        /* No peer's AllowedIPs covers this destination — drop */
+        tx_pool_free(buf);
+        return ERR_RTE;
+    }
+
     wg_inner_msg_t msg = {
-        .buf    = buf,
-        .pt_len = p->tot_len,
+        .buf      = buf,
+        .pt_len   = p->tot_len,
+        .peer_idx = (uint16_t)peer,
     };
 
     if (xQueueSend(g_wg_inner_queue, &msg, 0) != pdTRUE) {

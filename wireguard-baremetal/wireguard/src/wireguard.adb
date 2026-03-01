@@ -36,15 +36,18 @@ is
    ---------------------------------------------------------------------------
 
    My_Identity    : Handshake.Static_Identity;
-   My_Peer        : Handshake.Peer_Config;
-   HS_State       : Handshake.Handshake_State := Handshake.Empty_Handshake;
    Initialized    : Boolean := False;
-   Last_Auto_Init : Timer.Clock.Timestamp := Timer.Clock.Never;
 
-   --  Single peer — index 1 in the Session table.
-   --  When multi-peer support is added, this will be derived from the
-   --  receiver_index in the packet header.
-   Peer_Idx : constant Session.Peer_Index := 1;
+   --  Per-peer state arrays (indexed by Session.Peer_Index = 1..Max_Peers)
+   My_Peers        : array (Session.Peer_Index) of Handshake.Peer_Config;
+   HS_States       : array (Session.Peer_Index) of Handshake.Handshake_State
+     := [others => Handshake.Empty_Handshake];
+   Last_Auto_Inits : array (Session.Peer_Index) of Timer.Clock.Timestamp
+     := [others => Timer.Clock.Never];
+
+   --  Remembers which peer's initiation we processed, so Create_Response
+   --  can find the right HS_States slot without a peer parameter.
+   Last_Init_Peer : Session.Peer_Index := 1;
 
    ---------------------------------------------------------------------------
    --  Init
@@ -61,11 +64,6 @@ is
          return C_False;
       end if;
 
-      --  Load peer public key from sdkconfig
-      if WG_Keys.Get_Peer_Public_Key (Peer_Pub) = C_False then
-         return C_False;
-      end if;
-
       --  Derive our public key from the private key
       Crypto.KX.Derive_Public_Key (Key_Pair.Pub, Priv_Key, Init_Status);
       if not Is_Success (Init_Status) then
@@ -79,21 +77,38 @@ is
          return C_False;
       end if;
 
-      --  Initialize peer configuration
-      Handshake.Initialize_Peer (My_Peer, Peer_Pub, Init_Status);
+      --  Load and configure peer 1 from sdkconfig
+      --  (peer 2 will be added via WG_PEER2_PUBLIC_KEY when multi-peer
+      --  key loading is implemented)
+      if WG_Keys.Get_Peer_Public_Key (Peer_Pub) = C_False then
+         return C_False;
+      end if;
+
+      Handshake.Initialize_Peer (My_Peers (1), Peer_Pub, Init_Status);
       if not Is_Success (Init_Status) then
          return C_False;
       end if;
 
-      --  Register the peer's public key in the peer table
-      --  (cryptokey routing: maps key → peer index)
-      Peer_Table.Set_Public_Key (Peer_Idx, Peer_Pub);
+      --  Register peer 1 in the peer table (cryptokey routing)
+      Peer_Table.Set_Public_Key (1, Peer_Pub);
+
+      --  Configure AllowedIPs for peer 1.
+      --  0.0.0.0/0 = route all inner traffic through this peer.
+      --  When multi-peer is active, each peer gets a specific prefix.
+      declare
+         AIPs : Peer_Table.Allowed_IP_Array :=
+           [others => (Addr => 0, Prefix_Len => 0)];
+      begin
+         AIPs (1) := (Addr => 0, Prefix_Len => 0);  --  0.0.0.0/0
+         Peer_Table.Set_Allowed_IPs (1, AIPs, Count => 1);
+      end;
 
       --  Packet pools are initialized from C (packet_pool_init) with
       --  statically-allocated semaphore handles before wg_init is called.
 
-      --  Reset protocol state
-      HS_State := Handshake.Empty_Handshake;
+      --  Reset per-peer protocol state
+      HS_States       := [others => Handshake.Empty_Handshake];
+      Last_Auto_Inits := [others => Timer.Clock.Never];
 
       --  Session table is initialized from C via wg_session_init()
       --  which creates the binary semaphore and calls Session.Init.
@@ -110,29 +125,37 @@ is
 
    --  Handle_Initiation_RX — Process initiation, signal C to build response
    --
-   --  Just validates + processes the initiation message.  Does NOT allocate
-   --  any TX buffer or build the response.  Returns Action_Send_Response
-   --  so C can call wg_create_response() at its own pace.
+   --  Processes the initiation into a temp state, then identifies which
+   --  peer sent it via Peer_Table.Lookup_By_Key and stores the handshake
+   --  state in HS_States(P).  Remembers P in Last_Init_Peer for
+   --  Create_Response.
    function Handle_Initiation_RX
      (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length) return WG_Action
+      RX_Length : Messages.Packet_Length;
+      Peer_Out  : out Session.Peer_Index) return WG_Action
    is
-      HS_Err : Handshake.Handshake_Error;
+      use Peer_Table.Lookup_Result;
+
+      HS_Err   : Handshake.Handshake_Error;
+      Temp_HS  : Handshake.Handshake_State;
+      Lookup   : Peer_Table.Lookup_Result.Result;
    begin
+      Peer_Out := 1;  --  default
+
       --  Verify minimum length
       if RX_Length < Unsigned_16 (Messages.Handshake_Init_Size) then
          Messages.RX_Pool.Free (RX_Handle);
          return Action_Error;
       end if;
 
-      --  Process initiation directly from RX buffer (zero-copy)
+      --  Process initiation into a temp handshake state (zero-copy)
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
          Msg     : constant Messages.Message_Handshake_Initiation
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
-         Handshake.Process_Initiation (Msg, HS_State, My_Identity, HS_Err);
+         Handshake.Process_Initiation (Msg, Temp_HS, My_Identity, HS_Err);
       end;
 
       --  Done with RX buffer
@@ -142,25 +165,80 @@ is
          return Action_Error;
       end if;
 
+      --  Identify which peer sent the initiation via their static key
+      Lookup := Peer_Table.Lookup_By_Key (Temp_HS.Remote_Static);
+      if Lookup.Kind /= Is_Ok then
+         return Action_Error;
+      end if;
+
+      --  Store handshake state in the correct per-peer slot
+      declare
+         P : constant Session.Peer_Index := Lookup.Ok;
+      begin
+         HS_States (P) := Temp_HS;
+         Last_Init_Peer := P;
+         Peer_Out := P;
+      end;
+
       --  Tell C to call wg_create_response()
       return Action_Send_Response;
    end Handle_Initiation_RX;
 
    --  Handle_Response_RX — Initiator: process response, derive session
+   --
+   --  Identifies the peer from the response's receiver_index field
+   --  (offset 8, little-endian uint32) by matching against each peer's
+   --  HS_States.Local_Index.  Then processes with that peer's state.
    function Handle_Response_RX
      (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length) return WG_Action
+      RX_Length : Messages.Packet_Length;
+      Peer_Out  : out Session.Peer_Index) return WG_Action
    is
+      use type Handshake.Handshake_State_Kind;
+
       HS_Err      : Handshake.Handshake_Error;
       Sess_Status : Status;
+      Found_Peer  : Session.Peer_Index := 1;
+      Found       : Boolean := False;
    begin
+      Peer_Out := 1;  --  default
+
       --  Verify minimum length
       if RX_Length < Unsigned_16 (Messages.Handshake_Response_Size) then
          Messages.RX_Pool.Free (RX_Handle);
          return Action_Error;
       end if;
 
-      --  Process response directly from RX buffer (zero-copy)
+      --  Extract receiver_index from response to identify the peer.
+      --  Response layout: type(4) + reserved(3) + sender(4) + receiver(4).
+      --  Receiver is at byte offset 8, little-endian.
+      declare
+         RX_View : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         Recv_Bytes : constant Utils.Bytes_4 :=
+           (RX_View.Buf_Ptr.Data (8),
+            RX_View.Buf_Ptr.Data (9),
+            RX_View.Buf_Ptr.Data (10),
+            RX_View.Buf_Ptr.Data (11));
+         Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Recv_Bytes);
+      begin
+         for P in Session.Peer_Index loop
+            if HS_States (P).Kind = Handshake.State_Initiator_Sent
+              and then HS_States (P).Local_Index = Recv_Idx
+            then
+               Found_Peer := P;
+               Found := True;
+               exit;
+            end if;
+         end loop;
+      end;
+
+      if not Found then
+         Messages.RX_Pool.Free (RX_Handle);
+         return Action_Error;
+      end if;
+
+      --  Process response using the matched peer's handshake state
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
@@ -168,7 +246,8 @@ is
          with Import, Address => RX_View.Buf_Ptr.Data'Address;
       begin
          Handshake.Process_Response
-           (Msg, HS_State, My_Identity, My_Peer, HS_Err);
+           (Msg, HS_States (Found_Peer), My_Identity,
+            My_Peers (Found_Peer), HS_Err);
       end;
 
       --  Done with RX buffer
@@ -180,16 +259,17 @@ is
 
       --  Initiator derives transport keys AND activates the new session
       --  atomically (single lock hold) after Process_Response.
-      --  HS_State.Kind = State_Established at this point.
+      --  HS_States(P).Kind = State_Established at this point.
       Session.Derive_And_Activate
-        (Peer   => Peer_Idx,
-         HS     => HS_State,
+        (Peer   => Found_Peer,
+         HS     => HS_States (Found_Peer),
          Now    => Timer.Clock.Now,
          Result => Sess_Status);
       if not Is_Success (Sess_Status) then
          return Action_Error;
       end if;
 
+      Peer_Out := Found_Peer;
       return Action_None;
    end Handle_Response_RX;
 
@@ -277,7 +357,8 @@ is
    ---------------------------------------------------------------------------
 
    function Create_Initiation
-     (Out_Len : access Unsigned_16) return System.Address
+     (Peer_ID : Interfaces.C.unsigned;
+      Out_Len : access Unsigned_16) return System.Address
    is
       use System;
 
@@ -285,12 +366,22 @@ is
       Handle : Messages.Buffer_Handle;
       Ref    : Messages.Buffer_Ref;
       Addr   : System.Address;
+      P      : Session.Peer_Index;
    begin
       Out_Len.all := 0;
 
       if not Initialized then
          return Null_Address;
       end if;
+
+      --  Validate peer index
+      if Peer_ID not in
+        Interfaces.C.unsigned (Session.Peer_Index'First) ..
+        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      then
+         return Null_Address;
+      end if;
+      P := Session.Peer_Index (Peer_ID);
 
       --  Allocate a TX pool buffer
       Messages.TX_Pool.Allocate (Handle);
@@ -305,7 +396,7 @@ is
          with Import, Address => Ref.Buf_Ptr.Data'Address;
       begin
          Handshake.Create_Initiation
-           (Msg, HS_State, My_Identity, My_Peer, Result);
+           (Msg, HS_States (P), My_Identity, My_Peers (P), Result);
       end;
 
       if not Result.Success then
@@ -334,6 +425,7 @@ is
    is
       use System;
 
+      P           : constant Session.Peer_Index := Last_Init_Peer;
       Resp_Result : Handshake.Response_Result;
       Handle      : Messages.Buffer_Handle;
       Ref         : Messages.Buffer_Ref;
@@ -358,7 +450,8 @@ is
          Resp : Messages.Message_Handshake_Response
          with Import, Address => Ref.Buf_Ptr.Data'Address;
       begin
-         Handshake.Create_Response (Resp, HS_State, My_Identity, Resp_Result);
+         Handshake.Create_Response
+           (Resp, HS_States (P), My_Identity, Resp_Result);
       end;
 
       if not Resp_Result.Success then
@@ -374,8 +467,8 @@ is
       --  atomically (single lock hold) after Create_Response.
       --  Per WireGuard spec §5.4.4: responder has all Noise material.
       Session.Derive_And_Activate
-        (Peer   => Peer_Idx,
-         HS     => HS_State,
+        (Peer   => P,
+         HS     => HS_States (P),
          Now    => Timer.Clock.Now,
          Result => Sess_Status);
       if not Is_Success (Sess_Status) then
@@ -465,6 +558,7 @@ is
 
       Now : constant Timer.Clock.Timestamp := Timer.Clock.Now;
       Len : aliased Unsigned_16 := 0;
+      P   : Session.Peer_Index;
    begin
       TX_Buf := System.Null_Address;
       TX_Len := 0;
@@ -476,22 +570,23 @@ is
       then
          return;
       end if;
+      P := Session.Peer_Index (Peer);
 
-      --  Handshake already in flight — don't re-initiate
-      if HS_State.Kind /= Handshake.State_Empty then
+      --  Handshake already in flight for this peer — don't re-initiate
+      if HS_States (P).Kind /= Handshake.State_Empty then
          return;
       end if;
 
-      --  Rate limit: at most once every Rekey_Timeout_S seconds
-      if Last_Auto_Init /= Timer.Clock.Never
-        and then Now - Last_Auto_Init < Session.Rekey_Timeout_S
+      --  Rate limit: at most once every Rekey_Timeout_S seconds per peer
+      if Last_Auto_Inits (P) /= Timer.Clock.Never
+        and then Now - Last_Auto_Inits (P) < Session.Rekey_Timeout_S
       then
          return;
       end if;
 
-      TX_Buf := Create_Initiation (Len'Access);
+      TX_Buf := Create_Initiation (Peer, Len'Access);
       TX_Len := Len;
-      Last_Auto_Init := Now;
+      Last_Auto_Inits (P) := Now;
    end Auto_Handshake;
 
    ---------------------------------------------------------------------------
@@ -542,7 +637,7 @@ is
             declare
                Len : aliased Unsigned_16 := 0;
             begin
-               TX_Buf := Create_Initiation (Len'Access);
+               TX_Buf := Create_Initiation (Peer, Len'Access);
                TX_Len := Len;
                if TX_Buf /= System.Null_Address then
                   Session.Set_Rekey_Flag (P, Timer.Clock.Now);
@@ -566,35 +661,66 @@ is
    ---------------------------------------------------------------------------
    --  Handle_Transport_RX_Netif — Zero-copy variant of Handle_Transport_RX
    --
-   --  Decrypts in-place in the RX pool buffer, then releases that buffer
-   --  back to C rather than copying plaintext to a stack buffer.
-   --  Plaintext sits at buf->data[Transport_Header_Size .. +len-1] when done.
-   --  C takes ownership; it MUST eventually call rx_pool_free().
+   --  Identifies the peer from the Transport header's receiver_index
+   --  (bytes 4-7), matching against each peer's Current keypair's
+   --  Sender_Index.  Decrypts in-place, validates replay, and hands
+   --  the buffer back to C.
    ---------------------------------------------------------------------------
 
    function Handle_Transport_RX_Netif
      (RX_Handle : in out Messages.RX_Buffer_Handle;
       RX_Length : Messages.Packet_Length;
-      PT_Len    : access Unsigned_16) return WG_Action
+      PT_Len    : access Unsigned_16;
+      Peer_Out  : out Session.Peer_Index) return WG_Action
    is
-      Header_Size : constant Natural := Messages.Transport_Header_Size;
-
       Decrypt_Len    : Unsigned_16;
       Counter        : Unsigned_64;
       Decrypt_Result : Status;
       Replay_OK      : Boolean;
 
-      KP     : Session.Keypair;
-      PT_Act : Natural := 0;
+      KP         : Session.Keypair;
+      PT_Act     : Natural := 0;
+      Found_Peer : Session.Peer_Index := 1;
+      Found      : Boolean := False;
    begin
       PT_Len.all := 0;
+      Peer_Out   := 1;
 
-      Session.Get_Current (Peer_Idx, KP);
+      --  Extract receiver_index from transport header (bytes 4-7, LE).
+      --  Find which peer's Current keypair has matching Sender_Index.
+      declare
+         RX_View : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         Recv_Bytes : constant Utils.Bytes_4 :=
+           (RX_View.Buf_Ptr.Data (4),
+            RX_View.Buf_Ptr.Data (5),
+            RX_View.Buf_Ptr.Data (6),
+            RX_View.Buf_Ptr.Data (7));
+         Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Recv_Bytes);
+      begin
+         for P in Session.Peer_Index loop
+            declare
+               Peer_KP : Session.Keypair;
+            begin
+               Session.Get_Current (P, Peer_KP);
+               if Session.Is_Valid (Peer_KP)
+                 and then Peer_KP.Sender_Index = Recv_Idx
+               then
+                  Found_Peer := P;
+                  Found := True;
+                  KP := Peer_KP;
+                  exit;
+               end if;
+            end;
+         end loop;
+      end;
 
-      if not Session.Is_Valid (KP) then
+      if not Found then
          Messages.RX_Pool.Free (RX_Handle);
          return Action_Error;
       end if;
+
+      Peer_Out := Found_Peer;
 
       --  Decrypt in-place in the RX pool buffer
       declare
@@ -615,11 +741,11 @@ is
 
             if Is_Success (Decrypt_Result) then
                Session.Validate_And_Update_Replay
-                 (Peer     => Peer_Idx,
+                 (Peer     => Found_Peer,
                   Counter  => Counter,
                   Accepted => Replay_OK);
                if Replay_OK then
-                  Session.Mark_Received (Peer_Idx, Timer.Clock.Now);
+                  Session.Mark_Received (Found_Peer, Timer.Clock.Now);
                end if;
                if not Replay_OK then
                   Decrypt_Result := Error_Failed;
@@ -646,6 +772,33 @@ is
          return Action_None;
       end if;
 
+      --  Cryptokey routing: verify inner source IP is in the
+      --  sending peer's AllowedIPs.  Prevents a compromised peer
+      --  from spoofing addresses outside its AllowedIPs (§4).
+      --  IPv4 source address is at offset 12 in the IP header,
+      --  which starts at Transport_Header_Size within the buffer.
+      declare
+         use Peer_Table.Source_Result;
+
+         RX_View : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         Hdr_Off  : constant Natural :=
+           Messages.Transport_Header_Size;
+         Src_Bytes : constant Bytes_4 :=
+           (RX_View.Buf_Ptr.Data (Hdr_Off + 12),
+            RX_View.Buf_Ptr.Data (Hdr_Off + 13),
+            RX_View.Buf_Ptr.Data (Hdr_Off + 14),
+            RX_View.Buf_Ptr.Data (Hdr_Off + 15));
+         Src_IP : constant Unsigned_32 := To_U32 (Src_Bytes);
+         Check  : constant Peer_Table.Source_Result.Result :=
+           Peer_Table.Check_Source (Found_Peer, Src_IP);
+      begin
+         if Check.Kind /= Is_Ok then
+            Messages.RX_Pool.Free (RX_Handle);
+            return Action_Error;
+         end if;
+      end;
+
       --  Decryption succeeded with real payload.
       --  Release the pool buffer to C.  C is now responsible for
       --  calling rx_pool_free() (either directly or via pbuf_custom).
@@ -670,13 +823,16 @@ is
    ---------------------------------------------------------------------------
 
    function Receive_Netif
-     (RX_Buf : System.Address;
-      PT_Len : access Unsigned_16) return WG_Action
+     (RX_Buf   : System.Address;
+      PT_Len   : access Unsigned_16;
+      Peer_Out : access Interfaces.C.unsigned) return WG_Action
    is
       RX_Handle : Messages.RX_Buffer_Handle;
       RX_Length : Messages.Packet_Length;
+      Peer_Idx  : Session.Peer_Index := 1;
    begin
-      PT_Len.all := 0;
+      PT_Len.all   := 0;
+      Peer_Out.all := 0;
 
       if not Initialized then
          return Action_Error;
@@ -698,21 +854,28 @@ is
            Messages.RX_Pool.Borrow (RX_Handle);
          Msg_Kind : constant Messages.Message_Kind :=
            Messages.Get_Message_Kind (RX_View.Buf_Ptr.Data (0));
+         Result   : WG_Action;
       begin
          case Msg_Kind is
             when Messages.Kind_Handshake_Initiation =>
-               return Handle_Initiation_RX (RX_Handle, RX_Length);
+               Result := Handle_Initiation_RX
+                 (RX_Handle, RX_Length, Peer_Idx);
 
             when Messages.Kind_Handshake_Response =>
-               return Handle_Response_RX (RX_Handle, RX_Length);
+               Result := Handle_Response_RX
+                 (RX_Handle, RX_Length, Peer_Idx);
 
             when Messages.Kind_Transport_Data =>
-               return Handle_Transport_RX_Netif (RX_Handle, RX_Length, PT_Len);
+               Result := Handle_Transport_RX_Netif
+                 (RX_Handle, RX_Length, PT_Len, Peer_Idx);
 
             when Messages.Kind_Cookie_Reply | Messages.Kind_Unknown =>
                Messages.RX_Pool.Free (RX_Handle);
-               return Action_Error;
+               Result := Action_Error;
          end case;
+
+         Peer_Out.all := Interfaces.C.unsigned (Peer_Idx);
+         return Result;
       end;
    end Receive_Netif;
 

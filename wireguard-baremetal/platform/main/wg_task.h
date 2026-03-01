@@ -32,6 +32,7 @@ typedef struct {
 typedef struct {
     packet_buffer_t *buf;     // TX pool buffer; plaintext at buf->data[16..16+pt_len-1]
     uint16_t         pt_len;  // Plaintext byte count (NOT including the 16-byte headroom)
+    uint16_t         peer_idx; // 1-based peer index from AllowedIPs lookup (0 = unknown)
 } wg_inner_msg_t;
 
 /* --------------------------------------------------------------------

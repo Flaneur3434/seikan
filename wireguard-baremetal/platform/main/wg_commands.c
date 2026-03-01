@@ -46,7 +46,7 @@ static void cmd_initiate_handshake(const wg_rx_msg_t *rx_msg)
 
     uint16_t init_len = 0;
     packet_buffer_t *init_pkt =
-        (packet_buffer_t *)wg_create_initiation(&init_len);
+        (packet_buffer_t *)wg_create_initiation(1, &init_len);
 
     if (init_pkt == NULL || init_len == 0)
     {

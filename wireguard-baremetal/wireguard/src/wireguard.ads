@@ -37,9 +37,9 @@ is
    ---------------------------------------------------------------------------
 
    type WG_Action is
-     (Action_None,            --  Nothing to do (keepalive / response processed)
-      Action_Send_Response,   --  Call wg_create_response, sendto, free
-      RX_Decryption_Success,  --  Decrypted data in pt_out (C decides next step)
+     (Action_None,            --  Nothing to do
+      Action_Send_Response,   --  Call wg_create_response
+      RX_Decryption_Success,  --  Decrypted data in pt_out
       Action_Error)           --  Processing failed
    with Convention => C;
 
@@ -64,7 +64,8 @@ is
    ---------------------------------------------------------------------------
 
    function Create_Initiation
-     (Out_Len : access Interfaces.Unsigned_16) return System.Address
+     (Peer_ID : Interfaces.C.unsigned;
+      Out_Len : access Interfaces.Unsigned_16) return System.Address
    with Export, Convention => C, External_Name => "wg_create_initiation";
 
    ---------------------------------------------------------------------------
@@ -151,8 +152,9 @@ is
    ---------------------------------------------------------------------------
 
    function Receive_Netif
-     (RX_Buf : System.Address;
-      PT_Len : access Interfaces.Unsigned_16) return WG_Action
+     (RX_Buf   : System.Address;
+      PT_Len   : access Interfaces.Unsigned_16;
+      Peer_Out : access Interfaces.C.unsigned) return WG_Action
    with Export, Convention => C, External_Name => "wg_receive_netif";
 
 end Wireguard;
