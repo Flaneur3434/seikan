@@ -2,15 +2,14 @@
  * wg_sessions.h - Session table management (C interface to Ada)
  *
  * Initialization:
- *   wg_session_init()  — C owns the static binary semaphore, creates it,
- *                         passes handle into Ada's Session.Init.
+ *   wg_session_init()      — C owns the static binary semaphore, creates it,
+ *                             passes handle into Ada's Session.Init.
  *
- * Timer tick (called by timer task, pri 7):
- *   session_tick_all()  — Ada evaluates all peer timers under mutex.
+ * Timer tick (called by WG task inline):
+ *   session_tick_all()     — Ada evaluates all peer timers under mutex.
  *
- * Action dispatch (called by WG task, pri 6):
- *   session_expire()           — Wipe all keypair slots.
- *   session_set_rekey_flag()   — Mark rekey in progress.
+ * Session query:
+ *   wg_session_is_active() — Check if a peer has a valid current keypair.
  */
 #pragma once
 
@@ -59,24 +58,6 @@ typedef enum {
  * @param actions  Output array of per-peer timer actions.
  */
 void session_tick_all(uint64_t now, uint8_t actions[]);
-
-/* --------------------------------------------------------------------
- * Timer action dispatch — Ada-exported functions
- * -------------------------------------------------------------------- */
-
-/**
- * Wipe all three keypair slots for a peer.
- * Thread-safe: acquires session mutex internally.
- * @param peer  1-based peer index (Ada Session.Peer_Index).
- */
-void session_expire(unsigned int peer);
-
-/**
- * Mark rekey in progress before sending initiation.
- * @param peer  1-based peer index.
- * @param now   Monotonic clock value (microseconds).
- */
-void session_set_rekey_flag(unsigned int peer, uint64_t now);
 
 /* --------------------------------------------------------------------
  * Session query
