@@ -175,53 +175,66 @@ static void wg_task(void *pvParameters)
         // Auto-initiation: if data is pending but no session exists,
         // trigger a handshake instead of draining (packets stay queued
         // until session is established).  Rate-limited to once per 5 s.
+        //
+        // Cryptokey routing: each inner_msg carries peer_idx from the
+        // AllowedIPs lookup done in wg_netif_output().
         if (uxQueueMessagesWaiting(g_wg_inner_queue) > 0)
         {
-            if (wg_session_is_active(1))
+            /* Peek at the first message to determine the target peer */
+            wg_inner_msg_t peek_msg;
+            if (xQueuePeek(g_wg_inner_queue, &peek_msg, 0) == pdTRUE)
             {
-                // Session active — drain and encrypt normally
-                while (xQueueReceive(g_wg_inner_queue, &inner_msg, 0)
-                       == pdTRUE)
+                unsigned int peer = peek_msg.peer_idx;
+
+                if (wg_session_is_active(peer))
                 {
-                    uint16_t tx_len = 0;
-                    packet_buffer_t *tx_pkt =
-                        (packet_buffer_t *)wg_send(
-                            1,
-                            inner_msg.buf->data + WG_TRANSPORT_HEADER_SIZE,
-                            inner_msg.pt_len,
-                            &tx_len);
-
-                    tx_pool_free(inner_msg.buf);
-
-                    if (tx_pkt == NULL || tx_len == 0)
+                    // Session active — drain and encrypt normally
+                    while (xQueueReceive(g_wg_inner_queue, &inner_msg, 0)
+                           == pdTRUE)
                     {
-                        ESP_LOGW(TAG, "wg_send failed for inner packet");
-                        continue;
-                    }
+                        unsigned int msg_peer = inner_msg.peer_idx;
+                        uint16_t tx_len = 0;
+                        packet_buffer_t *tx_pkt =
+                            (packet_buffer_t *)wg_send(
+                                msg_peer,
+                                inner_msg.buf->data + WG_TRANSPORT_HEADER_SIZE,
+                                inner_msg.pt_len,
+                                &tx_len);
 
-                    struct sockaddr_in endpoint = get_peer_endpoint(1);
-                    if (!send_outer_packet(tx_pkt, tx_len, &endpoint)) {
-                        ESP_LOGW(TAG,
-                                 "Failed to send encrypted inner packet");
+                        tx_pool_free(inner_msg.buf);
+
+                        if (tx_pkt == NULL || tx_len == 0)
+                        {
+                            ESP_LOGW(TAG, "wg_send failed for inner packet");
+                            continue;
+                        }
+
+                        struct sockaddr_in endpoint =
+                            get_peer_endpoint(msg_peer);
+                        if (!send_outer_packet(tx_pkt, tx_len, &endpoint)) {
+                            ESP_LOGW(TAG,
+                                     "Failed to send encrypted inner packet");
+                        }
                     }
                 }
-            }
-            else
-            {
-                // No session — ask Ada to auto-initiate
-                void *init_pkt = NULL;
-                uint16_t init_len = 0;
-                wg_auto_handshake(1, &init_pkt, &init_len);
-                if (init_pkt != NULL && init_len > 0)
+                else
                 {
-                    struct sockaddr_in endpoint = get_peer_endpoint(1);
-                    ESP_LOGI(TAG,
-                             "Auto-initiating handshake "
-                             "(inner data pending)");
-                    send_outer_packet((packet_buffer_t *)init_pkt,
-                                      init_len, &endpoint);
+                    // No session — ask Ada to auto-initiate for this peer
+                    void *init_pkt = NULL;
+                    uint16_t init_len = 0;
+                    wg_auto_handshake(peer, &init_pkt, &init_len);
+                    if (init_pkt != NULL && init_len > 0)
+                    {
+                        struct sockaddr_in endpoint =
+                            get_peer_endpoint(peer);
+                        ESP_LOGI(TAG,
+                                 "Auto-initiating handshake for peer %u "
+                                 "(inner data pending)", peer);
+                        send_outer_packet((packet_buffer_t *)init_pkt,
+                                          init_len, &endpoint);
+                    }
+                    // Don't drain — packets stay queued until session up
                 }
-                // Don't drain — packets stay queued until session up
             }
         }
 
@@ -252,8 +265,10 @@ static void wg_task(void *pvParameters)
         // Nominal path: hand to Ada via zero-copy netif path.
         // wg_receive_netif() decrypts transport data in-place in the RX pool
         // buffer; on WG_ACTION_RX_DECRYPTION_SUCCESS, C re-owns rx_buf.
+        // Ada also returns the 1-based peer index via peer_out.
         uint16_t pt_len = 0;
-        wg_action_t action = wg_receive_netif(rx_buf, &pt_len);
+        unsigned int rx_peer = 0;
+        wg_action_t action = wg_receive_netif(rx_buf, &pt_len, &rx_peer);
         // rx_buf ownership: returned to C only on RX_DECRYPTION_SUCCESS;
         // Ada has freed it for all other return values.
 
@@ -272,10 +287,11 @@ static void wg_task(void *pvParameters)
                 break;
             }
 
-            ESP_LOGI(TAG, "<< Handshake Response (%u bytes)", resp_len);
+            ESP_LOGI(TAG, "<< Handshake Response (%u bytes) for peer %u",
+                     resp_len, rx_peer);
 
             // §6.5: crypto succeeded — safe to learn endpoint
-            update_peer_endpoint(1, &rx_msg.peer);
+            update_peer_endpoint(rx_peer, &rx_msg.peer);
 
             if (!send_outer_packet(resp_pkt, resp_len, &rx_msg.peer)) {
                 ESP_LOGW(TAG, "Failed to send handshake response");
@@ -289,9 +305,10 @@ static void wg_task(void *pvParameters)
             // Transport data decrypted in-place.  Plaintext is at
             // rx_buf->data[WG_TRANSPORT_HEADER_SIZE .. +pt_len-1].
             // C owns rx_buf and must free it (directly or via pbuf_custom).
-            update_peer_endpoint(1, &rx_msg.peer);
+            update_peer_endpoint(rx_peer, &rx_msg.peer);
 
-            ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext)", pt_len);
+            ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext) from peer %u",
+                     pt_len, rx_peer);
 
             // Echo mode: re-encrypt and send back (test-only)
             if (wg_echo_enabled())
@@ -300,7 +317,7 @@ static void wg_task(void *pvParameters)
                 uint16_t tx_len = 0;
                 packet_buffer_t *tx_pkt =
                     (packet_buffer_t *)wg_send(
-                        1,
+                        rx_peer,
                         rx_buf->data + WG_TRANSPORT_HEADER_SIZE,
                         pt_len,
                         &tx_len);
@@ -340,8 +357,9 @@ static void wg_task(void *pvParameters)
         case WG_ACTION_NONE:
             // Handshake response processed or keepalive received.
             // Crypto verified — safe to update endpoint.
-            update_peer_endpoint(1, &rx_msg.peer);
-            ESP_LOGI(TAG, "<< Processed (no reply needed)");
+            update_peer_endpoint(rx_peer, &rx_msg.peer);
+            ESP_LOGI(TAG, "<< Processed (no reply needed) for peer %u",
+                     rx_peer);
             break;
 
         case WG_ACTION_ERROR:

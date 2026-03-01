@@ -63,15 +63,18 @@ bool wg_init(void);
  * @param[in]  rx_buf   RX pool buffer.  Ownership always transferred to Ada,
  *                      and returned to C only on RX_DECRYPTION_SUCCESS.
  * @param[out] pt_len   Plaintext length.
+ * @param[out] peer_out 1-based peer index that sent this packet.
+ *                      Valid on all action codes except WG_ACTION_ERROR.
  * @return Action code.
  */
-wg_action_t wg_receive_netif(void *rx_buf, uint16_t *pt_len);
+wg_action_t wg_receive_netif(void *rx_buf, uint16_t *pt_len,
+                             unsigned int *peer_out);
 
 /**
- * Build a handshake initiation (148 bytes).
+ * Build a handshake initiation (148 bytes) for a specific peer.
  * Caller must sendto() then tx_pool_free().
  */
-void *wg_create_initiation(uint16_t *out_len);
+void *wg_create_initiation(unsigned int peer, uint16_t *out_len);
 
 /**
  * Build a handshake response.
