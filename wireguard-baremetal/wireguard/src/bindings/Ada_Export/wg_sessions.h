@@ -78,6 +78,19 @@ void session_expire(unsigned int peer);
  */
 void session_set_rekey_flag(unsigned int peer, uint64_t now);
 
+/* --------------------------------------------------------------------
+ * Session query
+ * -------------------------------------------------------------------- */
+
+/**
+ * Check whether a peer has a valid current session keypair.
+ * Thread-safe: acquires session mutex internally.
+ *
+ * @param peer  1-based peer index (Ada Session.Peer_Index).
+ * @return      Non-zero if session is active, 0 otherwise.
+ */
+uint8_t wg_session_is_active(unsigned int peer);
+
 #ifdef __cplusplus
 }
 #endif

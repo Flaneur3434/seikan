@@ -68,4 +68,17 @@ is
         External_Name => "session_set_rekey_flag",
         SPARK_Mode    => Off;
 
+   ---------------------------------------------------------------------------
+   --  Session query — is the peer's current keypair valid?
+   ---------------------------------------------------------------------------
+
+   --  Returns 1 if the peer has a valid current keypair, 0 otherwise.
+   function C_Session_Is_Active
+     (Peer : Interfaces.C.unsigned)
+      return Interfaces.C.unsigned_char
+   with Export,
+        Convention    => C,
+        External_Name => "wg_session_is_active",
+        SPARK_Mode    => Off;
+
 end WG_Sessions;
