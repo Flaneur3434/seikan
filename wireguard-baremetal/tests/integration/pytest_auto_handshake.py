@@ -683,13 +683,12 @@ class TestEsp32AutoHandshake:
         """Injected inner traffic with no session triggers auto-handshake.
 
         Flow:
-          1. Python sends CMD_INJECT_INNER with a synthetic IPv4 packet
-          2. ESP32 enqueues → no session → auto_handshake fires
-          3. ESP32 sends Handshake Initiation back to Python
+          1. Python sends CMD_INJECT_INNER with dest IP + UDP payload
+          2. ESP32 sendto() via wg0 → lwIP → wg_netif_output → inner queue
+          3. No session → auto_handshake fires → initiation sent
           4. Python verifies it's a valid Type 1 message
         """
-        ip_pkt = _build_ipv4_udp("10.0.0.2", "10.0.0.1", b"trigger")
-        cmd = build_inject_inner_command(ip_pkt)
+        cmd = build_inject_inner_command("10.0.0.1", 9999, b"trigger")
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(UDP_TIMEOUT)
@@ -716,8 +715,7 @@ class TestEsp32AutoHandshake:
         within REKEY_TIMEOUT (5s) should be enqueued but NOT produce
         another initiation (rate-limited by Ada).
         """
-        ip_pkt = _build_ipv4_udp("10.0.0.2", "10.0.0.1", b"first")
-        cmd = build_inject_inner_command(ip_pkt)
+        cmd = build_inject_inner_command("10.0.0.1", 9999, b"first")
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(UDP_TIMEOUT)
@@ -728,8 +726,8 @@ class TestEsp32AutoHandshake:
             assert init_data[0] == MSG_TYPE_INITIATION
 
             # Second inject immediately — should NOT produce another initiation
-            ip_pkt2 = _build_ipv4_udp("10.0.0.2", "10.0.0.1", b"second")
-            sock.sendto(build_inject_inner_command(ip_pkt2), esp32_addr)
+            cmd2 = build_inject_inner_command("10.0.0.1", 9999, b"second")
+            sock.sendto(cmd2, esp32_addr)
 
             # Wait briefly — no second initiation should arrive
             sock.settimeout(2.0)
@@ -742,16 +740,15 @@ class TestEsp32AutoHandshake:
         """Complete E2E: inject → auto-handshake → session → data flows.
 
         Full cryptokey routing lifecycle:
-          1. Python injects inner IP packet → ESP32 queues it
+          1. Python injects UDP payload via BSD socket path on ESP32
           2. No session → auto-handshake fires → initiation sent
           3. Python processes initiation, sends response
           4. ESP32 completes handshake, activates session
           5. ESP32 drains inner queue → encrypts queued packet → sends it
-          6. Python decrypts the transport packet, verifies payload
+          6. Python decrypts the transport packet, verifies UDP payload
         """
         inner_payload = b"hello through the tunnel"
-        ip_pkt = _build_ipv4_udp("10.0.0.2", "10.0.0.1", inner_payload)
-        cmd = build_inject_inner_command(ip_pkt)
+        cmd = build_inject_inner_command("10.0.0.1", 9999, inner_payload)
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(UDP_TIMEOUT)
@@ -775,19 +772,20 @@ class TestEsp32AutoHandshake:
             dut.expect("Processed", timeout=5)
 
             # Step 5: ESP32 drains inner queue and sends encrypted data
-            # The queued IP packet should be encrypted and sent as Type 4
+            # The queued UDP payload is inside an lwIP-built IP packet
             enc_data, _ = sock.recvfrom(2048)
 
             assert enc_data[0] == 0x04  # MSG_TYPE_TRANSPORT
 
-            # Step 6: Decrypt and verify
+            # Step 6: Decrypt and verify the UDP payload is embedded
             # ESP32 was the initiator → its send key is τ1
             # Python as responder → recv key is τ1
             r_recv, r_send = derive_transport_keys(resp_state.chaining_key)
             _, _, plaintext = parse_transport_packet(r_recv, enc_data)
 
-            # The decrypted payload is the full IP packet we injected
-            assert plaintext == ip_pkt
+            # The decrypted payload is an lwIP-built IP/UDP packet
+            # containing our application payload
+            assert inner_payload in plaintext
         finally:
             sock.close()
 
@@ -798,8 +796,8 @@ class TestEsp32AutoHandshake:
           1. ESP32 → Python: queued inner data arrives encrypted
           2. Python → ESP32: new transport data is accepted and decrypted
         """
-        ip_pkt = _build_ipv4_udp("10.0.0.2", "10.0.0.1", b"outbound")
-        cmd = build_inject_inner_command(ip_pkt)
+        outbound_payload = b"outbound"
+        cmd = build_inject_inner_command("10.0.0.1", 9999, outbound_payload)
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(UDP_TIMEOUT)
@@ -820,7 +818,7 @@ class TestEsp32AutoHandshake:
             enc_data, _ = sock.recvfrom(2048)
             assert enc_data[0] == 0x04
             _, _, pt_out = parse_transport_packet(r_recv, enc_data)
-            assert pt_out == ip_pkt
+            assert outbound_payload in pt_out
 
             # Enable echo mode for direction 2
             sock.sendto(build_echo_mode_command(True), esp32_addr)
@@ -852,16 +850,17 @@ class TestEsp32AutoHandshake:
           2. Auto-handshake fires once (rate-limited)
           3. After handshake completes, both packets are encrypted and sent
         """
-        pkt1 = _build_ipv4_udp("10.0.0.2", "10.0.0.1", b"first")
-        pkt2 = _build_ipv4_udp("10.0.0.2", "10.0.0.1", b"second")
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(UDP_TIMEOUT)
         try:
             # Inject both packets
-            sock.sendto(build_inject_inner_command(pkt1), esp32_addr)
+            sock.sendto(
+                build_inject_inner_command("10.0.0.1", 9999, b"first"),
+                esp32_addr)
             time.sleep(0.05)  # small gap to ensure ordering
-            sock.sendto(build_inject_inner_command(pkt2), esp32_addr)
+            sock.sendto(
+                build_inject_inner_command("10.0.0.1", 9999, b"second"),
+                esp32_addr)
 
             # Receive single initiation
             init_data, _ = sock.recvfrom(256)
@@ -876,14 +875,16 @@ class TestEsp32AutoHandshake:
             r_recv, _ = derive_transport_keys(resp_state.chaining_key)
 
             # Both queued packets should arrive as encrypted transport data
-            received = []
+            payloads = []
             for _ in range(2):
                 enc_data, _ = sock.recvfrom(2048)
                 assert enc_data[0] == 0x04
                 _, _, pt = parse_transport_packet(r_recv, enc_data)
-                received.append(pt)
+                payloads.append(pt)
 
-            assert pkt1 in received
-            assert pkt2 in received
+            # Check both UDP payloads are present in the decrypted packets
+            combined = b"".join(payloads)
+            assert b"first" in combined
+            assert b"second" in combined
         finally:
             sock.close()
