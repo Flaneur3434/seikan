@@ -349,3 +349,81 @@ def make_keypair(created_at: int, *, valid: bool = True) -> Keypair:
     )
     _next_kp_id += 1
     return kp
+
+
+# ── Handshake state kind (from handshake.ads) ────────────────────────
+
+class HandshakeStateKind:
+    """Mirrors Ada ``Handshake.Handshake_State_Kind``."""
+
+    STATE_EMPTY = 0            # No handshake in progress
+    STATE_INITIATOR_SENT = 1   # Initiation sent, waiting for response
+    STATE_RESPONDER_SENT = 2   # Response sent, waiting for first data
+    STATE_ESTABLISHED = 3      # Handshake complete, session keys derived
+
+
+# ── Auto-handshake model (from wireguard.adb Auto_Handshake) ─────────
+
+@dataclass
+class AutoHandshakeState:
+    """State for the auto-handshake rate limiter.
+
+    Mirrors the package-level state in ``wireguard.adb``:
+        Last_Auto_Init : Timer.Clock.Timestamp := Timer.Clock.Never
+        HS_State.Kind  : Handshake_State_Kind  := State_Empty
+
+    The auto-handshake logic is:
+      1. If HS_State.Kind /= State_Empty → handshake in flight, skip
+      2. If Now - Last_Auto_Init < REKEY_TIMEOUT → rate-limited, skip
+      3. Otherwise → initiate handshake, update Last_Auto_Init := Now
+    """
+
+    hs_kind: int = HandshakeStateKind.STATE_EMPTY
+    last_auto_init: int = NEVER
+
+
+def auto_handshake(
+    state: AutoHandshakeState,
+    session_active: bool,
+    now: int,
+) -> tuple[AutoHandshakeState, bool]:
+    """Evaluate whether to auto-initiate a handshake.
+
+    Mirrors ``Wireguard.Auto_Handshake`` in ``wireguard.adb``.
+
+    Called when inner data is queued but no session exists.  Returns
+    ``(new_state, should_initiate)`` where ``should_initiate`` is True
+    if the caller should build and send a handshake initiation.
+
+    The ``session_active`` parameter mirrors the C-side
+    ``wg_session_is_active()`` gate — the auto-handshake path is only
+    reached when this is False. Included here, however, to model the
+    complete decision chain.
+
+    Precondition: ``now > NEVER``.
+
+    Rate-limiting:
+      - At most one initiation per REKEY_TIMEOUT (5 s)
+      - Skipped if a handshake is already in flight (HS_Kind != Empty)
+    """
+    assert now > NEVER, "now must be > NEVER (0)"
+
+    # Gate: only auto-initiate when session is not active
+    if session_active:
+        return state, False
+
+    # Handshake already in flight — don't re-initiate
+    if state.hs_kind != HandshakeStateKind.STATE_EMPTY:
+        return state, False
+
+    # Rate limit: at most once every REKEY_TIMEOUT seconds
+    if state.last_auto_init != NEVER:
+        if now - state.last_auto_init < REKEY_TIMEOUT:
+            return state, False
+
+    # Initiate!
+    new_state = AutoHandshakeState(
+        hs_kind=HandshakeStateKind.STATE_INITIATOR_SENT,
+        last_auto_init=now,
+    )
+    return new_state, True
