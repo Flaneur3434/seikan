@@ -1440,7 +1440,7 @@ class TestEsp32RekeyAfterTime:
         """
         sock, *_ = _do_esp32_initiated_handshake(dut, self._ip)
         try:
-            dut.expect("Rekey Initiation", timeout=REKEY_AFTER_TIME + 10)
+            dut.expect("initiating rekey", timeout=REKEY_AFTER_TIME + 10)
         finally:
             sock.close()
 
