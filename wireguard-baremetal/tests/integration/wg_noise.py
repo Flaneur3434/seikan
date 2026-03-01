@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 import struct
 import time
 from dataclasses import dataclass, field
@@ -263,21 +264,25 @@ def build_initiate_command() -> bytes:
     return bytes([WG_CMD_INITIATE_HANDSHAKE])
 
 
-def build_inject_inner_command(ip_payload: bytes) -> bytes:
+def build_inject_inner_command(dest_ip: str, dest_port: int, payload: bytes) -> bytes:
     """Build an inject-inner command for the ESP32.
 
     Byte 0: WG_CMD_INJECT_INNER (0xFD)
-    Bytes 1..N: Raw IP packet (typically a synthetic IPv4 UDP packet)
+    Bytes 1-4: Destination IP (network byte order)
+    Bytes 5-6: Destination port (network byte order)
+    Bytes 7..N: UDP payload
 
-    The ESP32 command handler allocates a TX pool buffer, copies the IP
-    payload at offset 16 (WG transport header headroom), performs an
-    AllowedIPs lookup for the destination IP, and enqueues to the inner
-    queue — the same path as wg_netif_output().
+    The ESP32 command handler opens a BSD socket and sendto(dest_ip:dest_port,
+    payload) through the wg0 netif, exercising the full lwIP routing path:
+      sendto -> lwIP -> wg_netif_output -> inner queue -> wg_task.
 
     This triggers the auto-handshake flow when no session exists:
-      inject inner → no session → auto_handshake fires → initiation sent.
+      inject inner -> no session -> auto_handshake fires -> initiation sent.
     """
-    return bytes([WG_CMD_INJECT_INNER]) + ip_payload
+    return (bytes([WG_CMD_INJECT_INNER])
+            + socket.inet_aton(dest_ip)
+            + struct.pack("!H", dest_port)
+            + payload)
 
 
 # ── WireGuard peer ───────────────────────────────────────────────────
