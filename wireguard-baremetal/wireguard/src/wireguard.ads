@@ -117,6 +117,21 @@ is
    with Export, Convention => C, External_Name => "wg_dispatch_timer";
 
    ---------------------------------------------------------------------------
+   --  wg_auto_handshake — Rate-limited auto-initiation
+   --
+   --  Called by C when inner data is queued but no session exists.
+   --  Ada rate-limits (Rekey_Timeout_S) and checks for in-flight handshake.
+   --  Returns a TX buffer + length if C should sendto(),
+   --  or Null_Address / 0 if rate-limited or already handshaking.
+   ---------------------------------------------------------------------------
+
+   procedure Auto_Handshake
+     (Peer   : Interfaces.C.unsigned;
+      TX_Buf : out System.Address;
+      TX_Len : out Interfaces.Unsigned_16)
+   with Export, Convention => C, External_Name => "wg_auto_handshake";
+
+   ---------------------------------------------------------------------------
    --  wg_receive_netif - Process incoming packet, zero-copy RX path
    --
    --  Like wg_receive, but for transport data (type 4), Ada decrypts

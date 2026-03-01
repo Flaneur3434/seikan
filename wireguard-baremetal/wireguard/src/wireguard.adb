@@ -35,10 +35,11 @@ is
    --  Package State
    ---------------------------------------------------------------------------
 
-   My_Identity : Handshake.Static_Identity;
-   My_Peer     : Handshake.Peer_Config;
-   HS_State    : Handshake.Handshake_State := Handshake.Empty_Handshake;
-   Initialized : Boolean := False;
+   My_Identity    : Handshake.Static_Identity;
+   My_Peer        : Handshake.Peer_Config;
+   HS_State       : Handshake.Handshake_State := Handshake.Empty_Handshake;
+   Initialized    : Boolean := False;
+   Last_Auto_Init : Timer.Clock.Timestamp := Timer.Clock.Never;
 
    --  Single peer — index 1 in the Session table.
    --  When multi-peer support is added, this will be derived from the
@@ -444,6 +445,54 @@ is
       Out_Len.all := Len;
       return Addr;
    end Send;
+
+   ---------------------------------------------------------------------------
+   --  Auto_Handshake — Rate-limited handshake initiation for auto-init
+   --
+   --  Called by C when inner data is queued but no session exists.
+   --  Ada rate-limits to at most once every Rekey_Timeout_S (5 s) and
+   --  skips if a handshake is already in flight.
+   --  Returns a TX buffer + length if C needs to sendto().
+   --  TX_Buf = Null_Address means no packet to send (rate-limited or error).
+   ---------------------------------------------------------------------------
+
+   procedure Auto_Handshake
+     (Peer   : Interfaces.C.unsigned;
+      TX_Buf : out System.Address;
+      TX_Len : out Interfaces.Unsigned_16)
+   is
+      use type Handshake.Handshake_State_Kind;
+
+      Now : constant Timer.Clock.Timestamp := Timer.Clock.Now;
+      Len : aliased Unsigned_16 := 0;
+   begin
+      TX_Buf := System.Null_Address;
+      TX_Len := 0;
+
+      --  Validate peer index
+      if Peer not in
+        Interfaces.C.unsigned (Session.Peer_Index'First) ..
+        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      then
+         return;
+      end if;
+
+      --  Handshake already in flight — don't re-initiate
+      if HS_State.Kind /= Handshake.State_Empty then
+         return;
+      end if;
+
+      --  Rate limit: at most once every Rekey_Timeout_S seconds
+      if Last_Auto_Init /= Timer.Clock.Never
+        and then Now - Last_Auto_Init < Session.Rekey_Timeout_S
+      then
+         return;
+      end if;
+
+      TX_Buf := Create_Initiation (Len'Access);
+      TX_Len := Len;
+      Last_Auto_Init := Now;
+   end Auto_Handshake;
 
    ---------------------------------------------------------------------------
    --  Dispatch_Timer — Ada-owned timer action dispatch

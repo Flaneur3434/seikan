@@ -109,10 +109,6 @@ static bool send_outer_packet(packet_buffer_t *pkt,
  * Protocol task main loop
  * ----------------------------------------------------------------------- */
 
-/* Rate limit auto-initiation: at most once every 5 seconds */
-#define AUTO_INIT_INTERVAL_S 5
-static uint64_t s_last_auto_init = 0;
-
 static void wg_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -212,28 +208,18 @@ static void wg_task(void *pvParameters)
             }
             else
             {
-                // No session — auto-initiate handshake (rate-limited)
-                uint64_t now = wg_clock_now();
-                if (now - s_last_auto_init >= AUTO_INIT_INTERVAL_S)
+                // No session — ask Ada to auto-initiate
+                void *init_pkt = NULL;
+                uint16_t init_len = 0;
+                wg_auto_handshake(1, &init_pkt, &init_len);
+                if (init_pkt != NULL && init_len > 0)
                 {
                     struct sockaddr_in endpoint = get_peer_endpoint(1);
-                    if (endpoint.sin_port != 0)
-                    {
-                        uint16_t init_len = 0;
-                        packet_buffer_t *init_pkt =
-                            (packet_buffer_t *)wg_create_initiation(
-                                &init_len);
-
-                        if (init_pkt != NULL && init_len > 0)
-                        {
-                            ESP_LOGI(TAG,
-                                     "Auto-initiating handshake "
-                                     "(inner data pending)");
-                            send_outer_packet(init_pkt, init_len,
-                                              &endpoint);
-                        }
-                    }
-                    s_last_auto_init = now;
+                    ESP_LOGI(TAG,
+                             "Auto-initiating handshake "
+                             "(inner data pending)");
+                    send_outer_packet((packet_buffer_t *)init_pkt,
+                                      init_len, &endpoint);
                 }
                 // Don't drain — packets stay queued until session up
             }
