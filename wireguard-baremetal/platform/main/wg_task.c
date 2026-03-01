@@ -11,7 +11,6 @@
 
 #include "wg_task.h"
 #include "wg_commands.h"
-#include "wg_session_timer.h"
 #include "wg_sessions.h"
 #include "wg_clock.h"
 #include "wg_netif.h"
@@ -45,7 +44,6 @@ QueueHandle_t g_wg_inner_queue = NULL;
  *
  * Updated on every RX packet.  Single-peer today (index 0 = peer 1).
  * ----------------------------------------------------------------------- */
-#define WG_MAX_PEERS 2
 static struct sockaddr_in s_peer_endpoints[WG_MAX_PEERS];
 
 static void update_peer_endpoint(unsigned int peer,
@@ -109,82 +107,6 @@ static bool send_outer_packet(packet_buffer_t *pkt,
     return true;
 }
 
-static void wg_session_action(wg_timer_action_t action, unsigned int peer)
-{
-    switch (action)
-    {
-    case WG_TIMER_SESSION_EXPIRED:
-    case WG_TIMER_REKEY_TIMED_OUT:
-        ESP_LOGW(TAG, "Peer %u: %s — expiring session",
-                 peer,
-                 action == WG_TIMER_SESSION_EXPIRED ? "session expired"
-                                                    : "rekey timed out");
-        session_expire(peer);
-        break;
-
-    case WG_TIMER_INITIATE_REKEY:
-    {
-        ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
-        struct sockaddr_in endpoint = get_peer_endpoint(peer);
-
-        uint16_t init_len = 0;
-        packet_buffer_t *init_pkt =
-            (packet_buffer_t *)wg_create_initiation(&init_len);
-
-        if (init_pkt != NULL && init_len > 0)
-        {
-            if (send_outer_packet(init_pkt, init_len, &endpoint))
-            {
-                session_set_rekey_flag(peer, wg_clock_now());
-                ESP_LOGI(TAG, "<< Rekey Initiation (%u bytes)",
-                         init_len);
-            }
-            else
-            {
-                tx_pool_free(init_pkt);
-                ESP_LOGW(TAG, "Failed to send rekey initiation, retry next tick");
-            }
-        }
-        else
-        {
-            ESP_LOGE(TAG, "Rekey initiation failed, retry next tick");
-        }
-        break;
-    }
-
-    case WG_TIMER_SEND_KEEPALIVE:
-    {
-        struct sockaddr_in endpoint = get_peer_endpoint(peer);
-        uint16_t ka_len = 0;
-        packet_buffer_t *ka_pkt =
-            (packet_buffer_t *)wg_send(peer, NULL, 0, &ka_len);
-
-        if (ka_pkt != NULL && ka_len > 0)
-        {
-            if (send_outer_packet(ka_pkt, ka_len, &endpoint))
-            {
-                ESP_LOGI(TAG, "Peer %u: keepalive sent (%u bytes)",
-                         peer, ka_len);
-            }
-            else
-            {
-                tx_pool_free(ka_pkt);
-                ESP_LOGW(TAG, "Peer %u: keepalive send failed", peer);
-            }
-        }
-        else
-        {
-            ESP_LOGW(TAG, "Peer %u: keepalive failed (no session?)", peer);
-        }
-        break;
-    }
-
-    case WG_TIMER_NO_ACTION:
-    default:
-        break;
-    }
-}
-
 /* -----------------------------------------------------------------------
  * Protocol task main loop
  * ----------------------------------------------------------------------- */
@@ -199,11 +121,33 @@ static void wg_task(void *pvParameters)
 
     while (1)
     {
-        // Drain timer action queue (non-blocking)
-        wg_timer_msg_t tmr_msg;
-        while (xQueueReceive(g_wg_timer_queue, &tmr_msg, 0) == pdTRUE)
+        // Evaluate all peer timers inline, dispatch in Ada
         {
-            wg_session_action(tmr_msg.action, tmr_msg.peer);
+            uint64_t now = wg_clock_now();
+            uint8_t actions[WG_MAX_PEERS];
+            session_tick_all(now, actions);
+            for (unsigned int i = 0; i < WG_MAX_PEERS; i++)
+            {
+                if (actions[i] != WG_TIMER_NO_ACTION)
+                {
+                    unsigned int peer = i + 1;  /* Ada Peer_Index is 1-based */
+                    void *tx_buf = NULL;
+                    uint16_t tx_len = 0;
+
+                    wg_dispatch_timer(peer, actions[i], &tx_buf, &tx_len);
+
+                    if (tx_buf != NULL && tx_len > 0)
+                    {
+                        struct sockaddr_in endpoint = get_peer_endpoint(peer);
+                        if (!send_outer_packet((packet_buffer_t *)tx_buf,
+                                               tx_len, &endpoint))
+                        {
+                            ESP_LOGW(TAG, "Peer %u: timer-initiated send failed",
+                                     peer);
+                        }
+                    }
+                }
+            }
         }
 
         // Drain inner plaintext queue from wg0 output callback.
@@ -383,6 +327,9 @@ bool wg_task_init(void)
 
     // Initialize pools with static semaphores and Ada subsystem structures
     packet_pool_init();
+
+    // Create session mutex and initialize session tables (must precede wg_init)
+    wg_session_init();
 
     if (!wg_init())
     {

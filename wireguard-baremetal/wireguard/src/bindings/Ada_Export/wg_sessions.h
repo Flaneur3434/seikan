@@ -31,6 +31,36 @@ extern "C" {
 void wg_session_init(void);
 
 /* --------------------------------------------------------------------
+ * Timer tick — Ada-exported (called by WG task inline)
+ * -------------------------------------------------------------------- */
+
+/**
+ * Max peers — must match Ada Session.Max_Peers.
+ */
+#define WG_MAX_PEERS 2
+
+/**
+ * Per-peer timer action — flat enum matching Ada Timer_Action.
+ * 0=none, 1=keepalive, 2=rekey, 3=rekey_timeout, 4=expired.
+ */
+typedef enum {
+    WG_TIMER_NO_ACTION       = 0,
+    WG_TIMER_SEND_KEEPALIVE  = 1,
+    WG_TIMER_INITIATE_REKEY  = 2,
+    WG_TIMER_REKEY_TIMED_OUT = 3,
+    WG_TIMER_SESSION_EXPIRED = 4,
+} wg_timer_action_t;
+
+/**
+ * Evaluate all peer timers under a single session-mutex hold.
+ * Fills actions[0..WG_MAX_PEERS-1].  C index 0 = Ada Peer 1.
+ *
+ * @param now      Monotonic clock value (microseconds).
+ * @param actions  Output array of per-peer timer actions.
+ */
+void session_tick_all(uint64_t now, uint8_t actions[]);
+
+/* --------------------------------------------------------------------
  * Timer action dispatch — Ada-exported functions
  * -------------------------------------------------------------------- */
 
