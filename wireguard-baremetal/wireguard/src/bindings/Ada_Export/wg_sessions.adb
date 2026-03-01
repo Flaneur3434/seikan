@@ -34,34 +34,6 @@ is
    end C_Session_Tick_All;
 
    ---------------------------------------------------------------------------
-   --  Timer action dispatch
-   ---------------------------------------------------------------------------
-
-   procedure C_Session_Expire
-     (Peer : Interfaces.C.unsigned) is
-   begin
-      if Peer in
-        Interfaces.C.unsigned (Session.Peer_Index'First) ..
-        Interfaces.C.unsigned (Session.Peer_Index'Last)
-      then
-         Session.Expire_Session (Session.Peer_Index (Peer));
-      end if;
-   end C_Session_Expire;
-
-   procedure C_Session_Set_Rekey_Flag
-     (Peer : Interfaces.C.unsigned;
-      Now  : Interfaces.Unsigned_64) is
-   begin
-      if Peer in
-        Interfaces.C.unsigned (Session.Peer_Index'First) ..
-        Interfaces.C.unsigned (Session.Peer_Index'Last)
-      then
-         Session.Set_Rekey_Flag
-           (Session.Peer_Index (Peer), Now);
-      end if;
-   end C_Session_Set_Rekey_Flag;
-
-   ---------------------------------------------------------------------------
    --  Session query
    ---------------------------------------------------------------------------
 

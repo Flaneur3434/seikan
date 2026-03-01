@@ -48,27 +48,6 @@ is
         SPARK_Mode    => Off;
 
    ---------------------------------------------------------------------------
-   --  Timer action dispatch — called by WG task (pri 6)
-   ---------------------------------------------------------------------------
-
-   --  Wipe all keypair slots.  Session_Expired / Rekey_Timed_Out.
-   procedure C_Session_Expire
-     (Peer : Interfaces.C.unsigned)
-   with Export,
-        Convention    => C,
-        External_Name => "session_expire",
-        SPARK_Mode    => Off;
-
-   --  Mark rekey in progress before sending initiation.
-   procedure C_Session_Set_Rekey_Flag
-     (Peer : Interfaces.C.unsigned;
-      Now  : Interfaces.Unsigned_64)
-   with Export,
-        Convention    => C,
-        External_Name => "session_set_rekey_flag",
-        SPARK_Mode    => Off;
-
-   ---------------------------------------------------------------------------
    --  Session query — is the peer's current keypair valid?
    ---------------------------------------------------------------------------
 
