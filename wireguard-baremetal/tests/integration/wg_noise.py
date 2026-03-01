@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 # ── Test-command IDs (must match platform/main/wg_commands.h) ─────────
 WG_CMD_INITIATE_HANDSHAKE = 0xFF
 WG_CMD_SET_ECHO_MODE      = 0xFE
+WG_CMD_INJECT_INNER       = 0xFD
 
 CONSTRUCTION = b"Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
 IDENTIFIER = b"WireGuard v1 zx2c4 Jason@zx2c4.com"
@@ -260,6 +261,23 @@ def build_initiate_command() -> bytes:
     rekey gating (§6.2).
     """
     return bytes([WG_CMD_INITIATE_HANDSHAKE])
+
+
+def build_inject_inner_command(ip_payload: bytes) -> bytes:
+    """Build an inject-inner command for the ESP32.
+
+    Byte 0: WG_CMD_INJECT_INNER (0xFD)
+    Bytes 1..N: Raw IP packet (typically a synthetic IPv4 UDP packet)
+
+    The ESP32 command handler allocates a TX pool buffer, copies the IP
+    payload at offset 16 (WG transport header headroom), performs an
+    AllowedIPs lookup for the destination IP, and enqueues to the inner
+    queue — the same path as wg_netif_output().
+
+    This triggers the auto-handshake flow when no session exists:
+      inject inner → no session → auto_handshake fires → initiation sent.
+    """
+    return bytes([WG_CMD_INJECT_INNER]) + ip_payload
 
 
 # ── WireGuard peer ───────────────────────────────────────────────────
