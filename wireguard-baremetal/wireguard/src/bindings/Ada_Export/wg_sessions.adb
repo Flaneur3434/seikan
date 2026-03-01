@@ -61,4 +61,30 @@ is
       end if;
    end C_Session_Set_Rekey_Flag;
 
+   ---------------------------------------------------------------------------
+   --  Session query
+   ---------------------------------------------------------------------------
+
+   function C_Session_Is_Active
+     (Peer : Interfaces.C.unsigned)
+      return Interfaces.C.unsigned_char
+   is
+      KP : Session.Keypair;
+   begin
+      if Peer not in
+        Interfaces.C.unsigned (Session.Peer_Index'First) ..
+        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      then
+         return 0;
+      end if;
+
+      Session.Get_Current (Session.Peer_Index (Peer), KP);
+
+      if Session.Is_Valid (KP) then
+         return 1;
+      else
+         return 0;
+      end if;
+   end C_Session_Is_Active;
+
 end WG_Sessions;

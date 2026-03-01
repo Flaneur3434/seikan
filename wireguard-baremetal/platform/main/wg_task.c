@@ -111,6 +111,10 @@ static bool send_outer_packet(packet_buffer_t *pkt,
  * Protocol task main loop
  * ----------------------------------------------------------------------- */
 
+/* Rate limit auto-initiation: at most once every 5 seconds */
+#define AUTO_INIT_INTERVAL_S 5
+static uint64_t s_last_auto_init = 0;
+
 static void wg_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -154,33 +158,67 @@ static void wg_task(void *pvParameters)
         // Each entry holds a TX pool buffer with plaintext at offset 16;
         // wg_send() writes the WG header into [0..15] and encrypts in-place,
         // then returns that same buffer as the encrypted packet.
-        while (xQueueReceive(g_wg_inner_queue, &inner_msg, 0) == pdTRUE)
+        //
+        // Auto-initiation: if data is pending but no session exists,
+        // trigger a handshake instead of draining (packets stay queued
+        // until session is established).  Rate-limited to once per 5 s.
+        if (uxQueueMessagesWaiting(g_wg_inner_queue) > 0)
         {
-            // Plaintext sits at data[WG_TRANSPORT_HEADER_SIZE..+pt_len-1].
-            // We pass the whole buffer to wg_send so Ada can encrypt in-place.
-            uint16_t tx_len = 0;
-            packet_buffer_t *tx_pkt =
-                (packet_buffer_t *)wg_send(1,
-                                           inner_msg.buf->data + WG_TRANSPORT_HEADER_SIZE,
-                                           inner_msg.pt_len,
-                                           &tx_len);
-
-            // inner_msg.buf is NOT the same buffer as tx_pkt — wg_send
-            // allocates a fresh TX buffer internally.  Free the inner one.
-            tx_pool_free(inner_msg.buf);
-
-            if (tx_pkt == NULL || tx_len == 0)
+            if (wg_session_is_active(1))
             {
-                ESP_LOGW(TAG, "wg_send failed for inner packet");
-                continue;
-            }
+                // Session active — drain and encrypt normally
+                while (xQueueReceive(g_wg_inner_queue, &inner_msg, 0)
+                       == pdTRUE)
+                {
+                    uint16_t tx_len = 0;
+                    packet_buffer_t *tx_pkt =
+                        (packet_buffer_t *)wg_send(
+                            1,
+                            inner_msg.buf->data + WG_TRANSPORT_HEADER_SIZE,
+                            inner_msg.pt_len,
+                            &tx_len);
 
-            struct sockaddr_in endpoint = get_peer_endpoint(1);
-            // send_outer_packet frees tx_pkt on failure; on success the
-            // pbuf_custom callback owns it.
-            if (!send_outer_packet(tx_pkt, tx_len, &endpoint)) {
-                ESP_LOGW(TAG, "Failed to send encrypted inner packet");
-                // Already freed by send_outer_packet on failure path
+                    tx_pool_free(inner_msg.buf);
+
+                    if (tx_pkt == NULL || tx_len == 0)
+                    {
+                        ESP_LOGW(TAG, "wg_send failed for inner packet");
+                        continue;
+                    }
+
+                    struct sockaddr_in endpoint = get_peer_endpoint(1);
+                    if (!send_outer_packet(tx_pkt, tx_len, &endpoint)) {
+                        ESP_LOGW(TAG,
+                                 "Failed to send encrypted inner packet");
+                    }
+                }
+            }
+            else
+            {
+                // No session — auto-initiate handshake (rate-limited)
+                uint64_t now = wg_clock_now();
+                if (now - s_last_auto_init >= AUTO_INIT_INTERVAL_S)
+                {
+                    struct sockaddr_in endpoint = get_peer_endpoint(1);
+                    if (endpoint.sin_port != 0)
+                    {
+                        uint16_t init_len = 0;
+                        packet_buffer_t *init_pkt =
+                            (packet_buffer_t *)wg_create_initiation(
+                                &init_len);
+
+                        if (init_pkt != NULL && init_len > 0)
+                        {
+                            ESP_LOGI(TAG,
+                                     "Auto-initiating handshake "
+                                     "(inner data pending)");
+                            send_outer_packet(init_pkt, init_len,
+                                              &endpoint);
+                        }
+                    }
+                    s_last_auto_init = now;
+                }
+                // Don't drain — packets stay queued until session up
             }
         }
 
