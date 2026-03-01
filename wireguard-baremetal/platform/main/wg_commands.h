@@ -26,6 +26,7 @@ extern "C" {
 
 #define WG_CMD_INITIATE_HANDSHAKE  0xFF
 #define WG_CMD_SET_ECHO_MODE       0xFE
+#define WG_CMD_INJECT_INNER        0xFD
 
 /* -------------------------------------------------------------------
  * API
