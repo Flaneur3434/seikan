@@ -108,6 +108,21 @@ void *wg_send(unsigned int peer, const uint8_t *payload,
 void wg_dispatch_timer(unsigned int peer, uint8_t action,
                        void **tx_buf, uint16_t *tx_len);
 
+/**
+ * Auto-initiate handshake (rate-limited).
+ *
+ * Called when inner data is queued but no session exists.  Ada internally
+ * rate-limits to at most once every 5 seconds and skips if a handshake is
+ * already in flight.
+ *
+ * If *tx_buf is non-NULL on return, C must sendto() then tx_pool_free().
+ *
+ * @param peer    1-based peer index.
+ * @param tx_buf  Output: TX buffer address (or NULL).
+ * @param tx_len  Output: wire length.
+ */
+void wg_auto_handshake(unsigned int peer, void **tx_buf, uint16_t *tx_len);
+
 #ifdef __cplusplus
 }
 #endif
