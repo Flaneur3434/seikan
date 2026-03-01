@@ -12,6 +12,7 @@
 #include "wg_task.h"
 #include "wg_commands.h"
 #include "wg_sessions.h"
+#include "wg_peer_table.h"
 #include "wg_clock.h"
 #include "wg_netif.h"
 
@@ -39,37 +40,34 @@ QueueHandle_t g_wg_rx_queue = NULL;
 QueueHandle_t g_wg_inner_queue = NULL;
 
 /* -----------------------------------------------------------------------
- * Peer endpoint table — remember the last known address for each peer
- * so timer-initiated sends (rekey, keepalive) have a destination.
+ * Peer endpoint table — Ada-owned (Peer_Table package).
  *
- * Updated on every RX packet.  Single-peer today (index 0 = peer 1).
+ * Thin C wrappers keep the same local call-sites, but all state
+ * lives in Ada.  See wg_peer_table.h for the Ada FFI.
  * ----------------------------------------------------------------------- */
-static struct sockaddr_in s_peer_endpoints[WG_MAX_PEERS];
 
 static void update_peer_endpoint(unsigned int peer,
                                  const struct sockaddr_in *addr)
 {
-    if (peer >= 1 && peer <= WG_MAX_PEERS) {
-        s_peer_endpoints[peer - 1] = *addr;
-    }
+    wg_peer_update_endpoint(peer, addr->sin_addr.s_addr, addr->sin_port);
 }
 
 static struct sockaddr_in get_peer_endpoint(unsigned int peer)
 {
-    if (peer >= 1 && peer <= WG_MAX_PEERS) {
-        return s_peer_endpoints[peer - 1];
+    struct sockaddr_in ep = {0};
+    uint32_t addr;
+    uint16_t port;
+    if (wg_peer_get_endpoint(peer, &addr, &port)) {
+        ep.sin_family = AF_INET;
+        ep.sin_addr.s_addr = addr;
+        ep.sin_port = port;
     }
-    struct sockaddr_in empty = {0};
-    return empty;
+    return ep;
 }
 
 bool wg_task_get_peer_endpoint(unsigned int peer, struct sockaddr_in *out)
 {
     if (out == NULL) {
-        return false;
-    }
-
-    if (peer < 1 || peer > WG_MAX_PEERS) {
         return false;
     }
 
@@ -139,6 +137,25 @@ static void wg_task(void *pvParameters)
                     uint16_t tx_len = 0;
 
                     wg_dispatch_timer(peer, actions[i], &tx_buf, &tx_len);
+
+                    switch (actions[i]) {
+                    case WG_TIMER_NO_ACTION:
+                        break;
+                    case WG_TIMER_SEND_KEEPALIVE:
+                        ESP_LOGI(TAG, "Peer %u: keepalive sent", peer);
+                        break;
+                    case WG_TIMER_INITIATE_REKEY:
+                        ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
+                        break;
+                    case WG_TIMER_REKEY_TIMED_OUT:
+                        ESP_LOGW(TAG, "Peer %u: rekey timed out", peer);
+                        break;
+                    case WG_TIMER_SESSION_EXPIRED:
+                        ESP_LOGW(TAG, "Peer %u: session expired", peer);
+                        break;
+                    default:
+                        ESP_LOGE(TAG, "Unrecognized wg session action");
+                    }
 
                     if (tx_buf != NULL && tx_len > 0)
                     {

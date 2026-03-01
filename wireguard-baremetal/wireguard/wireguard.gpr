@@ -18,6 +18,7 @@ with "transport.gpr";
 with "handshake.gpr";
 with "timer.gpr";
 with "session.gpr";
+with "peer_table.gpr";
 
 library project Wireguard is
 
