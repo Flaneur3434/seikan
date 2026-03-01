@@ -89,6 +89,25 @@ void *wg_create_response(uint16_t *out_len);
 void *wg_send(unsigned int peer, const uint8_t *payload,
               uint16_t payload_len, uint16_t *out_len);
 
+/**
+ * Dispatch a timer action for a peer.
+ *
+ * Ada handles the full protocol sequence:
+ *   Session_Expired / Rekey_Timed_Out → expire session
+ *   Initiate_Rekey → build initiation + set rekey flag
+ *   Send_Keepalive → encrypt zero-length transport packet
+ *
+ * If *tx_buf is non-NULL on return, C must sendto() then tx_pool_free().
+ * If *tx_buf is NULL, no packet needs to be sent.
+ *
+ * @param peer    1-based peer index.
+ * @param action  Timer action (uint8_t matching Ada Timer_Action enum).
+ * @param tx_buf  Output: TX buffer address (or NULL).
+ * @param tx_len  Output: wire length.
+ */
+void wg_dispatch_timer(unsigned int peer, uint8_t action,
+                       void **tx_buf, uint16_t *tx_len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -97,6 +97,26 @@ is
    with Export, Convention => C, External_Name => "wg_send";
 
    ---------------------------------------------------------------------------
+   --  wg_dispatch_timer — Ada-owned timer action dispatch
+   --
+   --  Called by the WG task after session_tick_all() returns a non-idle
+   --  action for a peer.  Ada handles the full protocol sequence:
+   --    Session_Expired / Rekey_Timed_Out → Expire_Session
+   --    Initiate_Rekey → Create_Initiation + Set_Rekey_Flag
+   --    Send_Keepalive → Build_And_Encrypt_TX (zero-length)
+   --
+   --  Returns a TX buffer + length if C needs to sendto().
+   --  TX_Buf = Null_Address means no packet to send.
+   ---------------------------------------------------------------------------
+
+   procedure Dispatch_Timer
+     (Peer   : Interfaces.C.unsigned;
+      Action : Interfaces.Unsigned_8;
+      TX_Buf : out System.Address;
+      TX_Len : out Interfaces.Unsigned_16)
+   with Export, Convention => C, External_Name => "wg_dispatch_timer";
+
+   ---------------------------------------------------------------------------
    --  wg_receive_netif - Process incoming packet, zero-copy RX path
    --
    --  Like wg_receive, but for transport data (type 4), Ada decrypts

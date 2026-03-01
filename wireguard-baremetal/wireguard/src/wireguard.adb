@@ -16,6 +16,7 @@ with Handshake;
 with Messages;
 with Transport;
 with Session;
+with Session.Timers;
 with Timer.Clock;
 with WG_Keys;
 
@@ -438,6 +439,75 @@ is
       Out_Len.all := Len;
       return Addr;
    end Send;
+
+   ---------------------------------------------------------------------------
+   --  Dispatch_Timer — Ada-owned timer action dispatch
+   --
+   --  Replaces the C wg_session_action() function.  Protocol sequencing
+   --  is now entirely in Ada; C only calls sendto() if we return a buffer.
+   ---------------------------------------------------------------------------
+
+   procedure Dispatch_Timer
+     (Peer   : Interfaces.C.unsigned;
+      Action : Interfaces.Unsigned_8;
+      TX_Buf : out System.Address;
+      TX_Len : out Interfaces.Unsigned_16)
+   is
+      use Session.Timers;
+      use type System.Address;
+
+      P          : Session.Peer_Index;
+      Ada_Action : Timer_Action;
+   begin
+      TX_Buf := System.Null_Address;
+      TX_Len := 0;
+
+      --  Validate peer index
+      if Peer not in
+        Interfaces.C.unsigned (Session.Peer_Index'First) ..
+        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      then
+         return;
+      end if;
+      P := Session.Peer_Index (Peer);
+
+      --  Convert C uint8 → Ada Timer_Action enum
+      if Action > Timer_Action'Pos (Timer_Action'Last) then
+         return;
+      end if;
+      Ada_Action := Timer_Action'Val (Natural (Action));
+
+      case Ada_Action is
+         when No_Action =>
+            null;
+
+         when Session_Expired | Rekey_Timed_Out =>
+            Session.Expire_Session (P);
+
+         when Initiate_Rekey =>
+            declare
+               Len : aliased Unsigned_16 := 0;
+            begin
+               TX_Buf := Create_Initiation (Len'Access);
+               TX_Len := Len;
+               if TX_Buf /= System.Null_Address then
+                  Session.Set_Rekey_Flag (P, Timer.Clock.Now);
+               end if;
+            end;
+
+         when Send_Keepalive =>
+            declare
+               Empty : constant Byte_Array (1 .. 0) := [others => 0];
+               OK    : Boolean;
+            begin
+               OK := Build_And_Encrypt_TX (P, Empty, TX_Buf, TX_Len);
+               if not OK then
+                  TX_Buf := System.Null_Address;
+                  TX_Len := 0;
+               end if;
+            end;
+      end case;
+   end Dispatch_Timer;
 
    ---------------------------------------------------------------------------
    --  Handle_Transport_RX_Netif — Zero-copy variant of Handle_Transport_RX
