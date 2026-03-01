@@ -18,6 +18,7 @@ with Transport;
 with Session;
 with Session.Timers;
 with Timer.Clock;
+with Peer_Table;
 with WG_Keys;
 
 package body Wireguard
@@ -82,6 +83,10 @@ is
       if not Is_Success (Init_Status) then
          return C_False;
       end if;
+
+      --  Register the peer's public key in the peer table
+      --  (cryptokey routing: maps key → peer index)
+      Peer_Table.Set_Public_Key (Peer_Idx, Peer_Pub);
 
       --  Packet pools are initialized from C (packet_pool_init) with
       --  statically-allocated semaphore handles before wg_init is called.

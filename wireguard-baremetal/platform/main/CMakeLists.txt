@@ -41,6 +41,7 @@ set(ADA_LIBS
     "${PROJECT_ROOT}/wireguard/lib/libWgThreads.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgSession.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgTimer.a"
+    "${PROJECT_ROOT}/wireguard/lib/libWgPeerTable.a"
 )
 
 foreach(ada_lib ${ADA_LIBS})
