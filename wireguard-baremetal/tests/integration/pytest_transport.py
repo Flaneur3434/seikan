@@ -296,6 +296,188 @@ class TestTransportAfterHandshake:
         assert rx_idx == r_state.local_index
 
 
+class TestPreviousKeyFallback:
+    """Previous-key fallback: after a rekey, packets encrypted with the
+    old session's key still decrypt.
+
+    WireGuard §5.4: during a rekey transition, the responder may still
+    receive in-flight packets encrypted under the previous keypair.
+    The receiver must keep the Previous slot valid until it expires so
+    those packets can be decrypted.
+
+    These tests model the receiver-side logic:
+      Handshake 1 → keys_old  (becomes Previous after rekey)
+      Handshake 2 → keys_new  (becomes Current)
+      Packet encrypted with keys_old → should still decrypt
+    """
+
+    @staticmethod
+    def _rekey():
+        """Perform two consecutive handshakes between the same peers.
+
+        Returns:
+            (keys_old, state_old, keys_new, state_new)
+        where keys_* = (initiator_send, initiator_recv)
+        and   state_* = (i_state, r_state)
+
+        After the second handshake, a real WireGuard implementation
+        would rotate: Previous ← Current(keys_old), Current ← keys_new.
+        """
+        initiator = WireGuardPeer()
+        responder = WireGuardPeer()
+
+        # --- Handshake 1 (becomes Previous after rekey) ---
+        init1, i_state1 = initiator.create_initiation(responder.public_key)
+        r_state1 = responder.process_initiation(init1)
+        resp1, r_state1 = responder.create_response(r_state1)
+        i_state1 = initiator.process_response(resp1, i_state1)
+        keys_old = derive_transport_keys(i_state1.chaining_key)
+
+        # --- Handshake 2 (becomes Current) ---
+        init2, i_state2 = initiator.create_initiation(responder.public_key)
+        r_state2 = responder.process_initiation(init2)
+        resp2, r_state2 = responder.create_response(r_state2)
+        i_state2 = initiator.process_response(resp2, i_state2)
+        keys_new = derive_transport_keys(i_state2.chaining_key)
+
+        return (keys_old, (i_state1, r_state1),
+                keys_new, (i_state2, r_state2))
+
+    def test_old_key_still_decrypts(self):
+        """After rekey, a packet encrypted with the old key still decrypts."""
+        keys_old, (i_old, r_old), keys_new, (i_new, r_new) = self._rekey()
+        old_send, old_recv = keys_old
+
+        # Initiator sends with old key → responder can still decrypt
+        pkt = build_transport_packet(
+            old_send, r_old.local_index, counter=0,
+            plaintext=b"late arrival",
+        )
+        # Old key on receiver side (responder's recv = initiator's send)
+        r_old_recv, _ = derive_transport_keys(r_old.chaining_key)
+        _, _, rx_pt = parse_transport_packet(r_old_recv, pkt)
+        assert rx_pt == b"late arrival"
+
+    def test_new_key_decrypts(self):
+        """After rekey, packets with the new key decrypt normally."""
+        keys_old, _, keys_new, (i_new, r_new) = self._rekey()
+        new_send, _ = keys_new
+
+        pkt = build_transport_packet(
+            new_send, r_new.local_index, counter=0,
+            plaintext=b"fresh session",
+        )
+        r_new_recv, _ = derive_transport_keys(r_new.chaining_key)
+        _, _, rx_pt = parse_transport_packet(r_new_recv, pkt)
+        assert rx_pt == b"fresh session"
+
+    def test_old_and_new_keys_are_different(self):
+        """Rekey produces completely different transport keys."""
+        keys_old, _, keys_new, _ = self._rekey()
+        old_send, old_recv = keys_old
+        new_send, new_recv = keys_new
+
+        assert old_send != new_send
+        assert old_recv != new_recv
+
+    def test_old_key_cannot_decrypt_new_session(self):
+        """Old key cannot decrypt packets from the new session."""
+        keys_old, _, keys_new, (i_new, r_new) = self._rekey()
+        new_send, _ = keys_new
+        old_send, _ = keys_old
+
+        # Encrypt with new key
+        pkt = build_transport_packet(
+            new_send, r_new.local_index, counter=0,
+            plaintext=b"new session data",
+        )
+        # Try to decrypt with old key → authentication failure
+        with pytest.raises(Exception):
+            parse_transport_packet(old_send, pkt)
+
+    def test_receiver_index_identifies_session(self):
+        """Old and new sessions have different receiver indices.
+
+        The receiver uses receiver_index to determine which keypair
+        slot (Current vs Previous) to use for decryption.
+        """
+        _, (i_old, r_old), _, (i_new, r_new) = self._rekey()
+
+        # Each handshake generates unique local indices
+        assert r_old.local_index != r_new.local_index
+        assert i_old.local_index != i_new.local_index
+
+    def test_independent_counter_spaces(self):
+        """Old and new sessions have independent counter spaces.
+
+        Counter 0 in the old session is unrelated to counter 0 in the
+        new session — they use different keys and nonces.
+        """
+        keys_old, (i_old, r_old), keys_new, (i_new, r_new) = self._rekey()
+        old_send, _ = keys_old
+        new_send, _ = keys_new
+
+        pt = b"same plaintext"
+
+        # Both sessions use counter=0, same plaintext
+        pkt_old = build_transport_packet(old_send, r_old.local_index, 0, pt)
+        pkt_new = build_transport_packet(new_send, r_new.local_index, 0, pt)
+
+        # Different ciphertext (different keys)
+        assert pkt_old != pkt_new
+
+        # Both decrypt correctly with their own keys
+        r_old_recv, _ = derive_transport_keys(r_old.chaining_key)
+        r_new_recv, _ = derive_transport_keys(r_new.chaining_key)
+
+        _, _, pt_old = parse_transport_packet(r_old_recv, pkt_old)
+        _, _, pt_new = parse_transport_packet(r_new_recv, pkt_new)
+        assert pt_old == pt_new == pt
+
+    def test_interleaved_old_new_packets(self):
+        """Interleaved packets from old and new sessions all decrypt.
+
+        Simulates the rekey transition window where the sender may
+        still have in-flight packets from the old session while the
+        new session is already active.
+        """
+        keys_old, (i_old, r_old), keys_new, (i_new, r_new) = self._rekey()
+        old_send, _ = keys_old
+        new_send, _ = keys_new
+        r_old_recv, _ = derive_transport_keys(r_old.chaining_key)
+        r_new_recv, _ = derive_transport_keys(r_new.chaining_key)
+
+        # Simulate interleaved arrival: new, old, new, old, new
+        packets = [
+            ("new", new_send, r_new.local_index, r_new_recv, 0),
+            ("old", old_send, r_old.local_index, r_old_recv, 0),
+            ("new", new_send, r_new.local_index, r_new_recv, 1),
+            ("old", old_send, r_old.local_index, r_old_recv, 1),
+            ("new", new_send, r_new.local_index, r_new_recv, 2),
+        ]
+
+        for label, send_key, rx_idx, recv_key, ctr in packets:
+            pt = f"{label} pkt {ctr}".encode()
+            pkt = build_transport_packet(send_key, rx_idx, ctr, pt)
+            _, _, rx_pt = parse_transport_packet(recv_key, pkt)
+            assert rx_pt == pt
+
+    def test_unrelated_key_rejected(self):
+        """A completely unrelated key (not previous, not current) fails."""
+        keys_old, (i_old, r_old), keys_new, (i_new, r_new) = self._rekey()
+        new_send, _ = keys_new
+
+        pkt = build_transport_packet(
+            new_send, r_new.local_index, counter=0,
+            plaintext=b"valid",
+        )
+
+        # Unrelated key (all zeros) → should fail
+        unrelated_key = bytes(32)
+        with pytest.raises(Exception):
+            parse_transport_packet(unrelated_key, pkt)
+
+
 # =====================================================================
 #  Layer 2 — ESP32 integration tests (require hardware)
 # =====================================================================
@@ -672,3 +854,98 @@ class TestEsp32Transport:
               f"p50: {p50:.1f}ms  p99: {p99:.1f}ms")
         print(f"  Bidirectional throughput: {throughput_kbps:.1f} kbit/s")
         print(f"{'='*64}")
+
+    # ── Previous-key fallback tests ──────────────────────────────
+
+    def test_previous_key_fallback(self, dut, wg_peer, esp32_addr):
+        """After a rekey, ESP32 still decrypts packets from the old session.
+
+        WireGuard §5.4: during a rekey transition the receiver keeps
+        the Previous keypair valid so in-flight packets encrypted
+        under the old key still decrypt.
+
+        Sequence:
+          1. Handshake 1 → session_old (keys_old)
+          2. Handshake 2 → rekey → session_old becomes Previous,
+             session_new becomes Current
+          3. Send transport packet encrypted with keys_old
+          4. ESP32 should decrypt it via the Previous slot
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(UDP_TIMEOUT)
+        try:
+            # — Handshake 1: establish initial session —
+            init1, i_state1 = wg_peer.create_initiation(esp32_public())
+            sock.sendto(init1, esp32_addr)
+            resp1, _ = sock.recvfrom(256)
+            assert resp1[0] == MSG_TYPE_RESPONSE
+            final1 = wg_peer.process_response(resp1, i_state1)
+            dut.expect("Handshake Response", timeout=5)
+
+            old_send, _ = derive_transport_keys(final1.chaining_key)
+            old_rx_idx = final1.remote_index
+
+            # Confirm old session works
+            pkt = build_transport_packet(old_send, old_rx_idx, 0,
+                                         b"pre-rekey")
+            sock.sendto(pkt, esp32_addr)
+            dut.expect("Transport Data", timeout=5)
+
+            # — Handshake 2: rekey → old session becomes Previous —
+            init2, i_state2 = wg_peer.create_initiation(esp32_public())
+            sock.sendto(init2, esp32_addr)
+            resp2, _ = sock.recvfrom(256)
+            assert resp2[0] == MSG_TYPE_RESPONSE
+            final2 = wg_peer.process_response(resp2, i_state2)
+            dut.expect("Handshake Response", timeout=5)
+
+            new_send, _ = derive_transport_keys(final2.chaining_key)
+            new_rx_idx = final2.remote_index
+
+            # Confirm new session works
+            pkt_new = build_transport_packet(new_send, new_rx_idx, 0,
+                                              b"post-rekey")
+            sock.sendto(pkt_new, esp32_addr)
+            dut.expect("Transport Data", timeout=5)
+
+            # — Send packet with OLD key (previous-key fallback) —
+            # Counter=1 since counter=0 was used above
+            pkt_old = build_transport_packet(old_send, old_rx_idx, 1,
+                                              b"late arrival")
+            sock.sendto(pkt_old, esp32_addr)
+            dut.expect("Transport Data", timeout=5)
+
+        finally:
+            sock.close()
+
+    def test_previous_key_wrong_key_rejected(self, dut, wg_peer, esp32_addr):
+        """After a rekey, a packet encrypted with an unrelated key is
+        still rejected even though the Previous slot is valid."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(UDP_TIMEOUT)
+        try:
+            # — Handshake 1 —
+            init1, i_state1 = wg_peer.create_initiation(esp32_public())
+            sock.sendto(init1, esp32_addr)
+            resp1, _ = sock.recvfrom(256)
+            final1 = wg_peer.process_response(resp1, i_state1)
+            dut.expect("Handshake Response", timeout=5)
+
+            old_rx_idx = final1.remote_index
+
+            # — Handshake 2 (rekey) —
+            init2, i_state2 = wg_peer.create_initiation(esp32_public())
+            sock.sendto(init2, esp32_addr)
+            resp2, _ = sock.recvfrom(256)
+            final2 = wg_peer.process_response(resp2, i_state2)
+            dut.expect("Handshake Response", timeout=5)
+
+            # Send with wrong key but valid old receiver index
+            wrong_key = bytes(32)
+            pkt = build_transport_packet(wrong_key, old_rx_idx, 0,
+                                          b"wrong key")
+            sock.sendto(pkt, esp32_addr)
+            dut.expect("wg_receive error", timeout=5)
+
+        finally:
+            sock.close()

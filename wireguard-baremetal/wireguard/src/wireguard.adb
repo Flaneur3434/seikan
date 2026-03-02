@@ -682,12 +682,15 @@ is
       PT_Act     : Natural := 0;
       Found_Peer : Session.Peer_Index := 1;
       Found      : Boolean := False;
+      Used_Previous : Boolean := False;
    begin
       PT_Len.all := 0;
       Peer_Out   := 1;
 
       --  Extract receiver_index from transport header (bytes 4-7, LE).
-      --  Find which peer's Current keypair has matching Sender_Index.
+      --  Find which peer's Current or Previous keypair has matching
+      --  Sender_Index.  Check Current first (common case), then Previous
+      --  (in-flight packets during rekey transition).
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
@@ -698,6 +701,7 @@ is
             RX_View.Buf_Ptr.Data (7));
          Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Recv_Bytes);
       begin
+         --  Pass 1: check Current keypair for each peer
          for P in Session.Peer_Index loop
             declare
                Peer_KP : Session.Keypair;
@@ -713,6 +717,26 @@ is
                end if;
             end;
          end loop;
+
+         --  Pass 2: check Previous keypair (fallback for rekey transition)
+         if not Found then
+            for P in Session.Peer_Index loop
+               declare
+                  Prev_KP : Session.Keypair;
+               begin
+                  Session.Get_Previous (P, Prev_KP);
+                  if Session.Is_Valid (Prev_KP)
+                    and then Prev_KP.Sender_Index = Recv_Idx
+                  then
+                     Found_Peer := P;
+                     Found := True;
+                     Used_Previous := True;
+                     KP := Prev_KP;
+                     exit;
+                  end if;
+               end;
+            end loop;
+         end if;
       end;
 
       if not Found then
@@ -740,10 +764,21 @@ is
                Result  => Decrypt_Result);
 
             if Is_Success (Decrypt_Result) then
-               Session.Validate_And_Update_Replay
-                 (Peer     => Found_Peer,
-                  Counter  => Counter,
-                  Accepted => Replay_OK);
+               --  Use the correct replay filter for the slot that matched.
+               --  Each keypair has its own counter space: Current and Previous
+               --  slots are independent, so a counter valid in one may not
+               --  be valid in the other.
+               if Used_Previous then
+                  Session.Validate_And_Update_Replay_Previous
+                    (Peer     => Found_Peer,
+                     Counter  => Counter,
+                     Accepted => Replay_OK);
+               else
+                  Session.Validate_And_Update_Replay
+                    (Peer     => Found_Peer,
+                     Counter  => Counter,
+                     Accepted => Replay_OK);
+               end if;
                if Replay_OK then
                   Session.Mark_Received (Found_Peer, Timer.Clock.Now);
                end if;
