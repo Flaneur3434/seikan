@@ -364,6 +364,142 @@ class TestKeepalive:
         assert action.send_keepalive is False
 
 
+class TestPersistentKeepalive:
+    """Persistent keepalive: unconditional periodic empty packet (§6.5).
+
+    Unlike reactive keepalive (which only fires after receiving data),
+    persistent keepalive fires whenever we haven't sent anything for
+    the configured interval, regardless of received traffic.
+    """
+
+    def test_persistent_keepalive_fires(self):
+        """Haven't sent for 25+ seconds → keepalive fires."""
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_sent=now - 25,
+            persistent_keepalive_s=25,
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is True
+
+    def test_persistent_keepalive_disabled(self):
+        """Interval = 0 → persistent keepalive disabled."""
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_sent=now - 100,
+            persistent_keepalive_s=0,
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is False
+
+    def test_persistent_keepalive_not_yet(self):
+        """Sent recently (within interval) → no keepalive."""
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_sent=now - 10,
+            persistent_keepalive_s=25,
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is False
+
+    def test_persistent_keepalive_boundary(self):
+        """Exactly at interval boundary → fires (since_sent >= interval)."""
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_sent=now - 25,
+            persistent_keepalive_s=25,
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is True
+
+    def test_persistent_keepalive_one_second_before(self):
+        """One second before interval → no keepalive."""
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_sent=now - 24,
+            persistent_keepalive_s=25,
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is False
+
+    def test_persistent_keepalive_never_sent(self):
+        """Last_Sent = NEVER with persistent keepalive → fires.
+
+        _elapsed(NEVER, now) = now (large), which >= any interval.
+        """
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            persistent_keepalive_s=25,
+            # last_sent defaults to NEVER
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is True
+
+    def test_persistent_keepalive_no_receive_needed(self):
+        """Persistent keepalive fires even with no received data.
+
+        Unlike reactive keepalive, persistent keepalive does NOT
+        require last_received to be non-NEVER.
+        """
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_sent=now - 30,
+            # last_received defaults to NEVER
+            persistent_keepalive_s=25,
+        )
+        assert peer.last_received == NEVER
+        action = tick(peer, now)
+        assert action.send_keepalive is True
+
+    def test_persistent_keepalive_inactive_peer(self):
+        """Inactive peer → no keepalive even with interval configured."""
+        peer = null_peer()
+        peer.persistent_keepalive_s = 25
+        action = tick(peer, now=1000)
+        assert action.send_keepalive is False
+
+    def test_persistent_keepalive_survives_expire(self):
+        """expire_session preserves persistent_keepalive_s."""
+        peer = make_active_peer(
+            created_at=500,
+            persistent_keepalive_s=25,
+        )
+        expired = expire_session(peer)
+        assert expired.persistent_keepalive_s == 25
+        assert not expired.current.valid
+
+    def test_persistent_keepalive_custom_interval(self):
+        """Different intervals work: 10-second interval."""
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_sent=now - 10,
+            persistent_keepalive_s=10,
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is True
+
+    def test_reactive_and_persistent_both_trigger(self):
+        """When both reactive and persistent conditions are met,
+        send_keepalive is still True (single flag, no conflict)."""
+        now = 1000
+        peer = make_active_peer(
+            created_at=900,
+            last_received=now - 5,    # reactive: recv < 10, sent >= 10
+            last_sent=now - 30,       # persistent: sent >= 25
+            persistent_keepalive_s=25,
+        )
+        action = tick(peer, now)
+        assert action.send_keepalive is True
+
+
 # =====================================================================
 #  Layer 1b-2 — Unresponsive peer detection (§6.2) + retry (§6.4)
 # =====================================================================
@@ -1979,5 +2115,53 @@ class TestEsp32ResponderNoTimeRekey:
                 "session expired",
                 timeout=REJECT_AFTER_TIME - REKEY_AFTER_TIME + 5,
             )
+        finally:
+            sock.close()
+
+
+# ── 2i. Persistent keepalive on hardware ─────────────────────────────
+
+@pytest.mark.esp32c6
+@pytest.mark.slow
+class TestEsp32PersistentKeepalive:
+    """ESP32 sends a persistent keepalive every 25 seconds (configured in Init).
+
+    Unlike reactive keepalive (which requires recent inbound data),
+    persistent keepalive fires unconditionally when nothing has been
+    sent for the configured interval.
+
+    After a handshake, the ESP32 will send an empty transport packet
+    (~25 s later) even if Python sends nothing at all.
+
+    Duration: ~35 s per test.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _boot(self, dut):
+        self._ip = _get_esp32_ip(dut, timeout=30)
+        dut.expect("wg0 netif", timeout=10)
+
+    def test_persistent_keepalive_fires(self, dut):
+        """ESP32 sends keepalive ~25 s after handshake with no traffic.
+
+        After handshake, Python sends nothing.  The ESP32's persistent
+        keepalive timer fires after 25 s and sends an empty Type 4 packet.
+        """
+        from wg_noise import parse_keepalive_packet, KEEPALIVE_SIZE
+
+        sock, send_key, recv_key, rx_idx = _do_handshake(dut, self._ip)
+        try:
+            # Do NOT send any data — just wait for the persistent keepalive.
+            # The ESP32 should send a keepalive at ~25 s.
+            sock.settimeout(35)
+            ka_data, _ = sock.recvfrom(512)
+
+            assert len(ka_data) == KEEPALIVE_SIZE, (
+                f"expected {KEEPALIVE_SIZE}-byte keepalive, got {len(ka_data)}"
+            )
+
+            # Verify it's a valid keepalive (authentic, empty plaintext)
+            rx_idx_ka, ctr = parse_keepalive_packet(recv_key, ka_data)
+
         finally:
             sock.close()

@@ -106,6 +106,11 @@ is
       --  Packet pools are initialized from C (packet_pool_init) with
       --  statically-allocated semaphore handles before wg_init is called.
 
+      --  Configure persistent keepalive for peer 1.
+      --  25 seconds is the WireGuard recommended value for keeping
+      --  NAT mappings alive (§6.5).
+      Session.Set_Persistent_Keepalive (1, Interval_S => 25);
+
       --  Reset per-peer protocol state
       HS_States       := [others => Handshake.Empty_Handshake];
       Last_Auto_Inits := [others => Timer.Clock.Never];

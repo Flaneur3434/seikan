@@ -115,6 +115,11 @@ class PeerState:
     # Per WireGuard §5.4: only the initiator may do time-based rekeying.
     is_initiator: bool = False
 
+    # Persistent keepalive interval in seconds (0 = disabled).
+    # Per WireGuard §6.5: if configured, the peer unconditionally sends
+    # an empty transport packet every N seconds to keep NAT mappings open.
+    persistent_keepalive_s: int = 0
+
 
 def null_peer() -> PeerState:
     """Return a peer equivalent to Ada's Null_Peer."""
@@ -201,13 +206,21 @@ def tick(peer: PeerState, now: int) -> TimerAction:
             if since_last_init >= REKEY_TIMEOUT:
                 a.initiate_rekey = True
 
-    # 6. Keepalive (§6.5)
+    # 6. Reactive keepalive (§6.5)
     #    _elapsed(NEVER, now) = now (large), so "never sent" correctly
     #    satisfies since_sent >= KEEPALIVE_TIMEOUT.
     if peer.last_received != NEVER:
         since_recv = _elapsed(peer.last_received, now)
         since_sent = _elapsed(peer.last_sent, now)
         if since_recv < KEEPALIVE_TIMEOUT and since_sent >= KEEPALIVE_TIMEOUT:
+            a.send_keepalive = True
+
+    # 7. Persistent keepalive (§6.5)
+    #    Unconditional periodic empty packet to keep NAT mappings alive.
+    #    Fires when we haven't sent anything for persistent_keepalive_s.
+    if peer.persistent_keepalive_s > 0:
+        since_sent = _elapsed(peer.last_sent, now)
+        if since_sent >= peer.persistent_keepalive_s:
             a.send_keepalive = True
 
     return a
@@ -257,9 +270,12 @@ def expire_session(peer: PeerState) -> PeerState:
     """Invalidate all three keypair slots and clear rekey state.
 
     Mirrors ``Session.Expire_Session`` (with the Refined_Post proving
-    all three slots become ``not Valid``).
+    all three slots become ``not Valid``).  Preserves persistent
+    keepalive configuration since it outlives individual sessions.
     """
     p = deepcopy(peer)
+
+    saved_pka = p.persistent_keepalive_s
 
     p.current = null_keypair()
     p.previous = null_keypair()
@@ -269,6 +285,9 @@ def expire_session(peer: PeerState) -> PeerState:
     p.rekey_attempted = False
     p.rekey_attempt_start = NEVER
     p.rekey_last_sent = NEVER
+
+    # Preserve configuration that outlives sessions
+    p.persistent_keepalive_s = saved_pka
 
     return p
 
@@ -303,6 +322,7 @@ def make_active_peer(
     rekey_attempt_start: int = NEVER,
     rekey_last_sent: int = NEVER,
     is_initiator: bool = True,
+    persistent_keepalive_s: int = 0,
 ) -> PeerState:
     """Create an active peer with a valid Current keypair for testing."""
     global _next_kp_id
@@ -331,6 +351,7 @@ def make_active_peer(
         rekey_last_sent=rekey_last_sent,
         active=True,
         is_initiator=is_initiator,
+        persistent_keepalive_s=persistent_keepalive_s,
     )
 
 
