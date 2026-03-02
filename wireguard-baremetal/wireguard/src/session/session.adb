@@ -118,6 +118,17 @@ is
    end Get_Current;
 
    ---------------------------------------------------------------------------
+   --  Get_Previous
+   ---------------------------------------------------------------------------
+
+   procedure Get_Previous (Peer : Peer_Index; KP : out Keypair) is
+   begin
+      Lock;
+      KP := Peers (Peer).Previous;
+      Unlock;
+   end Get_Previous;
+
+   ---------------------------------------------------------------------------
    --  Timestamp updates
    ---------------------------------------------------------------------------
 
@@ -216,5 +227,24 @@ is
 
       Unlock;
    end Validate_And_Update_Replay;
+
+   ---------------------------------------------------------------------------
+   --  Replay validation (Previous keypair)
+   ---------------------------------------------------------------------------
+
+   procedure Validate_And_Update_Replay_Previous
+     (Peer : Peer_Index; Counter : Unsigned_64; Accepted : out Boolean)
+   is
+   begin
+      Lock;
+
+      Replay.Validate_Counter
+        (F        => Peers (Peer).Previous.Replay_Filter,
+         Counter  => Counter,
+         Limit    => Reject_After_Messages,
+         Accepted => Accepted);
+
+      Unlock;
+   end Validate_And_Update_Replay_Previous;
 
 end Session;

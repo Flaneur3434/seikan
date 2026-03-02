@@ -132,6 +132,16 @@ is
      Pre  => Session_Ready,
      Post => Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
+   --  Snapshot the previous keypair for a peer into KP.
+   --  Used for previous-key fallback during rekey transitions:
+   --  in-flight packets encrypted under the old key can still be
+   --  decrypted via the Previous slot until the next rekey overwrites it.
+   procedure Get_Previous (Peer : Peer_Index; KP : out Keypair)
+   with
+     Global => (Input => Peer_States, In_Out => Mutex_State),
+     Pre  => Session_Ready,
+     Post => Is_Mtx_Initialized and then not Is_Mtx_Locked;
+
    ---------------------------------------------------------------------------
    --  Send/Receive timestamp updates
    ---------------------------------------------------------------------------
@@ -171,6 +181,19 @@ is
    --  Check the counter against the peer's current keypair replay filter.
    --  If valid, updates the filter to include this counter value.
    procedure Validate_And_Update_Replay
+     (Peer    : Peer_Index;
+      Counter : Unsigned_64;
+      Accepted : out Boolean)
+   with
+     Global => (In_Out => (Peer_States, Mutex_State)),
+     Pre  => Session_Ready,
+     Post => Session_Ready;
+
+   --  Check the counter against the peer's previous keypair replay filter.
+   --  Used for previous-key fallback: when a transport packet decrypts
+   --  successfully with the Previous key, its counter must be validated
+   --  against the Previous slot's replay filter (separate counter space).
+   procedure Validate_And_Update_Replay_Previous
      (Peer    : Peer_Index;
       Counter : Unsigned_64;
       Accepted : out Boolean)
