@@ -136,7 +136,7 @@ is
             null;
       end case;
 
-      --  4. Keepalive — received recently, haven't sent back
+      --  4. Reactive keepalive — received recently, haven't sent back
       if Peer.Last_Received /= Timer.Clock.Never then
          declare
             Since_Recv : constant Unsigned_64 :=
@@ -146,6 +146,21 @@ is
             if Since_Recv < Keepalive_Timeout_S
               and then Since_Sent >= Keepalive_Timeout_S
             then
+               return Send_Keepalive;
+            end if;
+         end;
+      end if;
+
+      --  5. Persistent keepalive — unconditional periodic empty packet.
+      --  Per WireGuard §6.5: if configured (> 0), send a keepalive
+      --  whenever we haven't sent anything for Persistent_Keepalive_S
+      --  seconds.  This keeps NAT mappings and stateful firewalls open.
+      if Peer.Persistent_Keepalive_S > 0 then
+         declare
+            Since_Sent : constant Unsigned_64 :=
+              Elapsed (Peer.Last_Sent, Now);
+         begin
+            if Since_Sent >= Peer.Persistent_Keepalive_S then
                return Send_Keepalive;
             end if;
          end;

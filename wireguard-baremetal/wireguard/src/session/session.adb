@@ -177,7 +177,14 @@ is
    begin
       Lock;
 
-      Peers (Peer) := (others => <>);
+      declare
+         Saved_PKA : constant Unsigned_64 :=
+           Peers (Peer).Persistent_Keepalive_S;
+      begin
+         Peers (Peer) := (others => <>);
+         --  Preserve configuration that outlives sessions
+         Peers (Peer).Persistent_Keepalive_S := Saved_PKA;
+      end;
 
       Unlock;
    end Expire_Session;
@@ -208,6 +215,19 @@ is
 
       Unlock;
    end Set_Rekey_Flag;
+
+   ---------------------------------------------------------------------------
+   --  Persistent keepalive configuration
+   ---------------------------------------------------------------------------
+
+   procedure Set_Persistent_Keepalive
+     (Peer : Peer_Index; Interval_S : Unsigned_64)
+   is
+   begin
+      Lock;
+      Peers (Peer).Persistent_Keepalive_S := Interval_S;
+      Unlock;
+   end Set_Persistent_Keepalive;
 
    ---------------------------------------------------------------------------
    --  Replay validation

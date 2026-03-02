@@ -224,6 +224,21 @@ is
      Pre  => Session_Ready and then Now /= Timer.Clock.Never,
      Post => Session_Ready;
 
+   ---------------------------------------------------------------------------
+   --  Persistent keepalive configuration
+   ---------------------------------------------------------------------------
+
+   --  Set the persistent keepalive interval for a peer.
+   --  Interval_S = 0 disables persistent keepalive.
+   --  Per WireGuard §6.5: recommended range is 1..65535 seconds;
+   --  typical value is 25 seconds.
+   procedure Set_Persistent_Keepalive
+     (Peer : Peer_Index; Interval_S : Unsigned_64)
+   with
+     Global => (In_Out => (Peer_States, Mutex_State)),
+     Pre  => Session_Ready,
+     Post => Session_Ready;
+
 private
 
    type Peer_Mode is (Inactive, Established, Rekeying);
@@ -251,6 +266,12 @@ private
       --  opportunistic rekeying, to prevent the "thundering herd"
       --  problem where both peers try to rekey simultaneously.
       Is_Initiator : Boolean    := False;
+
+      --  Persistent keepalive interval in seconds (0 = disabled).
+      --  Per WireGuard §6.5: if configured, the peer unconditionally
+      --  sends an empty transport packet every N seconds to keep
+      --  NAT mappings and stateful firewalls open.
+      Persistent_Keepalive_S : Unsigned_64 := 0;
    end record;
 
    --  Structural invariant as a ghost predicate.
