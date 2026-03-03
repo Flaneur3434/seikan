@@ -223,12 +223,27 @@ class TestTransportErrorCases:
         with pytest.raises(Exception):
             parse_transport_packet(key, bytes(bad))
 
-    def test_tampered_header_fails(self):
-        """Modifying the header (AAD) causes authentication failure."""
+    def test_tampered_receiver_index_decrypts(self):
+        """Tampered receiver_index does NOT break AEAD (empty AAD per §5.4.6).
+
+        WireGuard authenticates receiver_index implicitly through session
+        key lookup, not via AAD.  With the correct key, a flipped index
+        byte still decrypts successfully — only the parsed index differs.
+        """
         key = bytes(range(32))
         pkt = build_transport_packet(key, 0, 0, b"aad check")
         bad = bytearray(pkt)
         bad[5] ^= 0x01  # flip a receiver index byte
+        receiver_index, counter, plaintext = parse_transport_packet(key, bytes(bad))
+        assert plaintext == b"aad check"  # decryption succeeds
+        assert receiver_index != 0         # parsed index is tampered
+
+    def test_tampered_counter_fails(self):
+        """Tampered counter (= AEAD nonce) causes authentication failure."""
+        key = bytes(range(32))
+        pkt = build_transport_packet(key, 0, 0, b"nonce check")
+        bad = bytearray(pkt)
+        bad[8] ^= 0x01  # flip a counter byte (AEAD nonce)
         with pytest.raises(Exception):
             parse_transport_packet(key, bytes(bad))
 

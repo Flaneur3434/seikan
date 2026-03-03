@@ -1203,12 +1203,26 @@ class TestKeepaliveRoundTrip:
         with pytest.raises(Exception):
             parse_keepalive_packet(key, bytes(pkt))
 
-    def test_tampered_header_rejected(self):
-        """Flipping a byte in the header causes authentication failure."""
+    def test_tampered_receiver_index_decrypts(self):
+        """Tampered receiver_index does NOT break AEAD (empty AAD per §5.4.6).
+
+        WireGuard authenticates receiver_index implicitly through session
+        key lookup, not via AAD.  With the correct key, a flipped index
+        byte still authenticates — only the parsed index differs.
+        """
         from wg_noise import build_keepalive_packet, parse_keepalive_packet
         key = bytes(32)
         pkt = bytearray(build_keepalive_packet(key, receiver_index=1, counter=0))
         pkt[5] ^= 0xFF  # flip byte in receiver_index
+        receiver_index, counter = parse_keepalive_packet(key, bytes(pkt))
+        assert receiver_index != 1  # parsed index is tampered
+
+    def test_tampered_counter_rejected(self):
+        """Tampered counter (= AEAD nonce) causes authentication failure."""
+        from wg_noise import build_keepalive_packet, parse_keepalive_packet
+        key = bytes(32)
+        pkt = bytearray(build_keepalive_packet(key, receiver_index=1, counter=0))
+        pkt[8] ^= 0x01  # flip a counter byte (AEAD nonce)
         with pytest.raises(Exception):
             parse_keepalive_packet(key, bytes(pkt))
 

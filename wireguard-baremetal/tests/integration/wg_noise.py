@@ -170,7 +170,9 @@ def build_transport_packet(
         [8..15]  counter   = LE64
         [16..]   AEAD(plaintext) + tag (16 bytes)
 
-    The header (bytes 0..15) is used as AAD for the AEAD.
+    Per WireGuard §5.4.6 the AEAD uses empty AAD (ε).  The receiver
+    index is authenticated implicitly through session key lookup; the
+    counter is the AEAD nonce.
     """
     header = struct.pack("<BxxxIQ", MSG_TYPE_TRANSPORT, receiver_index, counter)
     assert len(header) == TRANSPORT_HEADER_SIZE
