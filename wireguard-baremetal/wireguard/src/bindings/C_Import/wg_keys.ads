@@ -29,29 +29,20 @@ is
      (Key : out Crypto.KX.Secret_Key) return Interfaces.C.C_bool
    with Import, Convention => C, External_Name => "wg_get_static_private_key";
 
-   --  Load peer 1's public key from CONFIG_WG_PEER_PUBLIC_KEY.
+   --  ── Per-peer configuration ─────────────────────────────────────
+
+   --  Load a peer's public key.  Returns False if not configured.
    function Get_Peer_Public_Key
-     (Key : out Crypto.KX.Public_Key) return Interfaces.C.C_bool
+     (Peer : Interfaces.C.unsigned;
+      Key  : out Crypto.KX.Public_Key) return Interfaces.C.C_bool
    with Import, Convention => C, External_Name => "wg_get_peer_public_key";
 
-   --  Load peer 1's optional pre-shared key from CONFIG_WG_PRESHARED_KEY.
+   --  Load a peer's optional pre-shared key.
    --  Returns False if empty/unset (Key will be all zeros).
-   function Get_Preshared_Key
-     (Key : out Crypto.KX.Secret_Key) return Interfaces.C.C_bool
-   with Import, Convention => C, External_Name => "wg_get_preshared_key";
-
-   --  Load peer 2's public key from CONFIG_WG_PEER2_PUBLIC_KEY.
-   --  Returns False if not configured or empty.
-   function Get_Peer2_Public_Key
-     (Key : out Crypto.KX.Public_Key) return Interfaces.C.C_bool
-   with Import, Convention => C, External_Name => "wg_get_peer2_public_key";
-
-   --  Load peer 2's optional pre-shared key.
-   function Get_Peer2_Preshared_Key
-     (Key : out Crypto.KX.Secret_Key) return Interfaces.C.C_bool
-   with Import, Convention => C, External_Name => "wg_get_peer2_preshared_key";
-
-   --  ── Per-peer configuration ─────────────────────────────────────
+   function Get_Peer_Preshared_Key
+     (Peer : Interfaces.C.unsigned;
+      Key  : out Crypto.KX.Secret_Key) return Interfaces.C.C_bool
+   with Import, Convention => C, External_Name => "wg_get_peer_preshared_key";
 
    --  Get peer's AllowedIP address (host byte order, 0 = 0.0.0.0).
    function Get_Peer_Allowed_IP
