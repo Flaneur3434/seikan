@@ -14,7 +14,9 @@ config WIFI_PASSWORD
 
 endmenu
 
-menu "WireGuard Keys"
+menu "WireGuard"
+
+menu "Keys"
 
 config WG_STATIC_PRIVATE_KEY
     string "WireGuard static private key (hex)"
@@ -23,8 +25,12 @@ config WG_STATIC_PRIVATE_KEY
         ESP32 static private X25519 key as 64 hex characters.
         Generate with: python build.py keygen
 
+endmenu
+
+menu "Peer 1"
+
 config WG_PEER_PUBLIC_KEY
-    string "Peer 1 public key (hex)"
+    string "Public key (hex)"
     default ""
     help
         Remote peer 1 static public X25519 key as 64 hex characters.
@@ -32,40 +38,22 @@ config WG_PEER_PUBLIC_KEY
         Generate with: python build.py keygen
 
 config WG_PRESHARED_KEY
-    string "Peer 1 pre-shared key (hex, optional)"
+    string "Pre-shared key (hex, optional)"
     default ""
     help
         Optional 32-byte pre-shared key as 64 hex characters.
         Leave empty for no PSK (all-zero).
         Generate with: python build.py keygen --psk
 
-config WG_PEER2_PUBLIC_KEY
-    string "Peer 2 public key (hex)"
-    default ""
-    help
-        Remote peer 2 static public X25519 key as 64 hex characters.
-        Leave empty to disable peer 2.
-
-config WG_PEER2_PRESHARED_KEY
-    string "Peer 2 pre-shared key (hex, optional)"
-    default ""
-    help
-        Optional 32-byte pre-shared key for peer 2.
-        Leave empty for no PSK (all-zero).
-
-endmenu
-
-menu "WireGuard Peer 1"
-
 config WG_PEER1_ALLOWED_IP
-    string "Peer 1 AllowedIP (dotted quad)"
+    string "AllowedIP (dotted quad)"
     default "0.0.0.0"
     help
         Network address for peer 1's AllowedIPs entry.
         Default 0.0.0.0 routes all traffic through this peer.
 
 config WG_PEER1_ALLOWED_PREFIX
-    int "Peer 1 AllowedIP prefix length"
+    int "AllowedIP prefix length"
     default 0
     range 0 32
     help
@@ -73,7 +61,7 @@ config WG_PEER1_ALLOWED_PREFIX
         Default 0 = 0.0.0.0/0 (route everything).
 
 config WG_PEER1_KEEPALIVE
-    int "Peer 1 persistent keepalive (seconds)"
+    int "Persistent keepalive (seconds)"
     default 25
     range 0 3600
     help
@@ -82,27 +70,45 @@ config WG_PEER1_KEEPALIVE
 
 endmenu
 
-menu "WireGuard Peer 2"
-    depends on WG_PEER2_PUBLIC_KEY != ""
+menu "Peer 2"
+
+config WG_PEER2_PUBLIC_KEY
+    string "Public key (hex)"
+    default ""
+    help
+        Remote peer 2 static public X25519 key as 64 hex characters.
+        Leave empty to disable peer 2.
+
+config WG_PEER2_PRESHARED_KEY
+    string "Pre-shared key (hex, optional)"
+    default ""
+    help
+        Optional 32-byte pre-shared key for peer 2.
+        Leave empty for no PSK (all-zero).
 
 config WG_PEER2_ALLOWED_IP
-    string "Peer 2 AllowedIP (dotted quad)"
+    string "AllowedIP (dotted quad)"
     default "0.0.0.0"
+    depends on WG_PEER2_PUBLIC_KEY != ""
     help
         Network address for peer 2's AllowedIPs entry.
 
 config WG_PEER2_ALLOWED_PREFIX
-    int "Peer 2 AllowedIP prefix length"
+    int "AllowedIP prefix length"
     default 0
     range 0 32
+    depends on WG_PEER2_PUBLIC_KEY != ""
     help
         CIDR prefix length for peer 2's AllowedIPs entry.
 
 config WG_PEER2_KEEPALIVE
-    int "Peer 2 persistent keepalive (seconds)"
+    int "Persistent keepalive (seconds)"
     default 25
     range 0 3600
+    depends on WG_PEER2_PUBLIC_KEY != ""
     help
         Persistent keepalive interval in seconds (0 = disabled).
+
+endmenu
 
 endmenu
