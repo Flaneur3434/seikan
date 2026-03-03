@@ -31,6 +31,13 @@ is
    Rekey_Timeout_S      : constant Unsigned_64 := 5;
    Keepalive_Timeout_S  : constant Unsigned_64 := 10;
 
+   --  §6.3: erase all keys after 3×Reject_After_Time (540 s)
+   Key_Zeroing_After_S  : constant Unsigned_64 := 3 * Reject_After_Time_S;
+
+   --  §6.5: unresponsive peer detection threshold (15 s)
+   New_Handshake_Time_S : constant Unsigned_64 :=
+     Keepalive_Timeout_S + Rekey_Timeout_S;
+
    ---------------------------------------------------------------------------
    --  Peer Index — Direct-mapped array index (1..Max_Peers)
    ---------------------------------------------------------------------------
@@ -153,6 +160,15 @@ is
      Pre  => Session_Ready,
      Post => Session_Ready;
 
+   --  Record that we sent a DATA packet (not keepalive) to this peer.
+   --  Used by unresponsive peer detection (§6.5): if we sent data but
+   --  got no reply in New_Handshake_Time_S (15 s), initiate a rekey.
+   procedure Mark_Data_Sent (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
+   with
+     Global => (In_Out => (Peer_States, Mutex_State)),
+     Pre  => Session_Ready,
+     Post => Session_Ready;
+
    --  Record that we received a valid packet from this peer.
    procedure Mark_Received
      (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
@@ -239,6 +255,16 @@ is
      Pre  => Session_Ready,
      Post => Session_Ready;
 
+   --  Clear the Last_Handshake timestamp for a peer.
+   --  Called by the Zero_All_Keys handler at 540 s to prevent
+   --  the zeroing action from firing repeatedly.  After this call,
+   --  Tick will no longer see a stale Last_Handshake for this peer.
+   procedure Clear_Handshake_Timestamp (Peer : Peer_Index)
+   with
+     Global => (In_Out => (Peer_States, Mutex_State)),
+     Pre  => Session_Ready,
+     Post => Session_Ready;
+
 private
 
    type Peer_Mode is (Inactive, Established, Rekeying);
@@ -251,6 +277,7 @@ private
 
       --  Packet timestamps (data path)
       Last_Sent      : Timer.Clock.Timestamp := Timer.Clock.Never;
+      Last_Data_Sent : Timer.Clock.Timestamp := Timer.Clock.Never;
       Last_Received  : Timer.Clock.Timestamp := Timer.Clock.Never;
       Last_Handshake : Timer.Clock.Timestamp := Timer.Clock.Never;
 

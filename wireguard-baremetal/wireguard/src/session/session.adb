@@ -49,6 +49,7 @@ is
       Peers (Peer).Next            := (others => <>);
       Peers (Peer).Last_Handshake  := Peers (Peer).Current.Created_At;
       Peers (Peer).Last_Sent       := Peers (Peer).Current.Created_At;
+      Peers (Peer).Last_Data_Sent  := Timer.Clock.Never;
       Peers (Peer).Last_Received   := Peers (Peer).Current.Created_At;
       Peers (Peer).Rekey_Start     := Timer.Clock.Never;
       Peers (Peer).Rekey_Last_Sent := Timer.Clock.Never;
@@ -137,14 +138,41 @@ is
    begin
       Lock;
       Peers (Peer).Last_Sent := Now;
+
+      --  §6.4: reset attempt window on authenticated packet traversal.
+      --  Extends the 90 s rekey-attempt window as long as there is
+      --  actual traffic, preventing premature give-up.
+      if Peers (Peer).Mode = Rekeying
+        and then Now /= Timer.Clock.Never
+      then
+         Peers (Peer).Rekey_Start := Now;
+      end if;
+
       Unlock;
    end Mark_Sent;
+
+   procedure Mark_Data_Sent
+     (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
+   is
+   begin
+      Lock;
+      Peers (Peer).Last_Data_Sent := Now;
+      Unlock;
+   end Mark_Data_Sent;
 
    procedure Mark_Received (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    is
    begin
       Lock;
       Peers (Peer).Last_Received := Now;
+
+      --  §6.4: reset attempt window on authenticated packet traversal.
+      if Peers (Peer).Mode = Rekeying
+        and then Now /= Timer.Clock.Never
+      then
+         Peers (Peer).Rekey_Start := Now;
+      end if;
+
       Unlock;
    end Mark_Received;
 
@@ -180,10 +208,15 @@ is
       declare
          Saved_PKA : constant Unsigned_64 :=
            Peers (Peer).Persistent_Keepalive_S;
+         Saved_LH  : constant Timer.Clock.Timestamp :=
+           Peers (Peer).Last_Handshake;
       begin
          Peers (Peer) := (others => <>);
          --  Preserve configuration that outlives sessions
          Peers (Peer).Persistent_Keepalive_S := Saved_PKA;
+         --  Preserve Last_Handshake so the 540 s key-zeroing check
+         --  in Tick can fire after the session has been expired.
+         Peers (Peer).Last_Handshake := Saved_LH;
       end;
 
       Unlock;
@@ -228,6 +261,18 @@ is
       Peers (Peer).Persistent_Keepalive_S := Interval_S;
       Unlock;
    end Set_Persistent_Keepalive;
+
+   ---------------------------------------------------------------------------
+   --  Clear_Handshake_Timestamp
+   ---------------------------------------------------------------------------
+
+   procedure Clear_Handshake_Timestamp (Peer : Peer_Index)
+   is
+   begin
+      Lock;
+      Peers (Peer).Last_Handshake := Timer.Clock.Never;
+      Unlock;
+   end Clear_Handshake_Timestamp;
 
    ---------------------------------------------------------------------------
    --  Replay validation

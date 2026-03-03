@@ -3,7 +3,8 @@
 --  Pure decision: given current time + peer state, returns what C
 --  needs to do.  Priority is implicit in evaluation order:
 --
---    Session_Expired > Rekey_Timed_Out > Initiate_Rekey > Send_Keepalive
+--    Zero_All_Keys > Session_Expired > Rekey_Timed_Out >
+--    Initiate_Rekey > Send_Keepalive
 --
 --  Everything else (timestamps, replay, counters) is Ada-internal
 --  and happens passively in the normal packet flow.
@@ -19,7 +20,8 @@ is
       Send_Keepalive,
       Initiate_Rekey,
       Rekey_Timed_Out,
-      Session_Expired);
+      Session_Expired,
+      Zero_All_Keys);
 
    function Tick
      (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp) return Timer_Action
