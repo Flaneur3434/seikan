@@ -8,6 +8,8 @@
 #include "wg_keys.h"
 #include "sdkconfig.h"
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 /* ── Hex decode ─────────────────────────────────────────────────────── */
 
@@ -44,7 +46,24 @@ static bool hex_decode(const char *hex, uint8_t *out, size_t out_len)
     return true;
 }
 
-/* ── Public API ─────────────────────────────────────────────────────── */
+/**
+ * Parse a dotted-quad IPv4 string into a host-byte-order uint32.
+ * Returns 0 on parse failure or if str is NULL/empty.
+ */
+static uint32_t parse_ipv4(const char *str)
+{
+    if (str == NULL || str[0] == '\0') return 0;
+
+    unsigned int a, b, c, d;
+    char dummy;
+    /* sscanf with trailing %c catches invalid trailing text */
+    int n = sscanf(str, "%u.%u.%u.%u%c", &a, &b, &c, &d, &dummy);
+    if (n != 4) return 0;
+    if (a > 255 || b > 255 || c > 255 || d > 255) return 0;
+    return (a << 24) | (b << 16) | (c << 8) | d;
+}
+
+/* ── Key loading ─────────────────────────────────────────────────── */
 
 bool wg_get_static_private_key(uint8_t out[WG_KEY_LEN])
 {
@@ -80,4 +99,96 @@ bool wg_get_preshared_key(uint8_t out[WG_KEY_LEN])
     memset(out, 0, WG_KEY_LEN);
     return false;
 #endif
+}
+
+bool wg_get_peer2_public_key(uint8_t out[WG_KEY_LEN])
+{
+#ifdef CONFIG_WG_PEER2_PUBLIC_KEY
+    const char *hex = CONFIG_WG_PEER2_PUBLIC_KEY;
+    if (hex[0] == '\0') {
+        memset(out, 0, WG_KEY_LEN);
+        return false;
+    }
+    return hex_decode(hex, out, WG_KEY_LEN);
+#else
+    memset(out, 0, WG_KEY_LEN);
+    return false;
+#endif
+}
+
+bool wg_get_peer2_preshared_key(uint8_t out[WG_KEY_LEN])
+{
+#ifdef CONFIG_WG_PEER2_PRESHARED_KEY
+    const char *hex = CONFIG_WG_PEER2_PRESHARED_KEY;
+    if (hex[0] == '\0') {
+        memset(out, 0, WG_KEY_LEN);
+        return false;
+    }
+    return hex_decode(hex, out, WG_KEY_LEN);
+#else
+    memset(out, 0, WG_KEY_LEN);
+    return false;
+#endif
+}
+
+/* ── Per-peer configuration ──────────────────────────────────────── */
+
+uint32_t wg_get_peer_allowed_ip(unsigned int peer)
+{
+    switch (peer) {
+    case 1:
+#ifdef CONFIG_WG_PEER1_ALLOWED_IP
+        return parse_ipv4(CONFIG_WG_PEER1_ALLOWED_IP);
+#else
+        return 0;
+#endif
+    case 2:
+#ifdef CONFIG_WG_PEER2_ALLOWED_IP
+        return parse_ipv4(CONFIG_WG_PEER2_ALLOWED_IP);
+#else
+        return 0;
+#endif
+    default:
+        return 0;
+    }
+}
+
+uint8_t wg_get_peer_allowed_prefix(unsigned int peer)
+{
+    switch (peer) {
+    case 1:
+#ifdef CONFIG_WG_PEER1_ALLOWED_PREFIX
+        return (uint8_t)CONFIG_WG_PEER1_ALLOWED_PREFIX;
+#else
+        return 0;
+#endif
+    case 2:
+#ifdef CONFIG_WG_PEER2_ALLOWED_PREFIX
+        return (uint8_t)CONFIG_WG_PEER2_ALLOWED_PREFIX;
+#else
+        return 0;
+#endif
+    default:
+        return 0;
+    }
+}
+
+uint16_t wg_get_peer_keepalive(unsigned int peer)
+{
+    switch (peer) {
+    case 1:
+#ifdef CONFIG_WG_PEER1_KEEPALIVE
+        return (uint16_t)CONFIG_WG_PEER1_KEEPALIVE;
+#else
+        return 25;
+#endif
+    case 2:
+#ifdef CONFIG_WG_PEER2_KEEPALIVE
+        return (uint16_t)CONFIG_WG_PEER2_KEEPALIVE;
+#else
+        return 25;
+#endif
+    default:
+        return 0;
+    }
 }

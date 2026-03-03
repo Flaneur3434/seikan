@@ -10,6 +10,7 @@
 
 #include "wg_commands.h"
 #include "wireguard.h"
+#include "wg_sessions.h" /* WG_MAX_PEERS */
 #include "packet_pool.h"
 #include "wg_netif.h"
 #include "wg_peer_table.h"
@@ -43,16 +44,28 @@ bool wg_echo_enabled(void)
 /**
  * 0xFF — Initiate an ESP32-side handshake.
  *
+ * Wire format:  [0xFF] [peer_id:1 (optional, default 1)]
+ *
  * The trigger packet carried no WireGuard payload; it just tells us
  * to build an initiation and send it to the peer that sent the trigger.
  */
-static void cmd_initiate_handshake(const wg_rx_msg_t *rx_msg)
+static void cmd_initiate_handshake(const wg_rx_msg_t *rx_msg, uint16_t len)
 {
-    ESP_LOGI(TAG, ">> CMD: Initiate handshake");
+    /* Optional peer index byte — default to peer 1 for backward compat */
+    unsigned int peer = 1;
+    if (len >= 2) {
+        peer = rx_msg->rx_buf->data[1];
+        if (peer == 0 || peer > WG_MAX_PEERS) {
+            ESP_LOGW(TAG, "CMD_INITIATE: invalid peer %u", peer);
+            return;
+        }
+    }
+
+    ESP_LOGI(TAG, ">> CMD: Initiate handshake (peer %u)", peer);
 
     uint16_t init_len = 0;
     packet_buffer_t *init_pkt =
-        (packet_buffer_t *)wg_create_initiation(1, &init_len);
+        (packet_buffer_t *)wg_create_initiation(peer, &init_len);
 
     if (init_pkt == NULL || init_len == 0)
     {
@@ -169,8 +182,8 @@ void wg_command_dispatch(uint8_t cmd, const wg_rx_msg_t *rx_msg)
     switch (cmd)
     {
     case WG_CMD_INITIATE_HANDSHAKE:
+        cmd_initiate_handshake(rx_msg, len);
         rx_pool_free(rx_msg->rx_buf);
-        cmd_initiate_handshake(rx_msg);
         break;
 
     case WG_CMD_SET_ECHO_MODE:
