@@ -70,60 +70,61 @@ bool wg_get_static_private_key(uint8_t out[WG_KEY_LEN])
 #endif
 }
 
-bool wg_get_peer_public_key(uint8_t out[WG_KEY_LEN])
+/**
+ * Helper: try to decode a hex key string.
+ * Returns false if hex is NULL, empty, or invalid.
+ */
+static bool try_hex_key(const char *hex, uint8_t *out)
 {
+    if (hex == NULL || hex[0] == '\0') {
+        memset(out, 0, WG_KEY_LEN);
+        return false;
+    }
+    return hex_decode(hex, out, WG_KEY_LEN);
+}
+
+bool wg_get_peer_public_key(unsigned int peer, uint8_t out[WG_KEY_LEN])
+{
+    switch (peer) {
+    case 1:
 #ifdef CONFIG_WG_PEER_PUBLIC_KEY
-    return hex_decode(CONFIG_WG_PEER_PUBLIC_KEY, out, WG_KEY_LEN);
+        return try_hex_key(CONFIG_WG_PEER_PUBLIC_KEY, out);
 #else
-    memset(out, 0, WG_KEY_LEN);
-    return false;
+        break;
 #endif
-}
-
-bool wg_get_preshared_key(uint8_t out[WG_KEY_LEN])
-{
-#ifdef CONFIG_WG_PRESHARED_KEY
-    const char *hex = CONFIG_WG_PRESHARED_KEY;
-    if (hex[0] == '\0') {
-        /* Empty string → no PSK, zero out */
-        memset(out, 0, WG_KEY_LEN);
-        return false;
-    }
-    return hex_decode(hex, out, WG_KEY_LEN);
-#else
-    memset(out, 0, WG_KEY_LEN);
-    return false;
-#endif
-}
-
-bool wg_get_peer2_public_key(uint8_t out[WG_KEY_LEN])
-{
+    case 2:
 #ifdef CONFIG_WG_PEER2_PUBLIC_KEY
-    const char *hex = CONFIG_WG_PEER2_PUBLIC_KEY;
-    if (hex[0] == '\0') {
-        memset(out, 0, WG_KEY_LEN);
-        return false;
-    }
-    return hex_decode(hex, out, WG_KEY_LEN);
+        return try_hex_key(CONFIG_WG_PEER2_PUBLIC_KEY, out);
 #else
+        break;
+#endif
+    default:
+        break;
+    }
     memset(out, 0, WG_KEY_LEN);
     return false;
-#endif
 }
 
-bool wg_get_peer2_preshared_key(uint8_t out[WG_KEY_LEN])
+bool wg_get_peer_preshared_key(unsigned int peer, uint8_t out[WG_KEY_LEN])
 {
-#ifdef CONFIG_WG_PEER2_PRESHARED_KEY
-    const char *hex = CONFIG_WG_PEER2_PRESHARED_KEY;
-    if (hex[0] == '\0') {
-        memset(out, 0, WG_KEY_LEN);
-        return false;
-    }
-    return hex_decode(hex, out, WG_KEY_LEN);
+    switch (peer) {
+    case 1:
+#ifdef CONFIG_WG_PRESHARED_KEY
+        return try_hex_key(CONFIG_WG_PRESHARED_KEY, out);
 #else
+        break;
+#endif
+    case 2:
+#ifdef CONFIG_WG_PEER2_PRESHARED_KEY
+        return try_hex_key(CONFIG_WG_PEER2_PRESHARED_KEY, out);
+#else
+        break;
+#endif
+    default:
+        break;
+    }
     memset(out, 0, WG_KEY_LEN);
     return false;
-#endif
 }
 
 /* ── Per-peer configuration ──────────────────────────────────────── */

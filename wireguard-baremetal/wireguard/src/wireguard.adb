@@ -79,61 +79,51 @@ is
          return C_False;
       end if;
 
-      --  Load and configure peer 1 from sdkconfig (required)
-      if WG_Keys.Get_Peer_Public_Key (Peer_Pub) = C_False then
-         return C_False;
-      end if;
+      --  Load and configure each peer from sdkconfig.
+      --  Peer 1 is required; peer 2+ are optional (skipped if no key).
+      for P in Session.Peer_Index loop
+         declare
+            C_Peer : constant Interfaces.C.unsigned :=
+              Interfaces.C.unsigned (P);
+         begin
+            if WG_Keys.Get_Peer_Public_Key (C_Peer, Peer_Pub) = C_True then
+               Handshake.Initialize_Peer
+                 (My_Peers (P), Peer_Pub, Init_Status);
+               if not Is_Success (Init_Status) then
+                  --  Peer 1 failure is fatal; others are skipped
+                  if P = 1 then
+                     return C_False;
+                  end if;
+               else
+                  Peer_Table.Set_Public_Key (P, Peer_Pub);
 
-      Handshake.Initialize_Peer (My_Peers (1), Peer_Pub, Init_Status);
-      if not Is_Success (Init_Status) then
-         return C_False;
-      end if;
+                  declare
+                     AIPs : Peer_Table.Allowed_IP_Array :=
+                       [others => (Addr => 0, Prefix_Len => 0)];
+                     Addr : constant Interfaces.Unsigned_32 :=
+                       Interfaces.Unsigned_32
+                         (WG_Keys.Get_Peer_Allowed_IP (C_Peer));
+                     Pfx  : constant Natural :=
+                       Natural (WG_Keys.Get_Peer_Allowed_Prefix (C_Peer));
+                  begin
+                     AIPs (1) := (Addr       => Addr,
+                                  Prefix_Len => Pfx);
+                     Peer_Table.Set_Allowed_IPs (P, AIPs, Count => 1);
+                  end;
 
-      Peer_Table.Set_Public_Key (1, Peer_Pub);
-
-      --  AllowedIPs for peer 1 from sdkconfig
-      declare
-         AIPs : Peer_Table.Allowed_IP_Array :=
-           [others => (Addr => 0, Prefix_Len => 0)];
-         Addr : constant Interfaces.Unsigned_32 :=
-           Interfaces.Unsigned_32 (WG_Keys.Get_Peer_Allowed_IP (1));
-         Pfx  : constant Natural :=
-           Natural (WG_Keys.Get_Peer_Allowed_Prefix (1));
-      begin
-         AIPs (1) := (Addr       => Addr,
-                      Prefix_Len => Pfx);
-         Peer_Table.Set_Allowed_IPs (1, AIPs, Count => 1);
-      end;
-
-      --  Persistent keepalive for peer 1 from sdkconfig
-      Session.Set_Persistent_Keepalive
-        (1, Interval_S =>
-           Interfaces.Unsigned_64 (WG_Keys.Get_Peer_Keepalive (1)));
-
-      --  Load and configure peer 2 from sdkconfig (optional)
-      if WG_Keys.Get_Peer2_Public_Key (Peer_Pub) = C_True then
-         Handshake.Initialize_Peer (My_Peers (2), Peer_Pub, Init_Status);
-         if Is_Success (Init_Status) then
-            Peer_Table.Set_Public_Key (2, Peer_Pub);
-
-            declare
-               AIPs : Peer_Table.Allowed_IP_Array :=
-                 [others => (Addr => 0, Prefix_Len => 0)];
-               Addr : constant Interfaces.Unsigned_32 :=
-                 Interfaces.Unsigned_32 (WG_Keys.Get_Peer_Allowed_IP (2));
-               Pfx  : constant Natural :=
-                 Natural (WG_Keys.Get_Peer_Allowed_Prefix (2));
-            begin
-               AIPs (1) := (Addr       => Addr,
-                            Prefix_Len => Pfx);
-               Peer_Table.Set_Allowed_IPs (2, AIPs, Count => 1);
-            end;
-
-            Session.Set_Persistent_Keepalive
-              (2, Interval_S =>
-                 Interfaces.Unsigned_64 (WG_Keys.Get_Peer_Keepalive (2)));
-         end if;
-      end if;
+                  Session.Set_Persistent_Keepalive
+                    (P, Interval_S =>
+                       Interfaces.Unsigned_64
+                         (WG_Keys.Get_Peer_Keepalive (C_Peer)));
+               end if;
+            else
+               --  Peer 1 must have a key configured
+               if P = 1 then
+                  return C_False;
+               end if;
+            end if;
+         end;
+      end loop;
 
       --  Packet pools are initialized from C (packet_pool_init) with
       --  statically-allocated semaphore handles before wg_init is called.
