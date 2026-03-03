@@ -8,8 +8,7 @@
 #include "wg_keys.h"
 #include "sdkconfig.h"
 #include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include <lwip/ip4_addr.h>  /* ip4addr_aton */
 
 /* ── Hex decode ─────────────────────────────────────────────────────── */
 
@@ -48,19 +47,15 @@ static bool hex_decode(const char *hex, uint8_t *out, size_t out_len)
 
 /**
  * Parse a dotted-quad IPv4 string into a host-byte-order uint32.
+ * Uses lwIP's ip4addr_aton (returns NBO) then converts to HBO.
  * Returns 0 on parse failure or if str is NULL/empty.
  */
 static uint32_t parse_ipv4(const char *str)
 {
     if (str == NULL || str[0] == '\0') return 0;
-
-    unsigned int a, b, c, d;
-    char dummy;
-    /* sscanf with trailing %c catches invalid trailing text */
-    int n = sscanf(str, "%u.%u.%u.%u%c", &a, &b, &c, &d, &dummy);
-    if (n != 4) return 0;
-    if (a > 255 || b > 255 || c > 255 || d > 255) return 0;
-    return (a << 24) | (b << 16) | (c << 8) | d;
+    ip4_addr_t addr;
+    if (!ip4addr_aton(str, &addr)) return 0;
+    return lwip_ntohl(ip4_addr_get_u32(&addr));
 }
 
 /* ── Key loading ─────────────────────────────────────────────────── */
