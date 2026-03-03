@@ -130,6 +130,11 @@ class PeerState:
     # an empty transport packet every N seconds to keep NAT mappings open.
     persistent_keepalive_s: int = 0
 
+    # Jitter added to rekey retry interval (0..2 seconds).
+    # Per §6.1: prevents lock-step retransmissions between peers.
+    # Generated from random byte in set_rekey_flag on each retry.
+    rekey_jitter_s: int = 0
+
 
 def null_peer() -> PeerState:
     """Return a peer equivalent to Ada's Null_Peer."""
@@ -231,7 +236,7 @@ def tick(peer: PeerState, now: int) -> TimerAction:
             a.rekey_timed_out = True
         else:
             since_last_init = _elapsed(peer.rekey_last_sent, now)
-            if since_last_init >= REKEY_TIMEOUT:
+            if since_last_init >= REKEY_TIMEOUT + peer.rekey_jitter_s:
                 a.initiate_rekey = True
 
     # 6. Reactive keepalive (§6.5)
@@ -318,18 +323,25 @@ def expire_session(peer: PeerState) -> PeerState:
     return new_p
 
 
-def set_rekey_flag(peer: PeerState, now: int) -> PeerState:
+def set_rekey_flag(
+    peer: PeerState, now: int, *, jitter: int = 0,
+) -> PeerState:
     """Mark that a rekey attempt is in-flight.
 
     Mirrors ``Session.Set_Rekey_Flag``.
     Only sets ``rekey_attempt_start`` on the first call (preserves
-    the 90 s window on retries).  Always updates ``rekey_last_sent``.
+    the 90 s window on retries).  Always updates ``rekey_last_sent``
+    and ``rekey_jitter_s``.
+
+    *jitter* defaults to 0 for deterministic tests.  Ada generates
+    ``random_byte mod 3`` (0..2 s) via ``Crypto.Random.Fill_Random``.
     """
     p = deepcopy(peer)
     if not p.rekey_attempted:
         p.rekey_attempted = True
         p.rekey_attempt_start = now
     p.rekey_last_sent = now
+    p.rekey_jitter_s = jitter
     return p
 
 
@@ -399,6 +411,7 @@ def make_active_peer(
     rekey_last_sent: int = NEVER,
     is_initiator: bool = True,
     persistent_keepalive_s: int = 0,
+    rekey_jitter_s: int = 0,
 ) -> PeerState:
     """Create an active peer with a valid Current keypair for testing."""
     global _next_kp_id
@@ -429,6 +442,7 @@ def make_active_peer(
         active=True,
         is_initiator=is_initiator,
         persistent_keepalive_s=persistent_keepalive_s,
+        rekey_jitter_s=rekey_jitter_s,
     )
 
 
