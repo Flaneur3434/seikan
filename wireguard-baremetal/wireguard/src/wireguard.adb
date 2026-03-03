@@ -54,6 +54,8 @@ is
    ---------------------------------------------------------------------------
 
    function Init return C_bool is
+      use type Interfaces.C.C_bool;
+      use type Interfaces.Unsigned_32;
       Priv_Key    : Crypto.KX.Secret_Key;
       Peer_Pub    : Crypto.KX.Public_Key;
       Key_Pair    : Crypto.KX.Key_Pair;
@@ -77,9 +79,7 @@ is
          return C_False;
       end if;
 
-      --  Load and configure peer 1 from sdkconfig
-      --  (peer 2 will be added via WG_PEER2_PUBLIC_KEY when multi-peer
-      --  key loading is implemented)
+      --  Load and configure peer 1 from sdkconfig (required)
       if WG_Keys.Get_Peer_Public_Key (Peer_Pub) = C_False then
          return C_False;
       end if;
@@ -89,27 +89,54 @@ is
          return C_False;
       end if;
 
-      --  Register peer 1 in the peer table (cryptokey routing)
       Peer_Table.Set_Public_Key (1, Peer_Pub);
 
-      --  Configure AllowedIPs for peer 1.
-      --  0.0.0.0/0 = route all inner traffic through this peer.
-      --  When multi-peer is active, each peer gets a specific prefix.
+      --  AllowedIPs for peer 1 from sdkconfig
       declare
          AIPs : Peer_Table.Allowed_IP_Array :=
            [others => (Addr => 0, Prefix_Len => 0)];
+         Addr : constant Interfaces.Unsigned_32 :=
+           Interfaces.Unsigned_32 (WG_Keys.Get_Peer_Allowed_IP (1));
+         Pfx  : constant Natural :=
+           Natural (WG_Keys.Get_Peer_Allowed_Prefix (1));
       begin
-         AIPs (1) := (Addr => 0, Prefix_Len => 0);  --  0.0.0.0/0
+         AIPs (1) := (Addr       => Addr,
+                      Prefix_Len => Pfx);
          Peer_Table.Set_Allowed_IPs (1, AIPs, Count => 1);
       end;
 
+      --  Persistent keepalive for peer 1 from sdkconfig
+      Session.Set_Persistent_Keepalive
+        (1, Interval_S =>
+           Interfaces.Unsigned_64 (WG_Keys.Get_Peer_Keepalive (1)));
+
+      --  Load and configure peer 2 from sdkconfig (optional)
+      if WG_Keys.Get_Peer2_Public_Key (Peer_Pub) = C_True then
+         Handshake.Initialize_Peer (My_Peers (2), Peer_Pub, Init_Status);
+         if Is_Success (Init_Status) then
+            Peer_Table.Set_Public_Key (2, Peer_Pub);
+
+            declare
+               AIPs : Peer_Table.Allowed_IP_Array :=
+                 [others => (Addr => 0, Prefix_Len => 0)];
+               Addr : constant Interfaces.Unsigned_32 :=
+                 Interfaces.Unsigned_32 (WG_Keys.Get_Peer_Allowed_IP (2));
+               Pfx  : constant Natural :=
+                 Natural (WG_Keys.Get_Peer_Allowed_Prefix (2));
+            begin
+               AIPs (1) := (Addr       => Addr,
+                            Prefix_Len => Pfx);
+               Peer_Table.Set_Allowed_IPs (2, AIPs, Count => 1);
+            end;
+
+            Session.Set_Persistent_Keepalive
+              (2, Interval_S =>
+                 Interfaces.Unsigned_64 (WG_Keys.Get_Peer_Keepalive (2)));
+         end if;
+      end if;
+
       --  Packet pools are initialized from C (packet_pool_init) with
       --  statically-allocated semaphore handles before wg_init is called.
-
-      --  Configure persistent keepalive for peer 1.
-      --  25 seconds is the WireGuard recommended value for keeping
-      --  NAT mappings alive (§6.5).
-      Session.Set_Persistent_Keepalive (1, Interval_S => 25);
 
       --  Reset per-peer protocol state
       HS_States       := [others => Handshake.Empty_Handshake];

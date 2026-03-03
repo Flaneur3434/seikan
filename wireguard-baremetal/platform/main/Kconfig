@@ -24,19 +24,85 @@ config WG_STATIC_PRIVATE_KEY
         Generate with: python build.py keygen
 
 config WG_PEER_PUBLIC_KEY
-    string "Peer public key (hex)"
+    string "Peer 1 public key (hex)"
     default ""
     help
-        Remote peer static public X25519 key as 64 hex characters.
+        Remote peer 1 static public X25519 key as 64 hex characters.
         This is the Python test side's public key.
         Generate with: python build.py keygen
 
 config WG_PRESHARED_KEY
-    string "Pre-shared key (hex, optional)"
+    string "Peer 1 pre-shared key (hex, optional)"
     default ""
     help
         Optional 32-byte pre-shared key as 64 hex characters.
         Leave empty for no PSK (all-zero).
         Generate with: python build.py keygen --psk
+
+config WG_PEER2_PUBLIC_KEY
+    string "Peer 2 public key (hex)"
+    default ""
+    help
+        Remote peer 2 static public X25519 key as 64 hex characters.
+        Leave empty to disable peer 2.
+
+config WG_PEER2_PRESHARED_KEY
+    string "Peer 2 pre-shared key (hex, optional)"
+    default ""
+    help
+        Optional 32-byte pre-shared key for peer 2.
+        Leave empty for no PSK (all-zero).
+
+endmenu
+
+menu "WireGuard Peer 1"
+
+config WG_PEER1_ALLOWED_IP
+    string "Peer 1 AllowedIP (dotted quad)"
+    default "0.0.0.0"
+    help
+        Network address for peer 1's AllowedIPs entry.
+        Default 0.0.0.0 routes all traffic through this peer.
+
+config WG_PEER1_ALLOWED_PREFIX
+    int "Peer 1 AllowedIP prefix length"
+    default 0
+    range 0 32
+    help
+        CIDR prefix length for peer 1's AllowedIPs entry.
+        Default 0 = 0.0.0.0/0 (route everything).
+
+config WG_PEER1_KEEPALIVE
+    int "Peer 1 persistent keepalive (seconds)"
+    default 25
+    range 0 3600
+    help
+        Persistent keepalive interval in seconds (0 = disabled).
+        25 seconds is recommended for NAT traversal (§6.5).
+
+endmenu
+
+menu "WireGuard Peer 2"
+    depends on WG_PEER2_PUBLIC_KEY != ""
+
+config WG_PEER2_ALLOWED_IP
+    string "Peer 2 AllowedIP (dotted quad)"
+    default "0.0.0.0"
+    help
+        Network address for peer 2's AllowedIPs entry.
+
+config WG_PEER2_ALLOWED_PREFIX
+    int "Peer 2 AllowedIP prefix length"
+    default 0
+    range 0 32
+    help
+        CIDR prefix length for peer 2's AllowedIPs entry.
+
+config WG_PEER2_KEEPALIVE
+    int "Peer 2 persistent keepalive (seconds)"
+    default 25
+    range 0 3600
+    help
+        Persistent keepalive interval in seconds (0 = disabled).
 
 endmenu
