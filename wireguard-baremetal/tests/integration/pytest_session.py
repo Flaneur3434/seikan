@@ -2436,3 +2436,90 @@ class TestAttemptWindowReset:
         # rekey_attempt_start should be around the last receive
         a = tick(peer, 400)
         assert not a.rekey_timed_out
+
+
+class TestRekeyJitter:
+    """§6.1 last sentence: jitter on retransmission.
+
+    Retry interval is Rekey_Timeout (5 s) + jitter (0..2 s).
+    Prevents lock-step retransmissions between peers.
+    """
+
+    def test_zero_jitter_retries_at_5s(self):
+        """With jitter=0, retry fires at exactly 5 s (original behavior)."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+            rekey_attempted=True,
+            rekey_attempt_start=100,
+            rekey_last_sent=100,
+            rekey_jitter_s=0,
+        )
+        a = tick(peer, 104)
+        assert not a.initiate_rekey
+
+        a = tick(peer, 105)
+        assert a.initiate_rekey
+
+    def test_jitter_1_retries_at_6s(self):
+        """With jitter=1, retry fires at 6 s instead of 5 s."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+            rekey_attempted=True,
+            rekey_attempt_start=100,
+            rekey_last_sent=100,
+            rekey_jitter_s=1,
+        )
+        a = tick(peer, 105)
+        assert not a.initiate_rekey
+
+        a = tick(peer, 106)
+        assert a.initiate_rekey
+
+    def test_jitter_2_retries_at_7s(self):
+        """With jitter=2, retry fires at 7 s instead of 5 s."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+            rekey_attempted=True,
+            rekey_attempt_start=100,
+            rekey_last_sent=100,
+            rekey_jitter_s=2,
+        )
+        a = tick(peer, 106)
+        assert not a.initiate_rekey
+
+        a = tick(peer, 107)
+        assert a.initiate_rekey
+
+    def test_set_rekey_flag_sets_jitter(self):
+        """set_rekey_flag stores the jitter value."""
+        peer = make_active_peer(100, last_sent=100, last_received=100)
+        peer = set_rekey_flag(peer, 110, jitter=2)
+        assert peer.rekey_jitter_s == 2
+
+        # Re-flag (retry) with different jitter
+        peer = set_rekey_flag(peer, 117, jitter=1)
+        assert peer.rekey_jitter_s == 1
+
+    def test_jitter_does_not_affect_timeout(self):
+        """Jitter only affects retry interval, not 90 s attempt timeout."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+            rekey_attempted=True,
+            rekey_attempt_start=100,
+            rekey_last_sent=100,
+            rekey_jitter_s=2,
+        )
+        # 90 s timeout is still based on rekey_attempt_start, not jitter
+        a = tick(peer, 189)
+        assert not a.rekey_timed_out
+
+        a = tick(peer, 190)
+        assert a.rekey_timed_out

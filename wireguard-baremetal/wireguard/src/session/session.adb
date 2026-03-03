@@ -1,6 +1,7 @@
 --  Session - Implementation
 
 with Replay;
+with Crypto.Random;
 
 package body Session
   with
@@ -225,7 +226,13 @@ is
    procedure Set_Rekey_Flag
      (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    is
+      --  Generate 0..2 s of jitter from one random byte. Granularity in seconds.
+      Rand_Buf : Byte_Array (0 .. 0);
+      Jitter   : Unsigned_64;
    begin
+      Crypto.Random.Fill_Random (Rand_Buf);
+      Jitter := Unsigned_64 (Rand_Buf (0)) mod 3;
+
       Lock;
 
       case Peers (Peer).Mode is
@@ -236,10 +243,12 @@ is
             Peers (Peer).Mode            := Rekeying;
             Peers (Peer).Rekey_Start     := Now;
             Peers (Peer).Rekey_Last_Sent := Now;
+            Peers (Peer).Rekey_Jitter_S  := Jitter;
 
          when Rekeying =>
-            --  Already rekeying — only update retry timestamp.
+            --  Already rekeying — update retry timestamp and jitter.
             Peers (Peer).Rekey_Last_Sent := Now;
+            Peers (Peer).Rekey_Jitter_S  := Jitter;
 
          when Inactive =>
             --  No session to rekey — no-op.

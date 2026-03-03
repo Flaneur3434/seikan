@@ -159,12 +159,13 @@ is
                end if;
             end;
 
-            --  Retry gating: re-send initiation every 5 s
+            --  Retry gating: re-send initiation every 5 + jitter s
+            --  Jitter (0..2 s) prevents lock-step retransmissions (§6.1).
             declare
                Since_Last : constant Unsigned_64 :=
                  Elapsed (Peer.Rekey_Last_Sent, Now);
             begin
-               if Since_Last >= Rekey_Timeout_S then
+               if Since_Last >= Rekey_Timeout_S + Peer.Rekey_Jitter_S then
                   return Initiate_Rekey;
                end if;
             end;

@@ -299,6 +299,11 @@ private
       --  sends an empty transport packet every N seconds to keep
       --  NAT mappings and stateful firewalls open.
       Persistent_Keepalive_S : Unsigned_64 := 0;
+
+      --  Jitter added to rekey retry interval (0..2 seconds).
+      --  Per §6.1: prevents lock-step retransmissions between peers.
+      --  Generated from Fill_Random in Set_Rekey_Flag on each retry.
+      Rekey_Jitter_S : Unsigned_64 := 0;
    end record;
 
    --  Structural invariant as a ghost predicate.
