@@ -32,12 +32,15 @@ static const char *TAG = "wg_task";
 /* Static backing storage */
 static StaticQueue_t s_rx_queue_buf;
 static uint8_t s_rx_queue_storage[RX_QUEUE_DEPTH * sizeof(wg_rx_msg_t)];
-static StaticQueue_t s_inner_queue_buf;
-static uint8_t s_inner_queue_storage[INNER_QUEUE_DEPTH * sizeof(wg_inner_msg_t)];
+
+/* Per-peer inner queues: one queue per peer (1-indexed, slot 0 unused) */
+static StaticQueue_t s_inner_queue_bufs[WG_MAX_PEERS];
+static uint8_t s_inner_queue_storage[WG_MAX_PEERS]
+    [INNER_QUEUE_DEPTH * sizeof(wg_inner_msg_t)];
 
 /* Queue handles (extern'd in wg_task.h) */
 QueueHandle_t g_wg_rx_queue = NULL;
-QueueHandle_t g_wg_inner_queue = NULL;
+QueueHandle_t g_wg_inner_queues[WG_MAX_PEERS + 1] = {0};
 
 /* -----------------------------------------------------------------------
  * Peer endpoint table — Ada-owned (Peer_Table package).
@@ -167,74 +170,61 @@ static void wg_task(void *pvParameters)
             }
         }
 
-        // Drain inner plaintext queue from wg0 output callback.
-        // Each entry holds a TX pool buffer with plaintext at offset 16;
-        // wg_send() writes the WG header into [0..15] and encrypts in-place,
-        // then returns that same buffer as the encrypted packet.
-        //
-        // Auto-initiation: if data is pending but no session exists,
-        // trigger a handshake instead of draining (packets stay queued
-        // until session is established).  Rate-limited to once per 5 s.
-        //
-        // Cryptokey routing: each inner_msg carries peer_idx from the
-        // AllowedIPs lookup done in wg_netif_output().
-        if (uxQueueMessagesWaiting(g_wg_inner_queue) > 0)
+        // Per-peer inner TX queues: for each peer, if data is pending,
+        // either drain+encrypt (session active) or auto-handshake.
+        // Each peer has its own queue, eliminating head-of-line blocking
+        // where one inactive peer would stall another peer's traffic.
+        for (unsigned int peer = 1; peer <= WG_MAX_PEERS; peer++)
         {
-            /* Peek at the first message to determine the target peer */
-            wg_inner_msg_t peek_msg;
-            if (xQueuePeek(g_wg_inner_queue, &peek_msg, 0) == pdTRUE)
+            if (uxQueueMessagesWaiting(g_wg_inner_queues[peer]) == 0)
+                continue;
+
+            if (wg_session_is_active(peer))
             {
-                unsigned int peer = peek_msg.peer_idx;
-
-                if (wg_session_is_active(peer))
+                // Session active — drain and encrypt
+                while (xQueueReceive(g_wg_inner_queues[peer], &inner_msg, 0)
+                       == pdTRUE)
                 {
-                    // Session active — drain and encrypt normally
-                    while (xQueueReceive(g_wg_inner_queue, &inner_msg, 0)
-                           == pdTRUE)
+                    uint16_t tx_len = 0;
+                    packet_buffer_t *tx_pkt =
+                        (packet_buffer_t *)wg_send(
+                            peer,
+                            inner_msg.buf->data + WG_TRANSPORT_HEADER_SIZE,
+                            inner_msg.pt_len,
+                            &tx_len);
+
+                    tx_pool_free(inner_msg.buf);
+
+                    if (tx_pkt == NULL || tx_len == 0)
                     {
-                        unsigned int msg_peer = inner_msg.peer_idx;
-                        uint16_t tx_len = 0;
-                        packet_buffer_t *tx_pkt =
-                            (packet_buffer_t *)wg_send(
-                                msg_peer,
-                                inner_msg.buf->data + WG_TRANSPORT_HEADER_SIZE,
-                                inner_msg.pt_len,
-                                &tx_len);
+                        ESP_LOGW(TAG, "wg_send failed for peer %u", peer);
+                        continue;
+                    }
 
-                        tx_pool_free(inner_msg.buf);
-
-                        if (tx_pkt == NULL || tx_len == 0)
-                        {
-                            ESP_LOGW(TAG, "wg_send failed for inner packet");
-                            continue;
-                        }
-
-                        struct sockaddr_in endpoint =
-                            get_peer_endpoint(msg_peer);
-                        if (!send_outer_packet(tx_pkt, tx_len, &endpoint)) {
-                            ESP_LOGW(TAG,
-                                     "Failed to send encrypted inner packet");
-                        }
+                    struct sockaddr_in endpoint = get_peer_endpoint(peer);
+                    if (!send_outer_packet(tx_pkt, tx_len, &endpoint)) {
+                        ESP_LOGW(TAG,
+                                 "Failed to send encrypted packet for peer %u",
+                                 peer);
                     }
                 }
-                else
+            }
+            else
+            {
+                // No session — ask Ada to auto-initiate for this peer
+                void *init_pkt = NULL;
+                uint16_t init_len = 0;
+                wg_auto_handshake(peer, &init_pkt, &init_len);
+                if (init_pkt != NULL && init_len > 0)
                 {
-                    // No session — ask Ada to auto-initiate for this peer
-                    void *init_pkt = NULL;
-                    uint16_t init_len = 0;
-                    wg_auto_handshake(peer, &init_pkt, &init_len);
-                    if (init_pkt != NULL && init_len > 0)
-                    {
-                        struct sockaddr_in endpoint =
-                            get_peer_endpoint(peer);
-                        ESP_LOGI(TAG,
-                                 "Auto-initiating handshake for peer %u "
-                                 "(inner data pending)", peer);
-                        send_outer_packet((packet_buffer_t *)init_pkt,
-                                          init_len, &endpoint);
-                    }
-                    // Don't drain — packets stay queued until session up
+                    struct sockaddr_in endpoint = get_peer_endpoint(peer);
+                    ESP_LOGI(TAG,
+                             "Auto-initiating handshake for peer %u "
+                             "(inner data pending)", peer);
+                    send_outer_packet((packet_buffer_t *)init_pkt,
+                                      init_len, &endpoint);
                 }
+                // Don't drain — packets stay queued until session up
             }
         }
 
@@ -380,9 +370,13 @@ bool wg_task_init(void)
     g_wg_rx_queue = xQueueCreateStatic(
         RX_QUEUE_DEPTH, sizeof(wg_rx_msg_t),
         s_rx_queue_storage, &s_rx_queue_buf);
-    g_wg_inner_queue = xQueueCreateStatic(
-        INNER_QUEUE_DEPTH, sizeof(wg_inner_msg_t),
-        s_inner_queue_storage, &s_inner_queue_buf);
+
+    // Per-peer inner queues (1-indexed; slot 0 stays NULL)
+    for (unsigned int i = 0; i < WG_MAX_PEERS; i++) {
+        g_wg_inner_queues[i + 1] = xQueueCreateStatic(
+            INNER_QUEUE_DEPTH, sizeof(wg_inner_msg_t),
+            s_inner_queue_storage[i], &s_inner_queue_bufs[i]);
+    }
 
     // Initialize pools with static semaphores and Ada subsystem structures
     packet_pool_init();
