@@ -139,7 +139,7 @@ static void rx_custom_free(struct pbuf *p)
  * Copy the IP payload into a TX pool buffer at offset WG_HEADER_OFFSET so
  * that wg_task's wg_send() can write the WireGuard transport header into
  * those first 16 bytes and encrypt the whole thing in-place without moving
- * any data.  The buffer is then handed to wg_task via g_wg_inner_queue.
+ * any data.  The buffer is then handed to the peer's inner queue.
  * ----------------------------------------------------------------------- */
 
 static err_t wg_netif_output(struct netif *netif,
@@ -196,8 +196,9 @@ static err_t wg_netif_output(struct netif *netif,
         .peer_idx = (uint16_t)peer,
     };
 
-    if (xQueueSend(g_wg_inner_queue, &msg, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "Inner queue full - dropping wg0 packet");
+    if (xQueueSend(g_wg_inner_queues[peer], &msg, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Inner queue full for peer %u - dropping wg0 packet",
+                 peer);
         tx_pool_free(buf);
         return ERR_MEM;
     }

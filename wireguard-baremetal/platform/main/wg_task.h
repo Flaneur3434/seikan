@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include "packet_pool.h"
 #include "wireguard.h"
+#include "wg_sessions.h"   /* WG_MAX_PEERS */
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -42,8 +43,11 @@ typedef struct {
 /* Queue: IO -> WG (rx packets + initiation triggers) */
 extern QueueHandle_t g_wg_rx_queue;
 
-/* Queue: lwIP wg0 output -> WG (inner plaintext to encrypt) */
-extern QueueHandle_t g_wg_inner_queue;
+/* Per-peer queues: lwIP wg0 output -> WG (inner plaintext to encrypt).
+ * Indexed by 1-based peer index (slot 0 unused).  Each peer gets its
+ * own queue so the task loop can independently drain/auto-handshake
+ * each peer without head-of-line blocking. */
+extern QueueHandle_t g_wg_inner_queues[WG_MAX_PEERS + 1];
 
 /* --------------------------------------------------------------------
  * API
