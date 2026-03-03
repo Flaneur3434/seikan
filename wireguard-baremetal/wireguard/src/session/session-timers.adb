@@ -24,6 +24,7 @@ is
    --  Tick — Evaluate one peer, return what C should do
    --
    --  Priority is implicit in evaluation order (first match wins):
+   --    0. Key zeroing      (540 s — erase stale inactive peers)
    --    1. Session expired   (hard deadline — drop everything)
    --    2. Rekey timed out   (give up trying)
    --    3. Initiate rekey    (time/counter/unresponsive triggers)
@@ -48,19 +49,40 @@ is
             and then Peers (Peer_Idx).Mode = Rekeying
           then
             Elapsed (Peers (Peer_Idx).Rekey_Start, Now) < Rekey_Attempt_Time_S)
-       -- Established rekey: initiator-only for time, any peer for counter
+       -- Established rekey: initiator-only for time, any peer for
+       -- counter or unresponsive peer detection
        and then
          (if Tick'Result = Initiate_Rekey
             and then Peers (Peer_Idx).Mode = Established
           then
             Peers (Peer_Idx).Is_Initiator
             or else
-              Peers (Peer_Idx).Current.Send_Counter >= Rekey_After_Messages)
+              Peers (Peer_Idx).Current.Send_Counter >= Rekey_After_Messages
+            or else
+              (Peers (Peer_Idx).Last_Data_Sent /= Timer.Clock.Never
+               and then
+                 Peers (Peer_Idx).Last_Data_Sent
+                 > Peers (Peer_Idx).Last_Received
+               and then
+                 Elapsed (Peers (Peer_Idx).Last_Data_Sent, Now)
+                 >= New_Handshake_Time_S))
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
       Age  : Unsigned_64;
    begin
-      --  Inactive/invalid peers need nothing
+      --  Key zeroing at 3×Reject (540 s) — §6.3 last sentence
+      --  Even for inactive/expired peers: if Last_Handshake is still set,
+      --  erase all remaining cryptographic material after 540 s.
+      --  The Zero_All_Keys handler clears Last_Handshake to prevent
+      --  re-firing.
+      if Peer.Last_Handshake /= Timer.Clock.Never
+        and then not Peer.Active
+        and then Elapsed (Peer.Last_Handshake, Now) >= Key_Zeroing_After_S
+      then
+         return Zero_All_Keys;
+      end if;
+
+      --  Inactive/invalid peers need nothing (below 540 s threshold)
       if not Peer.Active or else not Peer.Current.Valid then
          return No_Action;
       end if;
@@ -107,6 +129,21 @@ is
                then
                   return Initiate_Rekey;
                end if;
+            end if;
+
+            --  Unresponsive peer detection — §6.5 last paragraph
+            --  Matches wireguard-go expiredNewHandshake (15 s).
+            --  If we sent DATA (not just keepalive) and got no
+            --  authenticated reply in New_Handshake_Time (15 s),
+            --  initiate a handshake to probe peer liveness.
+            --  Uses Last_Data_Sent (set only for real payloads)
+            --  so reactive keepalives don't trigger false positives.
+            if Peer.Last_Data_Sent /= Timer.Clock.Never
+              and then Peer.Last_Data_Sent > Peer.Last_Received
+              and then Elapsed (Peer.Last_Data_Sent, Now)
+                       >= New_Handshake_Time_S
+            then
+               return Initiate_Rekey;
             end if;
 
          when Rekeying    =>

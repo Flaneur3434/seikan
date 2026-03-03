@@ -537,6 +537,9 @@ is
             if not Build_And_Encrypt_TX (Peer, Data, Addr, Len) then
                return Null_Address;
             end if;
+            --  Track data-send timestamp (distinct from keepalive)
+            --  for unresponsive peer detection (§6.5).
+            Session.Mark_Data_Sent (Peer, Timer.Clock.Now);
          end;
       end if;
 
@@ -637,6 +640,15 @@ is
 
          when Session_Expired | Rekey_Timed_Out =>
             Session.Expire_Session (P);
+
+         when Zero_All_Keys =>
+            --  §6.3: 3×Reject_After_Time (540 s) — erase everything.
+            --  Session keys are already wiped by the 180 s expiry;
+            --  this zeroes handshake ephemeral material and clears
+            --  Last_Handshake so the action doesn't re-fire.
+            Session.Expire_Session (P);
+            Session.Clear_Handshake_Timestamp (P);
+            HS_States (P) := Handshake.Empty_Handshake;
 
          when Initiate_Rekey =>
             declare

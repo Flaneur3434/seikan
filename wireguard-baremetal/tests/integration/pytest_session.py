@@ -36,6 +36,8 @@ from wg_session import (
     REKEY_ATTEMPT_TIME,
     REKEY_TIMEOUT,
     KEEPALIVE_TIMEOUT,
+    KEY_ZEROING_AFTER_TIME,
+    NEW_HANDSHAKE_TIME,
     NEVER,
     # Types
     TimerAction,
@@ -48,6 +50,10 @@ from wg_session import (
     activate_next,
     expire_session,
     set_rekey_flag,
+    mark_sent,
+    mark_data_sent,
+    mark_received,
+    zero_all_keys,
     null_keypair,
     null_peer,
     # Test helpers
@@ -2165,3 +2171,268 @@ class TestEsp32PersistentKeepalive:
 
         finally:
             sock.close()
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Timer Known Gaps — wireguard-go parity
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestKeyZeroing:
+    """§6.3: key zeroing at 3×Reject_After_Time (540 s).
+
+    After the session expires at 180 s and the peer becomes inactive,
+    the timer should fire Zero_All_Keys at 540 s to erase all
+    remaining cryptographic material.
+    """
+
+    def test_zeroing_fires_at_540s(self):
+        """Inactive peer with stale Last_Handshake → Zero_All_Keys."""
+        # Create a peer, expire it (simulating 180 s expiry)
+        peer = make_active_peer(100, last_sent=100, last_received=100)
+        peer = expire_session(peer)
+        assert not peer.active
+        # last_handshake should be preserved after expire
+        assert peer.last_handshake == 100
+
+        # Before 540 s: no action
+        a = tick(peer, 100 + 539)
+        assert a == NO_ACTION
+
+        # At exactly 540 s: zero all keys
+        a = tick(peer, 100 + 540)
+        assert a.zero_all_keys
+
+    def test_zeroing_does_not_fire_for_active_peer(self):
+        """Active peer at 540 s should get Session_Expired, not zeroing."""
+        peer = make_active_peer(100, last_sent=100, last_received=100)
+        # At 540 s, the active peer should have expired long ago (180 s),
+        # but if somehow still active, Session_Expired takes priority.
+        a = tick(peer, 100 + 540)
+        assert a.session_expired
+
+    def test_zeroing_clears_handshake_timestamp(self):
+        """After zero_all_keys, last_handshake is cleared."""
+        peer = make_active_peer(100, last_sent=100, last_received=100)
+        peer = expire_session(peer)
+        peer = zero_all_keys(peer)
+        assert peer.last_handshake == NEVER
+        # No further zeroing fires
+        a = tick(peer, 100 + 1000)
+        assert a == NO_ACTION
+
+    def test_zeroing_preserves_persistent_keepalive(self):
+        """Persistent keepalive config survives zeroing."""
+        peer = make_active_peer(
+            100, last_sent=100, last_received=100,
+            persistent_keepalive_s=25,
+        )
+        peer = expire_session(peer)
+        peer = zero_all_keys(peer)
+        assert peer.persistent_keepalive_s == 25
+
+    def test_no_zeroing_when_handshake_never(self):
+        """Peer with last_handshake=NEVER never triggers zeroing."""
+        peer = PeerState()  # default: all NEVER, not active
+        a = tick(peer, 99999)
+        assert a == NO_ACTION
+
+
+class TestUnresponsivePeer:
+    """§6.5 last ¶: unresponsive peer detection.
+
+    Matches wireguard-go's expiredNewHandshake (15 s).
+    If we sent DATA but got no authenticated reply in 15 s,
+    initiate a rekey.
+    """
+
+    def test_unresponsive_triggers_rekey(self):
+        """Sent data, no reply in 15 s → Initiate_Rekey."""
+        peer = make_active_peer(
+            100,
+            last_sent=110,
+            last_data_sent=110,
+            last_received=105,  # received before data send
+            is_initiator=False,
+        )
+        # At 124 s (14 s after data send): no action
+        a = tick(peer, 124)
+        assert not a.initiate_rekey
+
+        # At 125 s (15 s after data send): initiate rekey
+        a = tick(peer, 125)
+        assert a.initiate_rekey
+
+    def test_no_trigger_when_reply_received(self):
+        """If we received after sending, no unresponsive detection."""
+        peer = make_active_peer(
+            100,
+            last_sent=110,
+            last_data_sent=110,
+            last_received=112,  # reply came after data send
+            is_initiator=False,
+        )
+        # 15 s after data send, but we received at 112 > 110
+        a = tick(peer, 125)
+        # last_data_sent (110) is NOT > last_received (112)
+        assert not a.initiate_rekey
+
+    def test_keepalive_only_no_trigger(self):
+        """Keepalive-only send (last_data_sent == NEVER): no trigger."""
+        peer = make_active_peer(
+            100,
+            last_sent=110,  # keepalive sent
+            last_data_sent=NEVER,  # no data sent
+            last_received=105,
+            is_initiator=False,
+        )
+        a = tick(peer, 130)
+        assert not a.initiate_rekey
+
+    def test_unresponsive_responder(self):
+        """Responder can also detect unresponsive peer."""
+        # This is important: unresponsive detection is NOT
+        # initiator-only.  Any peer that sent data and got no
+        # reply should be able to initiate a new handshake.
+        peer = make_active_peer(
+            100,
+            last_sent=110,
+            last_data_sent=110,
+            last_received=105,
+            is_initiator=False,
+        )
+        a = tick(peer, 125)
+        assert a.initiate_rekey
+
+    def test_unresponsive_initiator(self):
+        """Initiator also gets unresponsive detection."""
+        peer = make_active_peer(
+            100,
+            last_sent=110,
+            last_data_sent=110,
+            last_received=105,
+            is_initiator=True,
+        )
+        a = tick(peer, 125)
+        assert a.initiate_rekey
+
+    def test_unresponsive_not_in_rekeying_mode(self):
+        """Unresponsive detection only fires in Established mode."""
+        peer = make_active_peer(
+            100,
+            last_sent=110,
+            last_data_sent=110,
+            last_received=105,
+            is_initiator=False,
+            rekey_attempted=True,
+            rekey_attempt_start=111,
+            rekey_last_sent=111,
+        )
+        # In rekeying mode, the rekeying retry logic handles things
+        a = tick(peer, 125)
+        # Should get retry, not unresponsive (different branch)
+        assert a.initiate_rekey  # from the retry path, not unresponsive
+
+    def test_activate_next_resets_data_sent(self):
+        """After handshake completes, last_data_sent is cleared."""
+        peer = make_active_peer(
+            100,
+            last_sent=110,
+            last_data_sent=110,
+            last_received=105,
+        )
+        # Simulate new handshake complete
+        peer.next_kp = make_keypair(200, valid=True)
+        peer = activate_next(peer)
+        assert peer.last_data_sent == NEVER
+        # No unresponsive trigger after fresh handshake
+        a = tick(peer, 220)
+        assert not a.initiate_rekey
+
+
+class TestAttemptWindowReset:
+    """§6.4 last sentence: reset attempt window on authenticated
+    packet traversal.
+
+    While rekeying, each authenticated send/receive extends the 90 s
+    window, preventing premature give-up when traffic is flowing.
+    """
+
+    def test_mark_sent_extends_window(self):
+        """Sending while rekeying resets rekey_attempt_start."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+            rekey_attempted=True,
+            rekey_attempt_start=100,
+            rekey_last_sent=100,
+        )
+        # At 189 s: 89 s into attempt, not timed out yet
+        a = tick(peer, 189)
+        assert not a.rekey_timed_out
+
+        # At 190 s: 90 s → timed out!
+        a = tick(peer, 190)
+        assert a.rekey_timed_out
+
+        # But if we sent a packet at 150, window resets
+        peer2 = mark_sent(peer, 150)
+        assert peer2.rekey_attempt_start == 150
+
+        # At 190 s: only 40 s since reset → not timed out
+        a = tick(peer2, 190)
+        assert not a.rekey_timed_out
+
+        # Window exhausted at 150 + 90 = 240 s
+        a = tick(peer2, 240)
+        assert a.rekey_timed_out
+
+    def test_mark_received_extends_window(self):
+        """Receiving while rekeying resets rekey_attempt_start."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+            rekey_attempted=True,
+            rekey_attempt_start=100,
+            rekey_last_sent=100,
+        )
+        # Receive at 150 extends the window
+        peer = mark_received(peer, 150)
+        assert peer.rekey_attempt_start == 150
+
+        # Not timed out at 200 (50 s since reset, < 90 s)
+        a = tick(peer, 200)
+        assert not a.rekey_timed_out
+
+    def test_no_reset_when_not_rekeying(self):
+        """In Established mode, mark_sent doesn't touch attempt_start."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+        )
+        assert not peer.rekey_attempted
+        peer = mark_sent(peer, 120)
+        assert peer.rekey_attempt_start == NEVER  # unchanged
+
+    def test_traffic_keeps_retry_alive(self):
+        """Continuous traffic prevents 90 s timeout."""
+        peer = make_active_peer(
+            100,
+            last_sent=100,
+            last_received=100,
+            rekey_attempted=True,
+            rekey_attempt_start=100,
+            rekey_last_sent=100,
+        )
+        # Simulate traffic every 30 s for 300 s
+        for t in range(130, 400, 30):
+            peer = mark_sent(peer, t)
+            peer = mark_received(peer, t + 1)
+
+        # Still not timed out because window keeps resetting
+        # rekey_attempt_start should be around the last receive
+        a = tick(peer, 400)
+        assert not a.rekey_timed_out

@@ -33,6 +33,12 @@ REKEY_ATTEMPT_TIME: int = 90
 REKEY_TIMEOUT: int = 5
 KEEPALIVE_TIMEOUT: int = 10
 
+#  §6.3: erase all keys after 3×Reject_After_Time (540 s)
+KEY_ZEROING_AFTER_TIME: int = 3 * REJECT_AFTER_TIME
+
+#  §6.5: unresponsive peer detection threshold (15 s)
+NEW_HANDSHAKE_TIME: int = KEEPALIVE_TIMEOUT + REKEY_TIMEOUT
+
 #  Sentinel timestamp: "never happened"
 NEVER: int = 0
 
@@ -47,6 +53,7 @@ class TimerAction:
     initiate_rekey: bool = False
     session_expired: bool = False
     rekey_timed_out: bool = False
+    zero_all_keys: bool = False
 
     def is_empty(self) -> bool:
         return not (
@@ -54,6 +61,7 @@ class TimerAction:
             or self.initiate_rekey
             or self.session_expired
             or self.rekey_timed_out
+            or self.zero_all_keys
         )
 
     def __eq__(self, other: object) -> bool:
@@ -64,6 +72,7 @@ class TimerAction:
             and self.initiate_rekey == other.initiate_rekey
             and self.session_expired == other.session_expired
             and self.rekey_timed_out == other.rekey_timed_out
+            and self.zero_all_keys == other.zero_all_keys
         )
 
 
@@ -102,6 +111,7 @@ class PeerState:
     next_kp: Keypair = field(default_factory=null_keypair)
 
     last_sent: int = NEVER
+    last_data_sent: int = NEVER
     last_received: int = NEVER
     last_handshake: int = NEVER
 
@@ -153,6 +163,14 @@ def tick(peer: PeerState, now: int) -> TimerAction:
     """
     assert now > NEVER, "now must be > NEVER (0)"
 
+    # 0. Key zeroing at 3×Reject (540 s) — §6.3 last sentence
+    #    Even for inactive/expired peers: if last_handshake is set,
+    #    erase all remaining cryptographic material after 540 s.
+    if (not peer.active
+            and peer.last_handshake != NEVER
+            and _elapsed(peer.last_handshake, now) >= KEY_ZEROING_AFTER_TIME):
+        return TimerAction(zero_all_keys=True)
+
     if not peer.active or not peer.current.valid:
         return TimerAction()
 
@@ -192,6 +210,16 @@ def tick(peer: PeerState, now: int) -> TimerAction:
         # Rekeying, so the Established branch never fires again.
         # Matches wireguard-go keepKeyFreshReceiving().
         if age >= REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT - REKEY_TIMEOUT:
+            a.initiate_rekey = True
+
+    # 4b. Unresponsive peer detection — §6.5 last paragraph
+    #     Matches wireguard-go expiredNewHandshake (15 s).
+    #     If we sent DATA (not just keepalive) and got no reply
+    #     in NEW_HANDSHAKE_TIME (15 s), initiate a rekey.
+    if not peer.rekey_attempted:
+        if (peer.last_data_sent != NEVER
+                and peer.last_data_sent > peer.last_received
+                and _elapsed(peer.last_data_sent, now) >= NEW_HANDSHAKE_TIME):
             a.initiate_rekey = True
 
     # 5. Rekey retry / attempt timeout (§6.4)
@@ -256,6 +284,7 @@ def activate_next(peer: PeerState) -> PeerState:
     # a send/receive event, preventing the unresponsive-peer check
     # from immediately triggering another rekey.
     p.last_sent = p.current.created_at
+    p.last_data_sent = NEVER
     p.last_received = p.current.created_at
 
     # Clear rekey state
@@ -276,20 +305,17 @@ def expire_session(peer: PeerState) -> PeerState:
     p = deepcopy(peer)
 
     saved_pka = p.persistent_keepalive_s
+    saved_lh = p.last_handshake
 
-    p.current = null_keypair()
-    p.previous = null_keypair()
-    p.next_kp = null_keypair()
+    # Mirror Ada: Peers(Peer) := (others => <>); — reset ALL fields
+    # to defaults (Active=False, Mode=Inactive, etc.), then restore
+    # configuration that outlives sessions.
+    new_p = PeerState()
+    new_p.persistent_keepalive_s = saved_pka
+    # Preserve Last_Handshake so the 540 s key-zeroing check fires
+    new_p.last_handshake = saved_lh
 
-    # Clear rekey state to prevent stuck Rekey_Attempted = True
-    p.rekey_attempted = False
-    p.rekey_attempt_start = NEVER
-    p.rekey_last_sent = NEVER
-
-    # Preserve configuration that outlives sessions
-    p.persistent_keepalive_s = saved_pka
-
-    return p
+    return new_p
 
 
 def set_rekey_flag(peer: PeerState, now: int) -> PeerState:
@@ -307,6 +333,55 @@ def set_rekey_flag(peer: PeerState, now: int) -> PeerState:
     return p
 
 
+def mark_sent(peer: PeerState, now: int) -> PeerState:
+    """Record that we sent a packet.
+
+    Mirrors ``Session.Mark_Sent``.  Also resets the attempt window
+    when rekeying (§6.4 authenticated-packet-traversal extension).
+    """
+    p = deepcopy(peer)
+    p.last_sent = now
+    if p.rekey_attempted and now != NEVER:
+        p.rekey_attempt_start = now
+    return p
+
+
+def mark_data_sent(peer: PeerState, now: int) -> PeerState:
+    """Record that we sent a DATA packet (not keepalive).
+
+    Mirrors ``Session.Mark_Data_Sent``.
+    Used by unresponsive peer detection (§6.5).
+    """
+    p = deepcopy(peer)
+    p.last_data_sent = now
+    return p
+
+
+def mark_received(peer: PeerState, now: int) -> PeerState:
+    """Record that we received an authenticated packet.
+
+    Mirrors ``Session.Mark_Received``.  Also resets the attempt window
+    when rekeying (§6.4 authenticated-packet-traversal extension).
+    """
+    p = deepcopy(peer)
+    p.last_received = now
+    if p.rekey_attempted and now != NEVER:
+        p.rekey_attempt_start = now
+    return p
+
+
+def zero_all_keys(peer: PeerState) -> PeerState:
+    """Erase all cryptographic material and handshake timestamp.
+
+    Mirrors the ``Zero_All_Keys`` action handler in ``Dispatch_Timer``:
+    calls ``expire_session`` then clears ``last_handshake`` so the
+    540 s zeroing never fires again.
+    """
+    p = expire_session(peer)
+    p.last_handshake = NEVER
+    return p
+
+
 # ── Helpers for test setup ───────────────────────────────────────────
 
 _next_kp_id: int = 1
@@ -317,6 +392,7 @@ def make_active_peer(
     *,
     send_counter: int = 0,
     last_sent: int = NEVER,
+    last_data_sent: int = NEVER,
     last_received: int = NEVER,
     rekey_attempted: bool = False,
     rekey_attempt_start: int = NEVER,
@@ -344,6 +420,7 @@ def make_active_peer(
         previous=null_keypair(),
         next_kp=null_keypair(),
         last_sent=last_sent,
+        last_data_sent=last_data_sent,
         last_received=last_received,
         last_handshake=created_at,
         rekey_attempted=rekey_attempted,
