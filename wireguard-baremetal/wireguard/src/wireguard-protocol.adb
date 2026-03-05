@@ -6,6 +6,7 @@
 
 with Interfaces;   use Interfaces;
 with Utils;        use Utils;
+with Crypto.AEAD;
 with Crypto.KX;
 with Handshake;
 with Peer_Table;
@@ -190,9 +191,11 @@ is
       Action    : out WG_Action)
    with
      Refined_Post =>
-       Messages.RX_Pool.Is_Null (RX_Handle)
+       Session.Session_Ready
+       and then Messages.RX_Pool.Is_Null (RX_Handle)
        and then Messages.RX_Pool.Free_Count =
                   Messages.RX_Pool.Free_Count'Old + 1
+       and then (Action = Action_None or else Action = Action_Error)
        and then (if Action = Action_None
                  then Session.Is_Peer_Established (Peer_Out))
    is
@@ -584,6 +587,90 @@ is
             end;
       end case;
    end Dispatch_Timer;
+
+   ---------------------------------------------------------------------------
+   --  Dispatch_RX — Unified receive dispatch
+   ---------------------------------------------------------------------------
+
+   procedure Dispatch_RX
+     (RX_Ptr   : in out Utils.C_Buffer_Ptr;
+      PT_Len   : out Messages.Packet_Length;
+      Peer_Out : out Session.Peer_Index;
+      Action   : out WG_Action)
+   is
+      RX_Handle : Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length;
+   begin
+      PT_Len   := 0;
+      Peer_Out := 1;
+      Action   := Action_Error;
+
+      --  Acquire the RX buffer from C (takes ownership)
+      Messages.Acquire_RX_From_C (RX_Ptr, RX_Handle, RX_Length);
+
+      if RX_Length = 0
+        or else Natural (RX_Length) > Utils.Max_Packet_Size
+      then
+         Messages.RX_Pool.Free (RX_Handle);
+         declare
+            Null_Ptr : Utils.C_Buffer_Ptr;
+         begin
+            RX_Ptr := Null_Ptr;
+         end;
+         return;
+      end if;
+
+      --  Read message type from the first byte of the packet
+      declare
+         RX_View : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         RX_Msg  : constant Messages.Undefined_Message :=
+           Messages.Read_Undefined (RX_View);
+      begin
+         if not RX_Msg.Kind'Valid then
+            Messages.RX_Pool.Free (RX_Handle);
+            declare
+               Null_Ptr : Utils.C_Buffer_Ptr;
+            begin
+               RX_Ptr := Null_Ptr;
+            end;
+            return;
+         end if;
+
+         case RX_Msg.Kind is
+            when Messages.Kind_Handshake_Initiation =>
+               Handle_Initiation_RX (RX_Handle, RX_Length, Peer_Out, Action);
+
+            when Messages.Kind_Handshake_Response   =>
+               Handle_Response_RX (RX_Handle, RX_Length, Peer_Out, Action);
+
+            when Messages.Kind_Transport_Data       =>
+               --  Minimum packet: header + AEAD tag
+               if RX_Length < Unsigned_16 (Messages.Transport_Header_Size
+                                           + Crypto.AEAD.Tag_Bytes)
+               then
+                  Messages.RX_Pool.Free (RX_Handle);
+               else
+                  Handle_Transport_RX
+                    (RX_Handle, RX_Length, PT_Len, Peer_Out, Action);
+               end if;
+
+            when Messages.Kind_Cookie_Reply         =>
+               Messages.RX_Pool.Free (RX_Handle);
+         end case;
+
+         if Action = RX_Decryption_Success then
+            Messages.Release_RX_To_C (RX_Handle, RX_Ptr);
+         else
+            declare
+               dummy : Utils.C_Buffer_Ptr;
+            begin
+               --  Set RX_Ptr to null as the buffer has been free-ed
+               RX_Ptr := dummy;
+            end;
+         end if;
+      end;
+   end Dispatch_RX;
 
    ---------------------------------------------------------------------------
    --  Clear_HS_State
