@@ -140,6 +140,49 @@ is
      Messages_Wire.Message_Transport_Header;
 
    ---------------------
+   --  Message Kind
+   --
+   --  Enum representation matches the WireGuard wire byte values.
+   --  Use 'Valid to detect unknown/invalid type bytes.
+   ---------------------
+
+   type Message_Kind is
+     (Kind_Handshake_Initiation,
+      Kind_Handshake_Response,
+      Kind_Cookie_Reply,
+      Kind_Transport_Data);
+
+   for Message_Kind use
+     (Kind_Handshake_Initiation => 1,
+      Kind_Handshake_Response   => 2,
+      Kind_Cookie_Reply         => 3,
+      Kind_Transport_Data       => 4);
+
+   for Message_Kind'Size use 8;
+
+   ---------------------
+   --  Undefined Message (common header only)
+   --
+   --  Overlaid on raw packet memory to inspect the message kind
+   --  before parsing into a specific message record.
+   --  Check Kind'Valid before reading Kind.
+   ---------------------
+
+   type Undefined_Message is record
+      Kind     : Message_Kind := Kind_Handshake_Initiation;
+      Reserved : Reserved_Bytes := [others => 0];
+   end record
+   with Convention => C;
+
+   for Undefined_Message use
+     record
+       Kind     at 0 range 0 .. 7;
+       Reserved at 1 range 0 .. 23;
+     end record;
+
+   for Undefined_Message'Size use 32;
+
+   ---------------------
    --  MAC1 Prefix Types
    --
    --  MAC1 is computed over all message bytes preceding the Mac1 field.
@@ -171,19 +214,6 @@ is
      (Msg : Message_Handshake_Response)
       return Response_Mac1_Prefix_Bytes
    with Global => null;
-
-   ---------------------
-   --  Message Kind Detection
-   ---------------------
-
-   type Message_Kind is
-     (Kind_Handshake_Initiation,
-      Kind_Handshake_Response,
-      Kind_Cookie_Reply,
-      Kind_Transport_Data,
-      Kind_Unknown);
-
-   function Get_Message_Kind (Type_Byte : Unsigned_8) return Message_Kind;
 
    ---------------------
    --  C Interop - Packet Buffer Transfers
