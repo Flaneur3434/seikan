@@ -21,6 +21,7 @@ with Session.Timers;
 with Timer.Clock;
 with Peer_Table;
 with WG_Keys;
+with Wireguard.Protocol;
 
 package body Wireguard
   with SPARK_Mode => Off
@@ -144,151 +145,6 @@ is
    ---------------------------------------------------------------------------
    --  Helpers: Handshake sub-operations (body-local)
    ---------------------------------------------------------------------------
-
-   --  Handle_Initiation_RX — Process initiation, signal C to build response
-   --
-   --  Processes the initiation into a temp state, then identifies which
-   --  peer sent it via Peer_Table.Lookup_By_Key and stores the handshake
-   --  state in HS_States(P).  Remembers P in Last_Init_Peer for
-   --  Create_Response.
-   function Handle_Initiation_RX
-     (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length;
-      Peer_Out  : out Session.Peer_Index) return WG_Action
-   is
-      use Peer_Table.Lookup_Result;
-
-      HS_Err  : Handshake.Handshake_Error;
-      Temp_HS : Handshake.Handshake_State;
-      Lookup  : Peer_Table.Lookup_Result.Result;
-   begin
-      Peer_Out := 1;  --  default
-
-      --  Verify minimum length
-      if RX_Length < Unsigned_16 (Messages.Handshake_Init_Size) then
-         Messages.RX_Pool.Free (RX_Handle);
-         return Action_Error;
-      end if;
-
-      --  Copy message out of buffer, then process
-      declare
-         RX_View : constant Messages.RX_Buffer_View :=
-           Messages.RX_Pool.Borrow (RX_Handle);
-         Msg     : constant Messages.Message_Handshake_Initiation :=
-           Messages.Read_Initiation (RX_View);
-      begin
-         Handshake.Process_Initiation (Msg, Temp_HS, My_Identity, HS_Err);
-      end;
-
-      --  Done with RX buffer
-      Messages.RX_Pool.Free (RX_Handle);
-
-      if HS_Err /= Handshake.HS_OK then
-         return Action_Error;
-      end if;
-
-      --  Identify which peer sent the initiation via their static key
-      Lookup := Peer_Table.Lookup_By_Key (Temp_HS.Remote_Static);
-      if Lookup.Kind /= Is_Ok then
-         return Action_Error;
-      end if;
-
-      --  Store handshake state in the correct per-peer slot
-      declare
-         P : constant Session.Peer_Index := Lookup.Ok;
-      begin
-         HS_States (P) := Temp_HS;
-         Last_Init_Peer := P;
-         Peer_Out := P;
-      end;
-
-      --  Tell C to call wg_create_response()
-      return Action_Send_Response;
-   end Handle_Initiation_RX;
-
-   --  Handle_Response_RX — Initiator: process response, derive session
-   --
-   --  Identifies the peer from the response's receiver_index field
-   --  (offset 8, little-endian uint32) by matching against each peer's
-   --  HS_States.Local_Index.  Then processes with that peer's state.
-   function Handle_Response_RX
-     (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length;
-      Peer_Out  : out Session.Peer_Index) return WG_Action
-   is
-      use type Handshake.Handshake_State_Kind;
-
-      HS_Err      : Handshake.Handshake_Error;
-      Sess_Status : Status;
-      Found_Peer  : Session.Peer_Index := 1;
-      Found       : Boolean := False;
-      Msg         : Messages.Message_Handshake_Response;
-   begin
-      Peer_Out := 1;  --  default
-
-      --  Verify minimum length
-      if RX_Length < Unsigned_16 (Messages.Handshake_Response_Size) then
-         Messages.RX_Pool.Free (RX_Handle);
-         return Action_Error;
-      end if;
-
-      --  Read message from buffer
-      declare
-         RX_View : constant Messages.RX_Buffer_View :=
-           Messages.RX_Pool.Borrow (RX_Handle);
-      begin
-         Msg := Messages.Read_Response (RX_View);
-      end;
-
-      --  Done with RX buffer
-      Messages.RX_Pool.Free (RX_Handle);
-
-      --  Identify peer by receiver_index
-      declare
-         Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Msg.Receiver);
-      begin
-         for P in Session.Peer_Index loop
-            if HS_States (P).Kind = Handshake.State_Initiator_Sent
-              and then HS_States (P).Local_Index = Recv_Idx
-            then
-               Found_Peer := P;
-               Found := True;
-               exit;
-            end if;
-         end loop;
-      end;
-
-      if not Found then
-         return Action_Error;
-      end if;
-
-      --  Process response using the matched peer's handshake state
-      Handshake.Process_Response
-        (Msg,
-         HS_States (Found_Peer),
-         My_Identity,
-         My_Peers (Found_Peer),
-         HS_Err);
-
-      if HS_Err /= Handshake.HS_OK then
-         return Action_Error;
-      end if;
-
-      --  Initiator derives transport keys AND activates the new session
-      --  atomically (single lock hold) after Process_Response.
-      --  HS_States(P).Kind = State_Established at this point.
-      Session.Derive_And_Activate
-        (Peer   => Found_Peer,
-         HS     => HS_States (Found_Peer),
-         Now    => Timer.Clock.Now,
-         Result => Sess_Status);
-      if not Is_Success (Sess_Status) then
-         return Action_Error;
-      end if;
-
-      Peer_Out := Found_Peer;
-      return Action_None;
-   end Handle_Response_RX;
 
    ---------------------------------------------------------------------------
    --  Build_And_Encrypt_TX — Internal TX path
@@ -923,12 +779,12 @@ is
          else
             case RX_Msg.Kind is
                when Messages.Kind_Handshake_Initiation =>
-                  Result :=
-                    Handle_Initiation_RX (RX_Handle, RX_Length, Peer_Idx);
+                  Wireguard.Protocol.Handle_Initiation_RX
+                    (RX_Handle, RX_Length, Peer_Idx, Result);
 
                when Messages.Kind_Handshake_Response   =>
-                  Result :=
-                    Handle_Response_RX (RX_Handle, RX_Length, Peer_Idx);
+                  Wireguard.Protocol.Handle_Response_RX
+                    (RX_Handle, RX_Length, Peer_Idx, Result);
 
                when Messages.Kind_Transport_Data       =>
                   Result :=
