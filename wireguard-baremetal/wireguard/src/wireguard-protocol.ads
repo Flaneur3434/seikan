@@ -20,6 +20,7 @@ with Peer_Table;
 with Session;
 with Session.Timers;
 with Session_Keys;
+with Transport;
 with Utils;
 with WG_Types; use WG_Types;
 
@@ -196,17 +197,60 @@ is
                    Messages.TX_Pool.Borrow_State));
 
    ---------------------------------------------------------------------------
+   --  Transport TX — Build and encrypt data/keepalive packets
+   ---------------------------------------------------------------------------
+
+   --  Allocate a TX pool buffer, encrypt Payload (zero-length for
+   --  keepalive), and release the buffer to C for transmission.
+   --
+   --  On success: TX_Ptr points to the wire-ready buffer, TX_Len > 0.
+   --  On failure: TX_Ptr is null, TX_Len = 0.
+   --
+   --  Calls Session.Mark_Sent (resets keepalive timer).  The caller
+   --  is responsible for calling Session.Mark_Data_Sent when Payload
+   --  is non-empty (for unresponsive-peer detection, §6.5).
+   procedure Build_And_Encrypt_TX
+     (Peer    : Session.Peer_Index;
+      Payload : Utils.Byte_Array;
+      TX_Ptr  : out Utils.C_Buffer_Ptr;
+      TX_Len  : out Messages.Packet_Length;
+      Success : out Boolean)
+   with
+     Global =>
+       (In_Out =>
+          (Messages.TX_Pool.Pool_State,
+           Messages.TX_Pool.Borrow_State,
+           Session.Peer_States,
+           Session.Mutex_State)),
+     Pre    =>
+       Session.Session_Ready
+       and then Payload'Length in 0 .. Transport.Max_Payload,
+     Post   =>
+       Session.Session_Ready
+       and then
+         (if Success
+          then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
+               and then Messages.TX_Pool.Free_Count =
+                         Messages.TX_Pool.Free_Count'Old - 1
+          else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
+               and then Messages.TX_Pool.Free_Count =
+                         Messages.TX_Pool.Free_Count'Old);
+
+   ---------------------------------------------------------------------------
    --  Timer Dispatch — Execute timer-triggered protocol actions
    ---------------------------------------------------------------------------
 
    --  Execute the protocol action triggered by a peer's timer tick.
    --
-   --  Handles all Timer_Action values except Send_Keepalive (which
-   --  requires Transport.Encrypt_Packet, still in SPARK_Mode => Off).
-   --  For Send_Keepalive, this is a no-op — the C-facing shim handles
-   --  it by calling Build_And_Encrypt_TX locally.
+   --  Handles all Timer_Action values:
+   --    No_Action        — no-op
+   --    Send_Keepalive   — encrypts empty payload via Build_And_Encrypt_TX
+   --    Session_Expired  — expires session
+   --    Rekey_Timed_Out  — expires session
+   --    Zero_All_Keys    — erases session + handshake state
+   --    Initiate_Rekey   — sends handshake initiation
    --
-   --  On Initiate_Rekey: TX_Ptr/TX_Len contain the initiation message.
+   --  On Initiate_Rekey or Send_Keepalive: TX_Ptr/TX_Len may contain buffer.
    --  On all other arms:  TX_Ptr is null, TX_Len = 0.
    procedure Dispatch_Timer
      (Peer   : Session.Peer_Index;
