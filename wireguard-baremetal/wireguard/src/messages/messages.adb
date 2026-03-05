@@ -75,43 +75,33 @@ is
    procedure Release_TX_To_C
      (Handle : in out Buffer_Handle;
       Length : Packet_Length;
-      Addr   : out System.Address)
-   with SPARK_Mode => Off
+      Ptr    : out Utils.C_Buffer_Ptr)
    is
       Ref : Buffer_Ref;
    begin
-      if TX_Pool.Is_Null (Handle) then
-         Addr := System.Null_Address;
-         return;
-      end if;
-
-      --  Borrow mutably to set length and get address
+      --  Borrow mutably to set length
       TX_Pool.Borrow_Mut (Handle, Ref);
-      Ref.Buf_Ptr.Len := Length;
-      Addr := Ref.Buf_Ptr.all'Address;
+      declare
+         P : constant TX_Pool.Buffer_Ptr := TX_Pool.Get_Ptr (Ref);
+      begin
+         P.Len := Length;
+      end;
       TX_Pool.Return_Ref (Handle, Ref);
 
-      --  Null out the handle - C now owns the buffer
+      --  Extract C pointer, then release ownership to C
+      Ptr := TX_Pool.To_C_Ptr (Handle);
       TX_Pool.Reset_Handle (Handle);
    end Release_TX_To_C;
 
    procedure Acquire_RX_From_C
-     (Addr   : System.Address;
+     (Ptr    : Utils.C_Buffer_Ptr;
       Handle : out RX_Buffer_Handle;
       Length : out Packet_Length)
-   with SPARK_Mode => Off
    is
-      use System;
       View : RX_Buffer_View;
    begin
-      if Addr = Null_Address then
-         RX_Pool.Create_From_Address (Addr, Handle);
-         Length := 0;
-         return;
-      end if;
-
-      --  Create handle pointing to this buffer
-      RX_Pool.Create_From_Address (Addr, Handle);
+      --  Create handle from C pointer (takes ownership)
+      RX_Pool.From_C_Ptr (Ptr, Handle);
 
       --  Read length directly
       View := RX_Pool.Borrow (Handle);
@@ -119,23 +109,10 @@ is
    end Acquire_RX_From_C;
 
    procedure Release_RX_To_C
-     (Handle : in out RX_Buffer_Handle; Addr : out System.Address)
-   with SPARK_Mode => Off
-   is
-      use System;
-      Ref : RX_Buffer_Ref;
+     (Handle : in out RX_Buffer_Handle; Ptr : out Utils.C_Buffer_Ptr) is
    begin
-      if RX_Pool.Is_Null (Handle) then
-         Addr := Null_Address;
-         return;
-      end if;
-
-      --  Borrow mutably just to get the address
-      RX_Pool.Borrow_Mut (Handle, Ref);
-      Addr := Ref.Buf_Ptr.all'Address;
-      RX_Pool.Return_Ref (Handle, Ref);
-
-      --  Null out the handle - C now owns the buffer
+      --  Extract C pointer, then release ownership to C
+      Ptr := RX_Pool.To_C_Ptr (Handle);
       RX_Pool.Reset_Handle (Handle);
    end Release_RX_To_C;
 
@@ -190,7 +167,7 @@ is
       Bytes : constant Dst := Convert (Msg);
    begin
       for I in Bytes'Range loop
-         Ref.Buf_Ptr.Data (I) := Bytes (I);
+         TX_Pool.Get_Ptr (Ref).Data (I) := Bytes (I);
       end loop;
    end Write_Initiation;
 
@@ -204,7 +181,7 @@ is
       Bytes : constant Dst := Convert (Msg);
    begin
       for I in Bytes'Range loop
-         Ref.Buf_Ptr.Data (I) := Bytes (I);
+         TX_Pool.Get_Ptr (Ref).Data (I) := Bytes (I);
       end loop;
    end Write_Response;
 

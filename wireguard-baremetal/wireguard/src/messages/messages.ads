@@ -18,7 +18,6 @@
 --    This package owns the shared buffer pool for network packets.
 --    Zero-copy buffer handoff between Ada and C layers via wg_packet_t.
 
-with System;
 with Interfaces; use Interfaces;
 with Utils;
 with Utils.Memory_Pool;
@@ -31,20 +30,18 @@ is
    --  Packet Pools - Separate RX and TX buffer pools
    --
    --  Two pools ensure RX can never starve TX and vice versa.
-  --  Sized for transport data path packets.
-  --  1560 gives headroom for 1500-byte class paths.
+   --  Sized for transport data path packets.
+   --  1560 gives headroom for 1500-byte class paths.
    ---------------------------------------------------------------------------
 
-  Packet_Size : constant := 1560;
+   Packet_Size : constant := 1560;
    Pool_Size   : constant := 4;
 
-   package RX_Pool is new Utils.Memory_Pool
-     (Packet_Size => Packet_Size,
-      Pool_Size   => Pool_Size);
+   package RX_Pool is new
+     Utils.Memory_Pool (Packet_Size => Packet_Size, Pool_Size => Pool_Size);
 
-   package TX_Pool is new Utils.Memory_Pool
-     (Packet_Size => Packet_Size,
-      Pool_Size   => Pool_Size);
+   package TX_Pool is new
+     Utils.Memory_Pool (Packet_Size => Packet_Size, Pool_Size => Pool_Size);
 
    --  Re-export commonly used types (from TX_Pool; both pools share the
    --  same generic, so the types are structurally identical)
@@ -73,33 +70,26 @@ is
    ---------------------
 
    --  Field sizes
-   Key_Size       : constant := Messages_Wire.Key_Size;
-   Hash_Size      : constant := Messages_Wire.Hash_Size;
-   Aead_Tag_Size  : constant := Messages_Wire.Aead_Tag_Size;
-   Cookie_Size    : constant := Messages_Wire.Cookie_Size;
-   Mac_Size       : constant := Messages_Wire.Mac_Size;
-   Timestamp_Size : constant := Messages_Wire.Timestamp_Size;
+   Key_Size           : constant := Messages_Wire.Key_Size;
+   Hash_Size          : constant := Messages_Wire.Hash_Size;
+   Aead_Tag_Size      : constant := Messages_Wire.Aead_Tag_Size;
+   Cookie_Size        : constant := Messages_Wire.Cookie_Size;
+   Mac_Size           : constant := Messages_Wire.Mac_Size;
+   Timestamp_Size     : constant := Messages_Wire.Timestamp_Size;
    XChaCha_Nonce_Size : constant := Messages_Wire.XChaCha_Nonce_Size;
 
    --  Encrypted field sizes
-   Encrypted_Static_Size    : constant :=
-     Messages_Wire.Encrypted_Static_Size;
+   Encrypted_Static_Size    : constant := Messages_Wire.Encrypted_Static_Size;
    Encrypted_Timestamp_Size : constant :=
      Messages_Wire.Encrypted_Timestamp_Size;
-   Encrypted_Empty_Size     : constant :=
-     Messages_Wire.Encrypted_Empty_Size;
-   Encrypted_Cookie_Size    : constant :=
-     Messages_Wire.Encrypted_Cookie_Size;
+   Encrypted_Empty_Size     : constant := Messages_Wire.Encrypted_Empty_Size;
+   Encrypted_Cookie_Size    : constant := Messages_Wire.Encrypted_Cookie_Size;
 
    --  Message sizes
-   Handshake_Init_Size     : constant :=
-     Messages_Wire.Handshake_Init_Size;
-   Handshake_Response_Size : constant :=
-     Messages_Wire.Handshake_Response_Size;
-   Cookie_Reply_Size       : constant :=
-     Messages_Wire.Cookie_Reply_Size;
-   Transport_Header_Size   : constant :=
-     Messages_Wire.Transport_Header_Size;
+   Handshake_Init_Size     : constant := Messages_Wire.Handshake_Init_Size;
+   Handshake_Response_Size : constant := Messages_Wire.Handshake_Response_Size;
+   Cookie_Reply_Size       : constant := Messages_Wire.Cookie_Reply_Size;
+   Transport_Header_Size   : constant := Messages_Wire.Transport_Header_Size;
 
    ---------------------
    --  Byte Array Subtypes (re-exported)
@@ -114,14 +104,11 @@ is
    subtype Mac_Bytes is Messages_Wire.Mac_Bytes;
    subtype XChaCha_Nonce_Bytes is Messages_Wire.XChaCha_Nonce_Bytes;
 
-   subtype Encrypted_Static_Bytes is
-     Messages_Wire.Encrypted_Static_Bytes;
+   subtype Encrypted_Static_Bytes is Messages_Wire.Encrypted_Static_Bytes;
    subtype Encrypted_Timestamp_Bytes is
      Messages_Wire.Encrypted_Timestamp_Bytes;
-   subtype Encrypted_Empty_Bytes is
-     Messages_Wire.Encrypted_Empty_Bytes;
-   subtype Encrypted_Cookie_Bytes is
-     Messages_Wire.Encrypted_Cookie_Bytes;
+   subtype Encrypted_Empty_Bytes is Messages_Wire.Encrypted_Empty_Bytes;
+   subtype Encrypted_Cookie_Bytes is Messages_Wire.Encrypted_Cookie_Bytes;
 
    ---------------------
    --  Message Types (re-exported from backend-specific package)
@@ -133,11 +120,9 @@ is
    subtype Message_Handshake_Response is
      Messages_Wire.Message_Handshake_Response;
 
-   subtype Message_Cookie_Reply is
-     Messages_Wire.Message_Cookie_Reply;
+   subtype Message_Cookie_Reply is Messages_Wire.Message_Cookie_Reply;
 
-   subtype Message_Transport_Header is
-     Messages_Wire.Message_Transport_Header;
+   subtype Message_Transport_Header is Messages_Wire.Message_Transport_Header;
 
    ---------------------
    --  Message Kind
@@ -205,14 +190,12 @@ is
 
    --  Extract the bytes preceding Mac1 from a handshake initiation message.
    function To_Mac1_Prefix
-     (Msg : Message_Handshake_Initiation)
-      return Initiation_Mac1_Prefix_Bytes
+     (Msg : Message_Handshake_Initiation) return Initiation_Mac1_Prefix_Bytes
    with Global => null;
 
    --  Extract the bytes preceding Mac1 from a handshake response message.
    function To_Mac1_Prefix
-     (Msg : Message_Handshake_Response)
-      return Response_Mac1_Prefix_Bytes
+     (Msg : Message_Handshake_Response) return Response_Mac1_Prefix_Bytes
    with Global => null;
 
    ---------------------
@@ -240,44 +223,48 @@ is
    function Read_Response
      (View : RX_Buffer_View) return Message_Handshake_Response;
 
-   function Read_Undefined
-     (View : RX_Buffer_View) return Undefined_Message;
+   function Read_Undefined (View : RX_Buffer_View) return Undefined_Message;
 
    --  TX: write a message record into a TX buffer (copies)
    procedure Write_Initiation
-     (Ref : Buffer_Ref;
-      Msg : Message_Handshake_Initiation);
+     (Ref : Buffer_Ref; Msg : Message_Handshake_Initiation);
 
    procedure Write_Response
-     (Ref : Buffer_Ref;
-      Msg : Message_Handshake_Response);
+     (Ref : Buffer_Ref; Msg : Message_Handshake_Response);
 
    --  Release TX buffer to C layer for transmission.
    --  Handle becomes null; C now owns the buffer.
-   --  Returns address of wg_packet_t for C to use.
+   --  Returns C_Buffer_Ptr for C to use.
    procedure Release_TX_To_C
      (Handle : in out Buffer_Handle;
       Length : Packet_Length;
-      Addr   : out System.Address)
-     with SPARK_Mode => Off;
+      Ptr    : out Utils.C_Buffer_Ptr)
+   with
+     Pre  =>
+       not TX_Pool.Is_Null (Handle)
+       and then not TX_Pool.Is_Mutably_Borrowed (Handle),
+     Post => not Utils.Is_Null (Ptr) and then TX_Pool.Is_Null (Handle);
 
    --  Acquire RX buffer from C layer after reception.
    --  Takes ownership; C must not use the buffer after this.
    --  Length contains valid data length from C.
    procedure Acquire_RX_From_C
-     (Addr   : System.Address;
+     (Ptr    : Utils.C_Buffer_Ptr;
       Handle : out RX_Buffer_Handle;
       Length : out Packet_Length)
-     with SPARK_Mode => Off;
+   with Pre => not Utils.Is_Null (Ptr), Post => not RX_Pool.Is_Null (Handle);
 
    --  Release RX buffer back to C layer (no-copy netif RX path).
    --  Called by Handle_Transport_RX_Netif after in-place decryption.
    --  Ada gives up ownership; C wraps the buffer in a pbuf_custom for
    --  zero-copy injection into lwIP.  Handle becomes null after call.
    procedure Release_RX_To_C
-     (Handle : in out RX_Buffer_Handle;
-      Addr   : out System.Address)
-     with SPARK_Mode => Off;
+     (Handle : in out RX_Buffer_Handle; Ptr : out Utils.C_Buffer_Ptr)
+   with
+     Pre  =>
+       not RX_Pool.Is_Null (Handle)
+       and then not RX_Pool.Is_Mutably_Borrowed (Handle),
+     Post => not Utils.Is_Null (Ptr) and then RX_Pool.Is_Null (Handle);
 
    --  Note: Access buffer fields directly via Borrow/Borrow_Mut:
    --    View := TX_Pool.Borrow (Handle);
