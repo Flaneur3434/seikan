@@ -921,27 +921,32 @@ is
       declare
          RX_View  : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         Msg_Kind : constant Messages.Message_Kind :=
-           Messages.Get_Message_Kind (RX_View.Buf_Ptr.Data (0));
+         RX_Msg   : constant Messages.Undefined_Message
+           with Import, Address => RX_View.Buf_Ptr.Data'Address;
          Result   : WG_Action;
       begin
-         case Msg_Kind is
-            when Messages.Kind_Handshake_Initiation =>
-               Result := Handle_Initiation_RX
-                 (RX_Handle, RX_Length, Peer_Idx);
+         if not RX_Msg.Kind'Valid then
+            Messages.RX_Pool.Free (RX_Handle);
+            Result := Action_Error;
+         else
+            case RX_Msg.Kind is
+               when Messages.Kind_Handshake_Initiation =>
+                  Result := Handle_Initiation_RX
+                    (RX_Handle, RX_Length, Peer_Idx);
 
-            when Messages.Kind_Handshake_Response =>
-               Result := Handle_Response_RX
-                 (RX_Handle, RX_Length, Peer_Idx);
+               when Messages.Kind_Handshake_Response =>
+                  Result := Handle_Response_RX
+                    (RX_Handle, RX_Length, Peer_Idx);
 
-            when Messages.Kind_Transport_Data =>
-               Result := Handle_Transport_RX_Netif
-                 (RX_Handle, RX_Length, PT_Len, Peer_Idx);
+               when Messages.Kind_Transport_Data =>
+                  Result := Handle_Transport_RX_Netif
+                    (RX_Handle, RX_Length, PT_Len, Peer_Idx);
 
-            when Messages.Kind_Cookie_Reply | Messages.Kind_Unknown =>
-               Messages.RX_Pool.Free (RX_Handle);
-               Result := Action_Error;
-         end case;
+               when Messages.Kind_Cookie_Reply =>
+                  Messages.RX_Pool.Free (RX_Handle);
+                  Result := Action_Error;
+            end case;
+         end if;
 
          Peer_Out.all := Interfaces.C.unsigned (Peer_Idx);
          return Result;
