@@ -538,4 +538,176 @@ is
       HS_States (Peer) := Handshake.Empty_Handshake;
    end Clear_HS_State;
 
+   ---------------------------------------------------------------------------
+   --  Handle_Transport_RX
+   ---------------------------------------------------------------------------
+
+   procedure Handle_Transport_RX
+     (RX_Handle : in out Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length;
+      PT_Len    : out Messages.Packet_Length;
+      Peer_Out  : out Session.Peer_Index;
+      Action    : out WG_Action)
+   is
+      use Peer_Table.Source_Result;
+
+      Decrypt_Len    : Unsigned_16;
+      Counter        : Unsigned_64;
+      Decrypt_Result : Status;
+      Replay_OK      : Boolean;
+
+      KP            : Session.Keypair;
+      Found_Peer    : Session.Peer_Index := 1;
+      Found         : Boolean := False;
+      Used_Previous : Boolean := False;
+   begin
+      PT_Len   := 0;
+      Peer_Out := 1;
+      Action   := Action_Error;
+
+      --  Extract receiver_index from transport header (bytes 4-7, LE).
+      --  Find which peer's Current or Previous keypair has matching
+      --  Sender_Index.  Check Current first (common case), then Previous
+      --  (in-flight packets during rekey transition).
+      declare
+         RX_View    : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         Recv_Bytes : constant Bytes_4 :=
+           (RX_View.Buf_Ptr.Data (4),
+            RX_View.Buf_Ptr.Data (5),
+            RX_View.Buf_Ptr.Data (6),
+            RX_View.Buf_Ptr.Data (7));
+         Recv_Idx   : constant Unsigned_32 := To_U32 (Recv_Bytes);
+      begin
+         --  Pass 1: check Current keypair for each peer
+         for P in Session.Peer_Index loop
+            pragma Loop_Invariant (Session.Session_Ready);
+            declare
+               Peer_KP : Session.Keypair;
+            begin
+               Session.Get_Current (P, Peer_KP);
+               if Session.Is_Valid (Peer_KP)
+                 and then Peer_KP.Sender_Index = Recv_Idx
+               then
+                  Found_Peer := P;
+                  Found := True;
+                  KP := Peer_KP;
+                  exit;
+               end if;
+            end;
+         end loop;
+
+         --  Pass 2: check Previous keypair (fallback for rekey transition)
+         if not Found then
+            for P in Session.Peer_Index loop
+               pragma Loop_Invariant (Session.Session_Ready);
+               declare
+                  Prev_KP : Session.Keypair;
+               begin
+                  Session.Get_Previous (P, Prev_KP);
+                  if Session.Is_Valid (Prev_KP)
+                    and then Prev_KP.Sender_Index = Recv_Idx
+                  then
+                     Found_Peer := P;
+                     Found := True;
+                     Used_Previous := True;
+                     KP := Prev_KP;
+                     exit;
+                  end if;
+               end;
+            end loop;
+         end if;
+      end;
+
+      if not Found then
+         Messages.RX_Pool.Free (RX_Handle);
+         return;
+      end if;
+
+      Peer_Out := Found_Peer;
+
+      --  Decrypt in-place in the RX pool buffer
+      declare
+         RX_Ref : Messages.RX_Buffer_Ref;
+      begin
+         Messages.RX_Pool.Borrow_Mut (RX_Handle, RX_Ref);
+         Transport.Decrypt_In_Buffer
+           (Ref       => RX_Ref,
+            RX_Length => RX_Length,
+            Key       => Session.Receive_Key (KP),
+            Length    => Decrypt_Len,
+            Counter   => Counter,
+            Result    => Decrypt_Result);
+         Messages.RX_Pool.Return_Ref (RX_Handle, RX_Ref);
+      end;
+
+      if not Is_Success (Decrypt_Result) then
+         Messages.RX_Pool.Free (RX_Handle);
+         return;
+      end if;
+
+      --  Validate replay counter against the correct keypair slot.
+      --  Each keypair has its own counter space.
+      if Used_Previous then
+         Session.Validate_And_Update_Replay_Previous
+           (Peer     => Found_Peer,
+            Counter  => Counter,
+            Accepted => Replay_OK);
+      else
+         Session.Validate_And_Update_Replay
+           (Peer     => Found_Peer,
+            Counter  => Counter,
+            Accepted => Replay_OK);
+      end if;
+
+      if not Replay_OK then
+         Messages.RX_Pool.Free (RX_Handle);
+         return;
+      end if;
+
+      --  Authentic packet — mark received (resets keepalive timer)
+      declare
+         Now : constant Timer.Clock.Timestamp := Timer.Clock.Now;
+      begin
+         Session.Mark_Received (Found_Peer, Now);
+      end;
+
+      --  Zero-length plaintext = keepalive.  Authentic, already
+      --  Mark_Received'd.  Free the buffer; C gets nothing.
+      if Decrypt_Len = 0 then
+         Messages.RX_Pool.Free (RX_Handle);
+         Action := Action_None;
+         return;
+      end if;
+
+      --  Cryptokey routing: verify inner source IP is in the
+      --  sending peer's AllowedIPs.  Prevents a compromised peer
+      --  from spoofing addresses outside its AllowedIPs (§4).
+      --  IPv4 source address is at offset 12 in the IP header,
+      --  which starts at Transport_Header_Size within the buffer.
+      declare
+         RX_View   : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         Hdr_Off   : constant Natural := Messages.Transport_Header_Size;
+         Src_Bytes : constant Bytes_4 :=
+           (RX_View.Buf_Ptr.Data (Hdr_Off + 12),
+            RX_View.Buf_Ptr.Data (Hdr_Off + 13),
+            RX_View.Buf_Ptr.Data (Hdr_Off + 14),
+            RX_View.Buf_Ptr.Data (Hdr_Off + 15));
+         Src_IP    : constant Unsigned_32 := To_U32 (Src_Bytes);
+         Check     : constant Peer_Table.Source_Result.Result :=
+           Peer_Table.Check_Source (Found_Peer, Src_IP);
+      begin
+         if Check.Kind /= Is_Ok then
+            Messages.RX_Pool.Free (RX_Handle);
+            return;
+         end if;
+      end;
+
+      --  Decryption succeeded with real payload.
+      --  Leave the RX buffer alive — caller will Release_RX_To_C.
+      PT_Len := Messages.Packet_Length (Decrypt_Len);
+      Action := RX_Decryption_Success;
+   end Handle_Transport_RX;
+
 end Wireguard.Protocol;

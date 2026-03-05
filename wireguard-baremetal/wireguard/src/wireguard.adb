@@ -12,10 +12,10 @@ with Interfaces;   use Interfaces;
 with Interfaces.C; use Interfaces.C;
 with Utils;        use Utils;
 with WG_Types;     use WG_Types;
+with Crypto.AEAD;
 with Crypto.KX;
 with Handshake;
 with Messages;
-with Transport;
 with Session;
 with Session.Timers;
 with Timer.Clock;
@@ -357,193 +357,6 @@ is
    end Dispatch_Timer;
 
    ---------------------------------------------------------------------------
-   --  Handle_Transport_RX_Netif — Zero-copy variant of Handle_Transport_RX
-   --
-   --  Identifies the peer from the Transport header's receiver_index
-   --  (bytes 4-7), matching against each peer's Current keypair's
-   --  Sender_Index.  Decrypts in-place, validates replay, and hands
-   --  the buffer back to C.
-   ---------------------------------------------------------------------------
-
-   function Handle_Transport_RX_Netif
-     (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length;
-      PT_Len    : access Unsigned_16;
-      Peer_Out  : out Session.Peer_Index) return WG_Action
-   is
-      Decrypt_Len    : Unsigned_16;
-      Counter        : Unsigned_64;
-      Decrypt_Result : Status;
-      Replay_OK      : Boolean;
-
-      KP            : Session.Keypair;
-      PT_Act        : Natural := 0;
-      Found_Peer    : Session.Peer_Index := 1;
-      Found         : Boolean := False;
-      Used_Previous : Boolean := False;
-   begin
-      PT_Len.all := 0;
-      Peer_Out := 1;
-
-      --  Extract receiver_index from transport header (bytes 4-7, LE).
-      --  Find which peer's Current or Previous keypair has matching
-      --  Sender_Index.  Check Current first (common case), then Previous
-      --  (in-flight packets during rekey transition).
-      declare
-         RX_View    : constant Messages.RX_Buffer_View :=
-           Messages.RX_Pool.Borrow (RX_Handle);
-         Recv_Bytes : constant Utils.Bytes_4 :=
-           (RX_View.Buf_Ptr.Data (4),
-            RX_View.Buf_Ptr.Data (5),
-            RX_View.Buf_Ptr.Data (6),
-            RX_View.Buf_Ptr.Data (7));
-         Recv_Idx   : constant Unsigned_32 := Utils.To_U32 (Recv_Bytes);
-      begin
-         --  Pass 1: check Current keypair for each peer
-         for P in Session.Peer_Index loop
-            declare
-               Peer_KP : Session.Keypair;
-            begin
-               Session.Get_Current (P, Peer_KP);
-               if Session.Is_Valid (Peer_KP)
-                 and then Peer_KP.Sender_Index = Recv_Idx
-               then
-                  Found_Peer := P;
-                  Found := True;
-                  KP := Peer_KP;
-                  exit;
-               end if;
-            end;
-         end loop;
-
-         --  Pass 2: check Previous keypair (fallback for rekey transition)
-         if not Found then
-            for P in Session.Peer_Index loop
-               declare
-                  Prev_KP : Session.Keypair;
-               begin
-                  Session.Get_Previous (P, Prev_KP);
-                  if Session.Is_Valid (Prev_KP)
-                    and then Prev_KP.Sender_Index = Recv_Idx
-                  then
-                     Found_Peer := P;
-                     Found := True;
-                     Used_Previous := True;
-                     KP := Prev_KP;
-                     exit;
-                  end if;
-               end;
-            end loop;
-         end if;
-      end;
-
-      if not Found then
-         Messages.RX_Pool.Free (RX_Handle);
-         return Action_Error;
-      end if;
-
-      Peer_Out := Found_Peer;
-
-      --  Decrypt in-place in the RX pool buffer
-      declare
-         RX_Ref : Messages.RX_Buffer_Ref;
-      begin
-         Messages.RX_Pool.Borrow_Mut (RX_Handle, RX_Ref);
-
-         declare
-            Pkt : Byte_Array (0 .. Natural (RX_Length) - 1)
-            with Import, Address => Messages.RX_Pool.Get_Ptr (RX_Ref).Data'Address;
-         begin
-            Transport.Decrypt_Packet
-              (Key     => Session.Receive_Key (KP),
-               Packet  => Pkt,
-               Length  => Decrypt_Len,
-               Counter => Counter,
-               Result  => Decrypt_Result);
-
-            if Is_Success (Decrypt_Result) then
-               --  Use the correct replay filter for the slot that matched.
-               --  Each keypair has its own counter space: Current and Previous
-               --  slots are independent, so a counter valid in one may not
-               --  be valid in the other.
-               if Used_Previous then
-                  Session.Validate_And_Update_Replay_Previous
-                    (Peer     => Found_Peer,
-                     Counter  => Counter,
-                     Accepted => Replay_OK);
-               else
-                  Session.Validate_And_Update_Replay
-                    (Peer     => Found_Peer,
-                     Counter  => Counter,
-                     Accepted => Replay_OK);
-               end if;
-               if Replay_OK then
-                  Session.Mark_Received (Found_Peer, Timer.Clock.Now);
-               end if;
-               if not Replay_OK then
-                  Decrypt_Result := Error_Failed;
-               end if;
-            end if;
-
-            if Is_Success (Decrypt_Result) then
-               PT_Act := Natural (Decrypt_Len);
-            end if;
-         end;
-
-         Messages.RX_Pool.Return_Ref (RX_Handle, RX_Ref);
-      end;
-
-      if not Is_Success (Decrypt_Result) then
-         Messages.RX_Pool.Free (RX_Handle);
-         return Action_Error;
-      end if;
-
-      --  Zero-length plaintext = keepalive.  Authentic, already
-      --  Mark_Received'd.  Free the buffer here; C gets nothing.
-      if PT_Act = 0 then
-         Messages.RX_Pool.Free (RX_Handle);
-         return Action_None;
-      end if;
-
-      --  Cryptokey routing: verify inner source IP is in the
-      --  sending peer's AllowedIPs.  Prevents a compromised peer
-      --  from spoofing addresses outside its AllowedIPs (§4).
-      --  IPv4 source address is at offset 12 in the IP header,
-      --  which starts at Transport_Header_Size within the buffer.
-      declare
-         use Peer_Table.Source_Result;
-
-         RX_View   : constant Messages.RX_Buffer_View :=
-           Messages.RX_Pool.Borrow (RX_Handle);
-         Hdr_Off   : constant Natural := Messages.Transport_Header_Size;
-         Src_Bytes : constant Bytes_4 :=
-           (RX_View.Buf_Ptr.Data (Hdr_Off + 12),
-            RX_View.Buf_Ptr.Data (Hdr_Off + 13),
-            RX_View.Buf_Ptr.Data (Hdr_Off + 14),
-            RX_View.Buf_Ptr.Data (Hdr_Off + 15));
-         Src_IP    : constant Unsigned_32 := To_U32 (Src_Bytes);
-         Check     : constant Peer_Table.Source_Result.Result :=
-           Peer_Table.Check_Source (Found_Peer, Src_IP);
-      begin
-         if Check.Kind /= Is_Ok then
-            Messages.RX_Pool.Free (RX_Handle);
-            return Action_Error;
-         end if;
-      end;
-
-      --  Decryption succeeded with real payload.
-      --  Release the pool buffer to C.  C is now responsible for
-      --  calling rx_pool_free() (either directly or via pbuf_custom).
-      --  We do NOT call RX_Pool.Free here.
-      PT_Len.all := Unsigned_16 (PT_Act);
-
-      --  Return the physical RX buffer handle to C.
-      --  We deliberately leave RX_Handle as non-null so the address
-      --  survives; Receive_Netif will read it back via Release_RX_To_C.
-      return RX_Decryption_Success;
-   end Handle_Transport_RX_Netif;
-
-   ---------------------------------------------------------------------------
    --  Receive_Netif — Zero-copy-RX dispatch
    --
    --  Mirrors Receive but for the wg_netif path:
@@ -602,9 +415,24 @@ is
                     (RX_Handle, RX_Length, Peer_Idx, Result);
 
                when Messages.Kind_Transport_Data       =>
-                  Result :=
-                    Handle_Transport_RX_Netif
-                      (RX_Handle, RX_Length, PT_Len, Peer_Idx);
+                  --  Minimum packet: header (16) + AEAD tag
+                  if RX_Length < Unsigned_16 (Messages.Transport_Header_Size
+                                              + Crypto.AEAD.Tag_Bytes)
+                  then
+                     Messages.RX_Pool.Free (RX_Handle);
+                     Result := Action_Error;
+                  else
+                     declare
+                        Pkt_PT_Len : Messages.Packet_Length;
+                     begin
+                        Wireguard.Protocol.Handle_Transport_RX
+                          (RX_Handle, RX_Length,
+                           Pkt_PT_Len, Peer_Idx, Result);
+                        if Result = RX_Decryption_Success then
+                           PT_Len.all := Unsigned_16 (Pkt_PT_Len);
+                        end if;
+                     end;
+                  end if;
 
                when Messages.Kind_Cookie_Reply         =>
                   Messages.RX_Pool.Free (RX_Handle);

@@ -138,4 +138,24 @@ is
       end if;
    end Decrypt_Packet;
 
+   ---------------------------------------------------------------------------
+   --  Decrypt_In_Buffer
+   ---------------------------------------------------------------------------
+
+   procedure Decrypt_In_Buffer
+     (Ref       : Messages.RX_Buffer_Ref;
+      RX_Length : Unsigned_16;
+      Key       : Crypto.AEAD.Key_Buffer;
+      Length    : out Unsigned_16;
+      Counter   : out Unsigned_64;
+      Result    : out Status)
+   with SPARK_Mode => Off
+   is
+      --  Overlay the pool buffer's Data array for in-place decryption.
+      Pkt : Byte_Array (0 .. Natural (RX_Length) - 1)
+      with Import, Address => Messages.RX_Pool.Get_Ptr (Ref).Data'Address;
+   begin
+      Decrypt_Packet (Key, Pkt, Length, Counter, Result);
+   end Decrypt_In_Buffer;
+
 end Transport;

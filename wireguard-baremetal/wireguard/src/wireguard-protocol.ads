@@ -14,6 +14,7 @@
 --      - Last_Auto_Inits (per-peer rate-limit timestamps)
 --      - Initialized flag
 
+with Crypto.AEAD;
 with Handshake;
 with Messages;
 with Peer_Table;
@@ -276,6 +277,57 @@ is
           else TX_Len = 0
                and then Messages.TX_Pool.Free_Count =
                          Messages.TX_Pool.Free_Count'Old);
+
+   ---------------------------------------------------------------------------
+   --  Transport RX — Decrypt and validate incoming data packets
+   ---------------------------------------------------------------------------
+
+   --  Decrypt a transport data packet (type 4) in-place in the RX buffer.
+   --
+   --  Identifies the peer by receiver_index lookup against Current and
+   --  Previous keypair slots.  Decrypts in-place via Decrypt_In_Buffer,
+   --  validates replay, marks received, and checks cryptokey routing.
+   --
+   --  Buffer ownership:
+   --    On error or keepalive: RX buffer is freed (returned to pool).
+   --    On data success:       RX buffer is left alive (caller releases
+   --                            to C via Release_RX_To_C).
+   --
+   --  Returns:
+   --    RX_Decryption_Success — payload at Transport_Header_Size, PT_Len > 0
+   --    Action_None           — keepalive (PT_Len = 0), buffer freed
+   --    Action_Error          — failure, buffer freed
+   procedure Handle_Transport_RX
+     (RX_Handle : in out Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length;
+      PT_Len    : out Messages.Packet_Length;
+      Peer_Out  : out Session.Peer_Index;
+      Action    : out WG_Action)
+   with
+     Global =>
+       (Input    => Peer_Table.Peer_State,
+        In_Out   =>
+          (Messages.RX_Pool.Pool_State,
+           Messages.RX_Pool.Borrow_State,
+           Session.Peer_States,
+           Session.Mutex_State)),
+     Pre    =>
+       not Messages.RX_Pool.Is_Null (RX_Handle)
+       and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
+       and then Session.Session_Ready
+       and then Natural (RX_Length) <= Utils.Max_Packet_Size
+       and then Natural (RX_Length) >= Messages.Transport_Header_Size
+                                         + Crypto.AEAD.Tag_Bytes,
+     Post   =>
+       Session.Session_Ready
+       and then
+         (if Action = RX_Decryption_Success
+          then not Messages.RX_Pool.Is_Null (RX_Handle) and then PT_Len > 0
+               and then Messages.RX_Pool.Free_Count =
+                         Messages.RX_Pool.Free_Count'Old
+          else Messages.RX_Pool.Is_Null (RX_Handle) and then PT_Len = 0
+               and then Messages.RX_Pool.Free_Count =
+                         Messages.RX_Pool.Free_Count'Old + 1);
 
    ---------------------------------------------------------------------------
    --  State Helpers (for callers that need narrow Protocol_State access)
