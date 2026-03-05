@@ -264,7 +264,11 @@ is
      (Ptr    : Utils.C_Buffer_Ptr;
       Handle : out RX_Buffer_Handle;
       Length : out Packet_Length)
-   with Pre => not Utils.Is_Null (Ptr), Post => not RX_Pool.Is_Null (Handle);
+   with
+     Pre  => not Utils.Is_Null (Ptr),
+     Post =>
+       not RX_Pool.Is_Null (Handle)
+       and then not RX_Pool.Is_Mutably_Borrowed (Handle);
 
    --  Release RX buffer back to C layer (no-copy netif RX path).
    --  Called by Handle_Transport_RX_Netif after in-place decryption.

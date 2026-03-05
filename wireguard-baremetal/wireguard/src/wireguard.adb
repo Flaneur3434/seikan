@@ -12,13 +12,11 @@ with Interfaces;   use Interfaces;
 with Interfaces.C; use Interfaces.C;
 with Utils;        use Utils;
 with WG_Types;     use WG_Types;
-with Crypto.AEAD;
 with Crypto.KX;
 with Messages;
 with Session;
 with Session.Timers;
 with Timer.Clock;
-with Peer_Table;
 with WG_Keys;
 with Wireguard.Protocol;
 
@@ -315,12 +313,8 @@ is
    ---------------------------------------------------------------------------
    --  Receive_Netif — Zero-copy-RX dispatch
    --
-   --  Mirrors Receive but for the wg_netif path:
-   --    * Handshake messages are handled identically to Receive.
-   --    * Transport data (type 4): decrypts in-place, then hands the RX
-   --      pool buffer back to C via the return value.  Plaintext starts
-   --      at offset Transport_Header_Size (16) inside the buffer.
-   --      C receives PT_Len and uses buf->data + 16 directly.
+   --  Thin shim: delegates to Protocol.Dispatch_RX which acquires the
+   --  buffer, dispatches, and releases back to C on success.
    ---------------------------------------------------------------------------
 
    function Receive_Netif
@@ -328,9 +322,9 @@ is
       PT_Len   : access Unsigned_16;
       Peer_Out : access Interfaces.C.unsigned) return WG_Action
    is
-      RX_Handle : Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length;
-      Peer_Idx  : Session.Peer_Index := 1;
+      Peer_Idx : Session.Peer_Index;
+      Pkt_PT   : Messages.Packet_Length;
+      Result   : WG_Action;
    begin
       PT_Len.all := 0;
       Peer_Out.all := 0;
@@ -339,66 +333,18 @@ is
          return Action_Error;
       end if;
 
-      Messages.Acquire_RX_From_C (From_Address (RX_Buf), RX_Handle, RX_Length);
-
-      if Messages.RX_Pool.Is_Null (RX_Handle) then
-         return Action_Error;
-      end if;
-
-      if RX_Length = 0 then
-         Messages.RX_Pool.Free (RX_Handle);
-         return Action_Error;
-      end if;
-
       declare
-         RX_View : constant Messages.RX_Buffer_View :=
-           Messages.RX_Pool.Borrow (RX_Handle);
-         RX_Msg  : constant Messages.Undefined_Message :=
-           Messages.Read_Undefined (RX_View);
-         Result  : WG_Action;
+         RX_Ptr : Utils.C_Buffer_Ptr := From_Address (RX_Buf);
       begin
-         if not RX_Msg.Kind'Valid then
-            Messages.RX_Pool.Free (RX_Handle);
-            Result := Action_Error;
-         else
-            case RX_Msg.Kind is
-               when Messages.Kind_Handshake_Initiation =>
-                  Wireguard.Protocol.Handle_Initiation_RX
-                    (RX_Handle, RX_Length, Peer_Idx, Result);
-
-               when Messages.Kind_Handshake_Response   =>
-                  Wireguard.Protocol.Handle_Response_RX
-                    (RX_Handle, RX_Length, Peer_Idx, Result);
-
-               when Messages.Kind_Transport_Data       =>
-                  --  Minimum packet: header (16) + AEAD tag
-                  if RX_Length < Unsigned_16 (Messages.Transport_Header_Size
-                                              + Crypto.AEAD.Tag_Bytes)
-                  then
-                     Messages.RX_Pool.Free (RX_Handle);
-                     Result := Action_Error;
-                  else
-                     declare
-                        Pkt_PT_Len : Messages.Packet_Length;
-                     begin
-                        Wireguard.Protocol.Handle_Transport_RX
-                          (RX_Handle, RX_Length,
-                           Pkt_PT_Len, Peer_Idx, Result);
-                        if Result = RX_Decryption_Success then
-                           PT_Len.all := Unsigned_16 (Pkt_PT_Len);
-                        end if;
-                     end;
-                  end if;
-
-               when Messages.Kind_Cookie_Reply         =>
-                  Messages.RX_Pool.Free (RX_Handle);
-                  Result := Action_Error;
-            end case;
-         end if;
-
-         Peer_Out.all := Interfaces.C.unsigned (Peer_Idx);
-         return Result;
+         Wireguard.Protocol.Dispatch_RX (RX_Ptr, Pkt_PT, Peer_Idx, Result);
       end;
+
+      if Result = RX_Decryption_Success then
+         PT_Len.all := Unsigned_16 (Pkt_PT);
+      end if;
+
+      Peer_Out.all := Interfaces.C.unsigned (Peer_Idx);
+      return Result;
    end Receive_Netif;
 
 end Wireguard;

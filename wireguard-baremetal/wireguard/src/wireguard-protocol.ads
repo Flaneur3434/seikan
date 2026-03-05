@@ -66,7 +66,8 @@ is
      Post   =>
        Messages.RX_Pool.Is_Null (RX_Handle)
        and then Messages.RX_Pool.Free_Count =
-                  Messages.RX_Pool.Free_Count'Old + 1;
+                  Messages.RX_Pool.Free_Count'Old + 1
+       and then (Action = Action_Send_Response or else Action = Action_Error);
    --  Post: buffer is always freed (returned to pool, not released to C)
 
    --  Process a received handshake response (Initiator side).
@@ -97,9 +98,11 @@ is
        and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
        and then Session.Session_Ready,
      Post   =>
-       Messages.RX_Pool.Is_Null (RX_Handle)
+       Session.Session_Ready
+       and then Messages.RX_Pool.Is_Null (RX_Handle)
        and then Messages.RX_Pool.Free_Count =
-                  Messages.RX_Pool.Free_Count'Old + 1;
+                  Messages.RX_Pool.Free_Count'Old + 1
+       and then (Action = Action_None or else Action = Action_Error);
    --  Post: buffer is always freed (returned to pool, not released to C)
 
    ---------------------------------------------------------------------------
@@ -345,12 +348,54 @@ is
        Session.Session_Ready
        and then
          (if Action = RX_Decryption_Success
-          then not Messages.RX_Pool.Is_Null (RX_Handle) and then PT_Len > 0
+          then not Messages.RX_Pool.Is_Null (RX_Handle)
+               and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
+               and then PT_Len > 0
                and then Messages.RX_Pool.Free_Count =
                          Messages.RX_Pool.Free_Count'Old
           else Messages.RX_Pool.Is_Null (RX_Handle) and then PT_Len = 0
                and then Messages.RX_Pool.Free_Count =
                          Messages.RX_Pool.Free_Count'Old + 1);
+
+   ---------------------------------------------------------------------------
+   --  RX Dispatch — Unified receive dispatch
+   ---------------------------------------------------------------------------
+
+   --  Dispatch an incoming WireGuard packet by message type.
+   --
+   --  Acquires the RX buffer from C, reads the message kind, and
+   --  delegates to the appropriate handler (Initiation, Response,
+   --  Transport, Cookie).
+   --
+   --  Buffer lifecycle is fully managed internally:
+   --    On RX_Decryption_Success: buffer released back to C via
+   --      Release_RX_To_C.  PT_Len > 0.
+   --    On all other results: buffer freed to pool.  PT_Len = 0.
+   --
+   procedure Dispatch_RX
+     (RX_Ptr   : in out Utils.C_Buffer_Ptr;
+      PT_Len   : out Messages.Packet_Length;
+      Peer_Out : out Session.Peer_Index;
+      Action   : out WG_Action)
+   with
+     Global =>
+       (Input    => Peer_Table.Peer_State,
+        In_Out   =>
+          (Protocol_State,
+           Messages.RX_Pool.Pool_State,
+           Messages.RX_Pool.Borrow_State,
+           Session.Peer_States,
+           Session.Mutex_State,
+           Session_Keys.KP_State)),
+     Pre    =>
+       not Utils.Is_Null (RX_Ptr)
+       and then Session.Session_Ready,
+     Post   =>
+       Session.Session_Ready
+       and then
+         (if Action = RX_Decryption_Success
+          then not Utils.Is_Null (RX_Ptr)
+          else Utils.Is_Null (RX_Ptr));
 
    ---------------------------------------------------------------------------
    --  State Helpers (for callers that need narrow Protocol_State access)

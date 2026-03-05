@@ -175,9 +175,9 @@ is
    --  Pre: Source must not have active mutable borrow.
    procedure Reset_Handle (Handle : in out Buffer_Handle)
    with
-     Global  => (Proof_In => Borrow_State),
-     Pre     => not Is_Null (Handle) and then not Is_Mutably_Borrowed (Handle),
-     Post    => Is_Null (Handle);
+     Global => (Proof_In => Borrow_State),
+     Pre    => not Is_Null (Handle) and then not Is_Mutably_Borrowed (Handle),
+     Post   => Is_Null (Handle);
    --  Clear handle without returning buffer to pool.
    --  Used for C interop when ownership transfers to C layer.
    --  WARNING: Does NOT free the buffer - caller must ensure it will be freed.
@@ -264,7 +264,9 @@ is
    --  Extract a C-safe pointer from a handle (does not transfer ownership).
 
    procedure From_C_Ptr (Ptr : C_Buffer_Ptr; Handle : out Buffer_Handle)
-   with Pre => not Utils.Is_Null (Ptr), Post => not Is_Null (Handle);
+   with
+     Pre  => not Utils.Is_Null (Ptr),
+     Post => not Is_Null (Handle) and then not Is_Mutably_Borrowed (Handle);
    --  Create a handle from a C pointer (takes ownership from C).
    --  Caller must ensure Ptr came from a valid pool buffer.
 
