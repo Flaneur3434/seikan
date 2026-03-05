@@ -423,45 +423,32 @@ is
       end if;
       Ada_Action := Timer_Action'Val (Natural (Action));
 
-      case Ada_Action is
-         when No_Action                         =>
-            null;
-
-         when Session_Expired | Rekey_Timed_Out =>
-            Session.Expire_Session (P);
-
-         when Zero_All_Keys                     =>
-            --  §6.3: 3×Reject_After_Time (540 s) — erase everything.
-            --  Session keys are already wiped by the 180 s expiry;
-            --  this zeroes handshake ephemeral material and clears
-            --  Last_Handshake so the action doesn't re-fire.
-            Session.Expire_Session (P);
-            Session.Clear_Handshake_Timestamp (P);
-            Wireguard.Protocol.Clear_HS_State (P);
-
-         when Initiate_Rekey                    =>
-            declare
-               Len : aliased Unsigned_16 := 0;
-            begin
-               TX_Buf := Create_Initiation (Peer, Len'Access);
-               TX_Len := Len;
-               if TX_Buf /= System.Null_Address then
-                  Session.Set_Rekey_Flag (P, Timer.Clock.Now);
-               end if;
-            end;
-
-         when Send_Keepalive                    =>
-            declare
-               Empty : constant Byte_Array (1 .. 0) := [others => 0];
-               OK    : Boolean;
-            begin
-               OK := Build_And_Encrypt_TX (P, Empty, TX_Buf, TX_Len);
-               if not OK then
-                  TX_Buf := System.Null_Address;
-                  TX_Len := 0;
-               end if;
-            end;
-      end case;
+      if Ada_Action = Send_Keepalive then
+         --  Keepalive needs Build_And_Encrypt_TX (Transport layer,
+         --  SPARK_Mode => Off) — handle locally until chunk 5.
+         declare
+            Empty : constant Byte_Array (1 .. 0) := [others => 0];
+            OK    : Boolean;
+         begin
+            OK := Build_And_Encrypt_TX (P, Empty, TX_Buf, TX_Len);
+            if not OK then
+               TX_Buf := System.Null_Address;
+               TX_Len := 0;
+            end if;
+         end;
+      else
+         --  All other timer actions delegate to Protocol
+         declare
+            Ptr : Utils.C_Buffer_Ptr;
+            PL  : Messages.Packet_Length;
+         begin
+            Wireguard.Protocol.Dispatch_Timer (P, Ada_Action, Ptr, PL);
+            if not Utils.Is_Null (Ptr) then
+               TX_Buf := Utils.To_Address (Ptr);
+               TX_Len := Unsigned_16 (PL);
+            end if;
+         end;
+      end if;
    end Dispatch_Timer;
 
    ---------------------------------------------------------------------------

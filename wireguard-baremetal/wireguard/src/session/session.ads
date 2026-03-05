@@ -91,6 +91,12 @@ is
    with Ghost,
         Global => (Input => (Peer_States, Mutex_State));
 
+   --  True when the peer's session is in the Established state.
+   --  Bridges the private Peer_Mode into public contracts so callers
+   --  can express postconditions that depend on session activation.
+   function Is_Peer_Established (Peer : Peer_Index) return Boolean
+   with Ghost, Global => (Input => Peer_States);
+
    ---------------------------------------------------------------------------
    --  Initialization
    ---------------------------------------------------------------------------
@@ -125,7 +131,8 @@ is
      Pre  => Session_Ready,
      Post =>
        Session_Ready
-       and then HS.Kind = Handshake.State_Empty;
+       and then HS.Kind = Handshake.State_Empty
+       and then (if Is_Success (Result) then Is_Peer_Established (Peer));
 
    ---------------------------------------------------------------------------
    --  Session lookup
@@ -340,6 +347,9 @@ private
    is (Is_Mtx_Initialized
        and then not Is_Mtx_Locked
        and then All_Peers_Valid);
+
+   function Is_Peer_Established (Peer : Peer_Index) return Boolean
+   is (Peers (Peer).Mode = Established);
 
    --  Ghost bridge completions
    function Is_Mtx_Initialized return Boolean
