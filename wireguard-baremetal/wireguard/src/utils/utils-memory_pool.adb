@@ -25,7 +25,8 @@ is
    --  Ghost Function Bodies
    ---------------------------------------------------------------------------
 
-   function Free_Count return Valid_Count is (Free_Top + 1);
+   function Free_Count return Valid_Count
+   is (Free_Top + 1);
 
    function Is_Mutably_Borrowed (H : Buffer_Handle) return Boolean is
    begin
@@ -124,28 +125,24 @@ is
       return (Buf_Ptr => Handle.Ptr.all'Access);
    end Borrow;
 
-   procedure Borrow_Mut
-     (Handle : in out Buffer_Handle;
-      Ref    : out Buffer_Ref)
+   procedure Borrow_Mut (Handle : in out Buffer_Handle; Ref : out Buffer_Ref)
    is
    begin
       if Handle.Ptr = null then
-         Ref := (Buf_Ptr => null);
+         Ref.Buf_Ptr := null;
          return;
       end if;
       Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := True;
-      Ref := (Buf_Ptr => Handle.Ptr);
+      Ref.Buf_Ptr := Handle.Ptr;
    end Borrow_Mut;
 
    procedure Return_Ref
-     (Handle : in out Buffer_Handle;
-      Ref    : in out Buffer_Ref)
-   is
+     (Handle : in out Buffer_Handle; Ref : in out Buffer_Ref) is
    begin
       if Handle.Ptr /= null then
          Borrow_Flags (Pool_Index (Handle.Ptr.Index)) := False;
       end if;
-      Ref := (Buf_Ptr => null);
+      Ref.Buf_Ptr := null;
    end Return_Ref;
 
    ---------------------------------------------------------------------------
@@ -180,8 +177,8 @@ is
 
    procedure C_Free (Buf_Addr : System.Address) is
       type Buffer_Ptr is access all Buffer;
-      function To_Ptr is new Ada.Unchecked_Conversion
-        (System.Address, Buffer_Ptr);
+      function To_Ptr is new
+        Ada.Unchecked_Conversion (System.Address, Buffer_Ptr);
       Buf : Buffer_Ptr;
       Idx : Pool_Index;
    begin
@@ -212,11 +209,10 @@ is
    end C_Free;
 
    procedure Create_From_Address
-     (Addr   : System.Address;
-      Handle : out Buffer_Handle)
+     (Addr : System.Address; Handle : out Buffer_Handle)
    is
-      function To_Ptr is new Ada.Unchecked_Conversion
-        (System.Address, Buffer_Ptr);
+      function To_Ptr is new
+        Ada.Unchecked_Conversion (System.Address, Buffer_Ptr);
    begin
       if Addr = Null_Address then
          Handle.Ptr := null;
@@ -224,5 +220,26 @@ is
          Handle.Ptr := To_Ptr (Addr);
       end if;
    end Create_From_Address;
+
+   function Get_Ptr (R : Buffer_Ref) return not null Buffer_Ptr
+   is (R.Buf_Ptr);
+
+   function To_C_Ptr (H : Buffer_Handle) return C_Buffer_Ptr
+   with SPARK_Mode => Off
+   is
+      function To_Addr is new
+        Ada.Unchecked_Conversion (Buffer_Ptr, System.Address);
+   begin
+      return (Addr => To_Addr (H.Ptr));
+   end To_C_Ptr;
+
+   procedure From_C_Ptr (Ptr : C_Buffer_Ptr; Handle : out Buffer_Handle)
+   with SPARK_Mode => Off
+   is
+      function To_Ptr is new
+        Ada.Unchecked_Conversion (System.Address, Buffer_Ptr);
+   begin
+      Handle.Ptr := To_Ptr (Ptr.Addr);
+   end From_C_Ptr;
 
 end Utils.Memory_Pool;
