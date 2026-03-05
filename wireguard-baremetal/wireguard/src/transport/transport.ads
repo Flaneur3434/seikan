@@ -63,14 +63,14 @@ is
      Global => null,
      Pre    =>
        Packet'Length <= Utils.Max_Packet_Size --  give GNATprove a hard ceiling
-       and then Plaintext'Length in 0 .. Max_Payload --  0 = keepalive (empty payload)
+       and then
+         Plaintext'Length in 0 .. Max_Payload --  0 = keepalive (empty payload)
        and then
          --  Make sure payload can fit into packet buffer
          Plaintext'Length
          <= Packet'Length
             - (Messages.Transport_Header_Size + Crypto.AEAD.Tag_Bytes),
-     Post   =>
-       (if Result = Success then Length > 0);
+     Post   => (if Result = Success then Length > 0);
 
    ---------------------------------------------------------------------------
    --  Decrypt_Packet - Authenticate and decrypt a transport data message
@@ -103,31 +103,30 @@ is
    with
      Global => null,
      Pre    => Plaintext'Length in 0 .. Max_Payload,
-     Post   =>
-       (if Result = Success then Length > 0);
+     Post   => (if Result = Success then Length > 0);
 
    ---------------------------------------------------------------------------
-   --  Decrypt_Packet - Authenticate and decrypt a transport data message
+   --  Decrypt_In_Buffer - Zero-copy decrypt in an RX pool buffer
    --
-   --  Decrypts the payload in-place within Packet.  On success the
-   --  plaintext occupies:
-   --    Packet (Packet'First + Header .. Packet'First + Header + Length - 1)
-   --
-   --  Returns the counter from the packet header for the caller to
-   --  validate against the replay window.
+   --  Wraps Decrypt_Packet with an address overlay so the decryption
+   --  operates directly on the pool buffer's Data array.
+   --  Global => null tells SPARK the body has no side effects on
+   --  abstract state (the overlay is SPARK_Mode => Off internally).
    ---------------------------------------------------------------------------
 
-   procedure Decrypt_Packet
-     (Key     : Crypto.AEAD.Key_Buffer;
-      Packet  : in out Byte_Array;
-      Length  : out Unsigned_16;
-      Counter : out Unsigned_64;
-      Result  : out Status)
+   procedure Decrypt_In_Buffer
+     (Ref       : Messages.RX_Buffer_Ref;
+      RX_Length : Unsigned_16;
+      Key       : Crypto.AEAD.Key_Buffer;
+      Length    : out Unsigned_16;
+      Counter   : out Unsigned_64;
+      Result    : out Status)
    with
      Global => null,
      Pre    =>
-       Packet'Length <= Utils.Max_Packet_Size
-       and then Packet'Length >= Messages.Transport_Header_Size
-                                   + Crypto.AEAD.Tag_Bytes;
+       Natural (RX_Length) <= Utils.Max_Packet_Size
+       and then
+         Natural (RX_Length)
+         >= Messages.Transport_Header_Size + Crypto.AEAD.Tag_Bytes;
 
 end Transport;
