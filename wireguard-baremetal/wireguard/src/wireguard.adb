@@ -35,15 +35,15 @@ is
    --  Package State
    ---------------------------------------------------------------------------
 
-   My_Identity    : Handshake.Static_Identity;
-   Initialized    : Boolean := False;
+   My_Identity : Handshake.Static_Identity;
+   Initialized : Boolean := False;
 
    --  Per-peer state arrays (indexed by Session.Peer_Index = 1..Max_Peers)
    My_Peers        : array (Session.Peer_Index) of Handshake.Peer_Config;
-   HS_States       : array (Session.Peer_Index) of Handshake.Handshake_State
-     := [others => Handshake.Empty_Handshake];
-   Last_Auto_Inits : array (Session.Peer_Index) of Timer.Clock.Timestamp
-     := [others => Timer.Clock.Never];
+   HS_States       : array (Session.Peer_Index) of Handshake.Handshake_State :=
+     [others => Handshake.Empty_Handshake];
+   Last_Auto_Inits : array (Session.Peer_Index) of Timer.Clock.Timestamp :=
+     [others => Timer.Clock.Never];
 
    --  Remembers which peer's initiation we processed, so Create_Response
    --  can find the right HS_States slot without a peer parameter.
@@ -87,8 +87,7 @@ is
               Interfaces.C.unsigned (P);
          begin
             if WG_Keys.Get_Peer_Public_Key (C_Peer, Peer_Pub) = C_True then
-               Handshake.Initialize_Peer
-                 (My_Peers (P), Peer_Pub, Init_Status);
+               Handshake.Initialize_Peer (My_Peers (P), Peer_Pub, Init_Status);
                if not Is_Success (Init_Status) then
                   --  Peer 1 failure is fatal; others are skipped
                   if P = 1 then
@@ -106,13 +105,13 @@ is
                      Pfx  : constant Natural :=
                        Natural (WG_Keys.Get_Peer_Allowed_Prefix (C_Peer));
                   begin
-                     AIPs (1) := (Addr       => Addr,
-                                  Prefix_Len => Pfx);
+                     AIPs (1) := (Addr => Addr, Prefix_Len => Pfx);
                      Peer_Table.Set_Allowed_IPs (P, AIPs, Count => 1);
                   end;
 
                   Session.Set_Persistent_Keepalive
-                    (P, Interval_S =>
+                    (P,
+                     Interval_S =>
                        Interfaces.Unsigned_64
                          (WG_Keys.Get_Peer_Keepalive (C_Peer)));
                end if;
@@ -129,7 +128,7 @@ is
       --  statically-allocated semaphore handles before wg_init is called.
 
       --  Reset per-peer protocol state
-      HS_States       := [others => Handshake.Empty_Handshake];
+      HS_States := [others => Handshake.Empty_Handshake];
       Last_Auto_Inits := [others => Timer.Clock.Never];
 
       --  Session table is initialized from C via wg_session_init()
@@ -158,9 +157,9 @@ is
    is
       use Peer_Table.Lookup_Result;
 
-      HS_Err   : Handshake.Handshake_Error;
-      Temp_HS  : Handshake.Handshake_State;
-      Lookup   : Peer_Table.Lookup_Result.Result;
+      HS_Err  : Handshake.Handshake_Error;
+      Temp_HS : Handshake.Handshake_State;
+      Lookup  : Peer_Table.Lookup_Result.Result;
    begin
       Peer_Out := 1;  --  default
 
@@ -170,12 +169,12 @@ is
          return Action_Error;
       end if;
 
-      --  Process initiation into a temp handshake state (zero-copy)
+      --  Copy message out of buffer, then process
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         Msg     : constant Messages.Message_Handshake_Initiation
-         with Import, Address => RX_View.Buf_Ptr.Data'Address;
+         Msg     : constant Messages.Message_Handshake_Initiation :=
+           Messages.Read_Initiation (RX_View);
       begin
          Handshake.Process_Initiation (Msg, Temp_HS, My_Identity, HS_Err);
       end;
@@ -222,6 +221,7 @@ is
       Sess_Status : Status;
       Found_Peer  : Session.Peer_Index := 1;
       Found       : Boolean := False;
+      Msg         : Messages.Message_Handshake_Response;
    begin
       Peer_Out := 1;  --  default
 
@@ -231,18 +231,20 @@ is
          return Action_Error;
       end if;
 
-      --  Extract receiver_index from response to identify the peer.
-      --  Response layout: type(4) + reserved(3) + sender(4) + receiver(4).
-      --  Receiver is at byte offset 8, little-endian.
+      --  Read message from buffer
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         Recv_Bytes : constant Utils.Bytes_4 :=
-           (RX_View.Buf_Ptr.Data (8),
-            RX_View.Buf_Ptr.Data (9),
-            RX_View.Buf_Ptr.Data (10),
-            RX_View.Buf_Ptr.Data (11));
-         Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Recv_Bytes);
+      begin
+         Msg := Messages.Read_Response (RX_View);
+      end;
+
+      --  Done with RX buffer
+      Messages.RX_Pool.Free (RX_Handle);
+
+      --  Identify peer by receiver_index
+      declare
+         Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Msg.Receiver);
       begin
          for P in Session.Peer_Index loop
             if HS_States (P).Kind = Handshake.State_Initiator_Sent
@@ -256,24 +258,13 @@ is
       end;
 
       if not Found then
-         Messages.RX_Pool.Free (RX_Handle);
          return Action_Error;
       end if;
 
       --  Process response using the matched peer's handshake state
-      declare
-         RX_View : constant Messages.RX_Buffer_View :=
-           Messages.RX_Pool.Borrow (RX_Handle);
-         Msg     : Messages.Message_Handshake_Response
-         with Import, Address => RX_View.Buf_Ptr.Data'Address;
-      begin
-         Handshake.Process_Response
-           (Msg, HS_States (Found_Peer), My_Identity,
-            My_Peers (Found_Peer), HS_Err);
-      end;
-
-      --  Done with RX buffer
-      Messages.RX_Pool.Free (RX_Handle);
+      Handshake.Process_Response
+        (Msg, HS_States (Found_Peer), My_Identity,
+         My_Peers (Found_Peer), HS_Err);
 
       if HS_Err /= Handshake.HS_OK then
          return Action_Error;
@@ -322,7 +313,7 @@ is
       Enc_Result   : Status;
    begin
       TX_Addr := Null_Address;
-      TX_Len  := 0;
+      TX_Len := 0;
 
       --  Get a nonce counter (atomically increments under lock)
       Session.Increment_Send_Counter (Peer, Send_Counter);
@@ -379,8 +370,8 @@ is
    ---------------------------------------------------------------------------
 
    function Create_Initiation
-     (Peer_ID : Interfaces.C.unsigned;
-      Out_Len : access Unsigned_16) return System.Address
+     (Peer_ID : Interfaces.C.unsigned; Out_Len : access Unsigned_16)
+      return System.Address
    is
       use System;
 
@@ -397,9 +388,9 @@ is
       end if;
 
       --  Validate peer index
-      if Peer_ID not in
-        Interfaces.C.unsigned (Session.Peer_Index'First) ..
-        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      if Peer_ID
+         not in Interfaces.C.unsigned (Session.Peer_Index'First)
+              .. Interfaces.C.unsigned (Session.Peer_Index'Last)
       then
          return Null_Address;
       end if;
@@ -529,9 +520,9 @@ is
       end if;
 
       --  Validate peer index
-      if Peer_ID not in
-        Interfaces.C.unsigned (Session.Peer_Index'First) ..
-        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      if Peer_ID
+         not in Interfaces.C.unsigned (Session.Peer_Index'First)
+              .. Interfaces.C.unsigned (Session.Peer_Index'Last)
       then
          return Null_Address;
       end if;
@@ -589,9 +580,9 @@ is
       TX_Len := 0;
 
       --  Validate peer index
-      if Peer not in
-        Interfaces.C.unsigned (Session.Peer_Index'First) ..
-        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      if Peer
+         not in Interfaces.C.unsigned (Session.Peer_Index'First)
+              .. Interfaces.C.unsigned (Session.Peer_Index'Last)
       then
          return;
       end if;
@@ -637,9 +628,9 @@ is
       TX_Len := 0;
 
       --  Validate peer index
-      if Peer not in
-        Interfaces.C.unsigned (Session.Peer_Index'First) ..
-        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      if Peer
+         not in Interfaces.C.unsigned (Session.Peer_Index'First)
+              .. Interfaces.C.unsigned (Session.Peer_Index'Last)
       then
          return;
       end if;
@@ -652,13 +643,13 @@ is
       Ada_Action := Timer_Action'Val (Natural (Action));
 
       case Ada_Action is
-         when No_Action =>
+         when No_Action                         =>
             null;
 
          when Session_Expired | Rekey_Timed_Out =>
             Session.Expire_Session (P);
 
-         when Zero_All_Keys =>
+         when Zero_All_Keys                     =>
             --  §6.3: 3×Reject_After_Time (540 s) — erase everything.
             --  Session keys are already wiped by the 180 s expiry;
             --  this zeroes handshake ephemeral material and clears
@@ -667,7 +658,7 @@ is
             Session.Clear_Handshake_Timestamp (P);
             HS_States (P) := Handshake.Empty_Handshake;
 
-         when Initiate_Rekey =>
+         when Initiate_Rekey                    =>
             declare
                Len : aliased Unsigned_16 := 0;
             begin
@@ -678,7 +669,7 @@ is
                end if;
             end;
 
-         when Send_Keepalive =>
+         when Send_Keepalive                    =>
             declare
                Empty : constant Byte_Array (1 .. 0) := [others => 0];
                OK    : Boolean;
@@ -712,28 +703,28 @@ is
       Decrypt_Result : Status;
       Replay_OK      : Boolean;
 
-      KP         : Session.Keypair;
-      PT_Act     : Natural := 0;
-      Found_Peer : Session.Peer_Index := 1;
-      Found      : Boolean := False;
+      KP            : Session.Keypair;
+      PT_Act        : Natural := 0;
+      Found_Peer    : Session.Peer_Index := 1;
+      Found         : Boolean := False;
       Used_Previous : Boolean := False;
    begin
       PT_Len.all := 0;
-      Peer_Out   := 1;
+      Peer_Out := 1;
 
       --  Extract receiver_index from transport header (bytes 4-7, LE).
       --  Find which peer's Current or Previous keypair has matching
       --  Sender_Index.  Check Current first (common case), then Previous
       --  (in-flight packets during rekey transition).
       declare
-         RX_View : constant Messages.RX_Buffer_View :=
+         RX_View    : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
          Recv_Bytes : constant Utils.Bytes_4 :=
            (RX_View.Buf_Ptr.Data (4),
             RX_View.Buf_Ptr.Data (5),
             RX_View.Buf_Ptr.Data (6),
             RX_View.Buf_Ptr.Data (7));
-         Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Recv_Bytes);
+         Recv_Idx   : constant Unsigned_32 := Utils.To_U32 (Recv_Bytes);
       begin
          --  Pass 1: check Current keypair for each peer
          for P in Session.Peer_Index loop
@@ -849,17 +840,16 @@ is
       declare
          use Peer_Table.Source_Result;
 
-         RX_View : constant Messages.RX_Buffer_View :=
+         RX_View   : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         Hdr_Off  : constant Natural :=
-           Messages.Transport_Header_Size;
+         Hdr_Off   : constant Natural := Messages.Transport_Header_Size;
          Src_Bytes : constant Bytes_4 :=
            (RX_View.Buf_Ptr.Data (Hdr_Off + 12),
             RX_View.Buf_Ptr.Data (Hdr_Off + 13),
             RX_View.Buf_Ptr.Data (Hdr_Off + 14),
             RX_View.Buf_Ptr.Data (Hdr_Off + 15));
-         Src_IP : constant Unsigned_32 := To_U32 (Src_Bytes);
-         Check  : constant Peer_Table.Source_Result.Result :=
+         Src_IP    : constant Unsigned_32 := To_U32 (Src_Bytes);
+         Check     : constant Peer_Table.Source_Result.Result :=
            Peer_Table.Check_Source (Found_Peer, Src_IP);
       begin
          if Check.Kind /= Is_Ok then
@@ -900,7 +890,7 @@ is
       RX_Length : Messages.Packet_Length;
       Peer_Idx  : Session.Peer_Index := 1;
    begin
-      PT_Len.all   := 0;
+      PT_Len.all := 0;
       Peer_Out.all := 0;
 
       if not Initialized then
@@ -919,11 +909,11 @@ is
       end if;
 
       declare
-         RX_View  : constant Messages.RX_Buffer_View :=
+         RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         RX_Msg   : constant Messages.Undefined_Message
-           with Import, Address => RX_View.Buf_Ptr.Data'Address;
-         Result   : WG_Action;
+         RX_Msg  : constant Messages.Undefined_Message
+         with Import, Address => RX_View.Buf_Ptr.Data'Address;
+         Result  : WG_Action;
       begin
          if not RX_Msg.Kind'Valid then
             Messages.RX_Pool.Free (RX_Handle);
@@ -931,18 +921,19 @@ is
          else
             case RX_Msg.Kind is
                when Messages.Kind_Handshake_Initiation =>
-                  Result := Handle_Initiation_RX
-                    (RX_Handle, RX_Length, Peer_Idx);
+                  Result :=
+                    Handle_Initiation_RX (RX_Handle, RX_Length, Peer_Idx);
 
-               when Messages.Kind_Handshake_Response =>
-                  Result := Handle_Response_RX
-                    (RX_Handle, RX_Length, Peer_Idx);
+               when Messages.Kind_Handshake_Response   =>
+                  Result :=
+                    Handle_Response_RX (RX_Handle, RX_Length, Peer_Idx);
 
-               when Messages.Kind_Transport_Data =>
-                  Result := Handle_Transport_RX_Netif
-                    (RX_Handle, RX_Length, PT_Len, Peer_Idx);
+               when Messages.Kind_Transport_Data       =>
+                  Result :=
+                    Handle_Transport_RX_Netif
+                      (RX_Handle, RX_Length, PT_Len, Peer_Idx);
 
-               when Messages.Kind_Cookie_Reply =>
+               when Messages.Kind_Cookie_Reply         =>
                   Messages.RX_Pool.Free (RX_Handle);
                   Result := Action_Error;
             end case;
