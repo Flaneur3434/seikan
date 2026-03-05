@@ -63,6 +63,30 @@ is
    end Encrypt_Packet;
 
    ---------------------------------------------------------------------------
+   --  Encrypt_Into_Buffer
+   ---------------------------------------------------------------------------
+
+   procedure Encrypt_Into_Buffer
+     (Ref            : Messages.Buffer_Ref;
+      Key            : Crypto.AEAD.Key_Buffer;
+      Receiver_Index : Unsigned_32;
+      Counter        : Unsigned_64;
+      Plaintext      : Byte_Array;
+      Length         : out Unsigned_16;
+      Result         : out Status)
+   with SPARK_Mode => Off
+   is
+      --  Overlay the pool buffer's Data array for zero-copy encryption.
+      --  Safe: Packet_Size matches Packet_Buffer.Data'Length.
+      Out_Pkt : Byte_Array (0 .. Messages.Packet_Size - 1)
+      with Import, Address => Messages.TX_Pool.Get_Ptr (Ref).Data'Address;
+   begin
+      Encrypt_Packet
+        (Key, Receiver_Index, Counter, Plaintext,
+         Out_Pkt, Length, Result);
+   end Encrypt_Into_Buffer;
+
+   ---------------------------------------------------------------------------
    --  Decrypt_Packet
    ---------------------------------------------------------------------------
 

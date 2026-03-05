@@ -68,7 +68,43 @@ is
          --  Make sure payload can fit into packet buffer
          Plaintext'Length
          <= Packet'Length
-            - (Messages.Transport_Header_Size + Crypto.AEAD.Tag_Bytes);
+            - (Messages.Transport_Header_Size + Crypto.AEAD.Tag_Bytes),
+     Post   =>
+       (if Result = Success then Length > 0);
+
+   ---------------------------------------------------------------------------
+   --  Decrypt_Packet - Authenticate and decrypt a transport data message
+   --
+   --  Decrypts the payload in-place within Packet.  On success the
+   --  plaintext occupies:
+   --    Packet (Packet'First + Header .. Packet'First + Header + Length - 1)
+   --
+   --  Returns the counter from the packet header for the caller to
+   --  validate against the replay window.
+   ---------------------------------------------------------------------------
+
+   ---------------------------------------------------------------------------
+   --  Encrypt_Into_Buffer - Zero-copy encrypt into a TX pool buffer
+   --
+   --  Wraps Encrypt_Packet with an address overlay so the ciphertext
+   --  is written directly into the pool buffer's Data array.
+   --  Global => null tells SPARK the body has no side effects on
+   --  abstract state (the overlay is SPARK_Mode => Off internally).
+   ---------------------------------------------------------------------------
+
+   procedure Encrypt_Into_Buffer
+     (Ref            : Messages.Buffer_Ref;
+      Key            : Crypto.AEAD.Key_Buffer;
+      Receiver_Index : Unsigned_32;
+      Counter        : Unsigned_64;
+      Plaintext      : Byte_Array;
+      Length         : out Unsigned_16;
+      Result         : out Status)
+   with
+     Global => null,
+     Pre    => Plaintext'Length in 0 .. Max_Payload,
+     Post   =>
+       (if Result = Success then Length > 0);
 
    ---------------------------------------------------------------------------
    --  Decrypt_Packet - Authenticate and decrypt a transport data message

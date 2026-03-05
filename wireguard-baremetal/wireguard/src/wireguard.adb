@@ -141,91 +141,6 @@ is
    end Init;
 
    ---------------------------------------------------------------------------
-   --  Helpers: Handshake sub-operations (body-local)
-   ---------------------------------------------------------------------------
-
-   ---------------------------------------------------------------------------
-   --  Build_And_Encrypt_TX — Internal TX path
-   --
-   --  Allocates a TX pool buffer, encrypts the given plaintext (which
-   --  may be zero-length for a keepalive), and releases the buffer to
-   --  C for transmission.
-   --
-   --  On success: TX_Addr = pool buffer address, TX_Len = wire bytes.
-   --  On failure: TX_Addr = Null_Address, TX_Len = 0.
-   ---------------------------------------------------------------------------
-
-   function Build_And_Encrypt_TX
-     (Peer    : Session.Peer_Index;
-      Payload : Byte_Array;
-      TX_Addr : out System.Address;
-      TX_Len  : out Unsigned_16) return Boolean
-   is
-      use System;
-
-      KP           : Session.Keypair;
-      Send_Counter : Unsigned_64;
-      TX_Handle    : Messages.Buffer_Handle;
-      TX_Ref       : Messages.Buffer_Ref;
-      Enc_Len      : Unsigned_16;
-      Enc_Result   : Status;
-      Ptr          : C_Buffer_Ptr;
-   begin
-      TX_Addr := Null_Address;
-      TX_Len := 0;
-
-      --  Get a nonce counter (atomically increments under lock)
-      Session.Increment_Send_Counter (Peer, Send_Counter);
-
-      --  Snapshot current keypair
-      Session.Get_Current (Peer, KP);
-      if not Session.Is_Valid (KP) then
-         return False;
-      end if;
-
-      --  Allocate TX pool buffer
-      Messages.TX_Pool.Allocate (TX_Handle);
-      if Messages.TX_Pool.Is_Null (TX_Handle) then
-         return False;
-      end if;
-
-      --  Encrypt payload into TX buffer (zero-length = keepalive)
-      Messages.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
-      declare
-         Out_Pkt : Byte_Array (0 .. Messages.Packet_Size - 1)
-         with Import, Address => Messages.TX_Pool.Get_Ptr (TX_Ref).Data'Address;
-      begin
-         Transport.Encrypt_Packet
-           (Key            => Session.Send_Key (KP),
-            Receiver_Index => Session.Receiver_Index (KP),
-            Counter        => Send_Counter,
-            Plaintext      => Payload,
-            Packet         => Out_Pkt,
-            Length         => Enc_Len,
-            Result         => Enc_Result);
-      end;
-
-      if not Is_Success (Enc_Result) then
-         Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
-         Messages.TX_Pool.Free (TX_Handle);
-         return False;
-      end if;
-
-      --  Record that we sent a packet (resets keepalive timer)
-      Session.Mark_Sent (Peer, Timer.Clock.Now);
-
-      Messages.TX_Pool.Get_Ptr (TX_Ref).Len := Enc_Len;
-      Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
-
-      --  Release TX buffer to C for transmission
-      Messages.Release_TX_To_C
-        (TX_Handle, Messages.Packet_Length (Enc_Len), Ptr);
-      TX_Addr := To_Address (Ptr);
-      TX_Len := Enc_Len;
-      return True;
-   end Build_And_Encrypt_TX;
-
-   ---------------------------------------------------------------------------
    --  Create_Initiation — Delegate to Protocol
    ---------------------------------------------------------------------------
 
@@ -304,9 +219,10 @@ is
    is
       use System;
 
-      Peer : Session.Peer_Index;
-      Addr : System.Address;
-      Len  : Unsigned_16;
+      Peer    : Session.Peer_Index;
+      TX_Ptr  : Utils.C_Buffer_Ptr;
+      Pkt_Len : Messages.Packet_Length;
+      OK      : Boolean;
    begin
       Out_Len.all := 0;
 
@@ -328,7 +244,9 @@ is
          declare
             Empty : constant Byte_Array (1 .. 0) := [others => 0];
          begin
-            if not Build_And_Encrypt_TX (Peer, Empty, Addr, Len) then
+            Wireguard.Protocol.Build_And_Encrypt_TX
+              (Peer, Empty, TX_Ptr, Pkt_Len, OK);
+            if not OK then
                return Null_Address;
             end if;
          end;
@@ -337,7 +255,9 @@ is
             Data : Byte_Array (0 .. Natural (Payload_Len) - 1)
             with Import, Address => Payload;
          begin
-            if not Build_And_Encrypt_TX (Peer, Data, Addr, Len) then
+            Wireguard.Protocol.Build_And_Encrypt_TX
+              (Peer, Data, TX_Ptr, Pkt_Len, OK);
+            if not OK then
                return Null_Address;
             end if;
             --  Track data-send timestamp (distinct from keepalive)
@@ -346,8 +266,8 @@ is
          end;
       end if;
 
-      Out_Len.all := Len;
-      return Addr;
+      Out_Len.all := Unsigned_16 (Pkt_Len);
+      return Utils.To_Address (TX_Ptr);
    end Send;
 
    ---------------------------------------------------------------------------
@@ -423,32 +343,17 @@ is
       end if;
       Ada_Action := Timer_Action'Val (Natural (Action));
 
-      if Ada_Action = Send_Keepalive then
-         --  Keepalive needs Build_And_Encrypt_TX (Transport layer,
-         --  SPARK_Mode => Off) — handle locally until chunk 5.
-         declare
-            Empty : constant Byte_Array (1 .. 0) := [others => 0];
-            OK    : Boolean;
-         begin
-            OK := Build_And_Encrypt_TX (P, Empty, TX_Buf, TX_Len);
-            if not OK then
-               TX_Buf := System.Null_Address;
-               TX_Len := 0;
-            end if;
-         end;
-      else
-         --  All other timer actions delegate to Protocol
-         declare
-            Ptr : Utils.C_Buffer_Ptr;
-            PL  : Messages.Packet_Length;
-         begin
-            Wireguard.Protocol.Dispatch_Timer (P, Ada_Action, Ptr, PL);
-            if not Utils.Is_Null (Ptr) then
-               TX_Buf := Utils.To_Address (Ptr);
-               TX_Len := Unsigned_16 (PL);
-            end if;
-         end;
-      end if;
+      --  All timer actions (including Send_Keepalive) delegate to Protocol
+      declare
+         Ptr : Utils.C_Buffer_Ptr;
+         PL  : Messages.Packet_Length;
+      begin
+         Wireguard.Protocol.Dispatch_Timer (P, Ada_Action, Ptr, PL);
+         if not Utils.Is_Null (Ptr) then
+            TX_Buf := Utils.To_Address (Ptr);
+            TX_Len := Unsigned_16 (PL);
+         end if;
+      end;
    end Dispatch_Timer;
 
    ---------------------------------------------------------------------------

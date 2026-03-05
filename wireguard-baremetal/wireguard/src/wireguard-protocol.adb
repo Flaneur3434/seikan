@@ -10,6 +10,7 @@ with Handshake;
 with Peer_Table;
 with Session;
 with Timer.Clock;
+with Transport;
 with WG_Types; use WG_Types;
 
 package body Wireguard.Protocol
@@ -263,6 +264,7 @@ is
       end;
 
       --  Release to C layer for transmission
+      pragma Warnings (Off, Handle);  --  nullified by Release_TX_To_C; dead after
       Messages.Release_TX_To_C
         (Handle, Messages.Packet_Length (Result.Length), TX_Ptr);
 
@@ -349,6 +351,7 @@ is
       end if;
 
       --  Release to C layer for transmission
+      pragma Warnings (Off, Handle);  --  nullified by Release_TX_To_C; dead after
       Messages.Release_TX_To_C
         (Handle, Messages.Packet_Length (Resp_Result.Length), TX_Ptr);
 
@@ -385,8 +388,86 @@ is
       end if;
 
       Create_Initiation (Peer, TX_Ptr, TX_Len, Success);
-      Last_Auto_Inits (Peer) := Now;
+      if Success then
+         Last_Auto_Inits (Peer) := Now;
+      end if;
    end Auto_Handshake;
+
+   ---------------------------------------------------------------------------
+   --  Build_And_Encrypt_TX
+   ---------------------------------------------------------------------------
+
+   procedure Build_And_Encrypt_TX
+     (Peer    : Session.Peer_Index;
+      Payload : Byte_Array;
+      TX_Ptr  : out Utils.C_Buffer_Ptr;
+      TX_Len  : out Messages.Packet_Length;
+      Success : out Boolean)
+   is
+      Null_Ptr      : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
+      KP            : Session.Keypair;
+      Send_Counter  : Unsigned_64;
+      TX_Handle     : Messages.Buffer_Handle;
+      Enc_Len       : Unsigned_16;
+      Enc_Result    : Status;
+   begin
+      TX_Ptr  := Null_Ptr;
+      TX_Len  := 0;
+      Success := False;
+
+      --  Get a nonce counter (atomically increments under lock)
+      Session.Increment_Send_Counter (Peer, Send_Counter);
+
+      --  Snapshot current keypair
+      Session.Get_Current (Peer, KP);
+      if not Session.Is_Valid (KP) then
+         return;
+      end if;
+
+      --  Allocate TX pool buffer
+      Messages.TX_Pool.Allocate (TX_Handle);
+      if Messages.TX_Pool.Is_Null (TX_Handle) then
+         return;
+      end if;
+
+      --  Encrypt payload into TX buffer (zero-length = keepalive)
+      declare
+         Ref : Messages.Buffer_Ref;
+      begin
+         Messages.TX_Pool.Borrow_Mut (TX_Handle, Ref);
+         Transport.Encrypt_Into_Buffer
+           (Ref            => Ref,
+            Key            => Session.Send_Key (KP),
+            Receiver_Index => Session.Receiver_Index (KP),
+            Counter        => Send_Counter,
+            Plaintext      => Payload,
+            Length         => Enc_Len,
+            Result         => Enc_Result);
+
+         if not Is_Success (Enc_Result) then
+            Messages.TX_Pool.Return_Ref (TX_Handle, Ref);
+            Messages.TX_Pool.Free (TX_Handle);
+            return;
+         end if;
+
+         Messages.TX_Pool.Return_Ref (TX_Handle, Ref);
+      end;
+
+      --  Record that we sent a packet (resets keepalive timer)
+      declare
+         Now : constant Timer.Clock.Timestamp := Timer.Clock.Now;
+      begin
+         Session.Mark_Sent (Peer, Now);
+      end;
+
+      --  Release TX buffer to C for transmission
+      pragma Warnings (Off, TX_Handle);  --  nullified by Release_TX_To_C; dead after
+      Messages.Release_TX_To_C
+        (TX_Handle, Messages.Packet_Length (Enc_Len), TX_Ptr);
+
+      TX_Len  := Messages.Packet_Length (Enc_Len);
+      Success := True;
+   end Build_And_Encrypt_TX;
 
    ---------------------------------------------------------------------------
    --  Dispatch_Timer
@@ -405,10 +486,21 @@ is
       TX_Len := 0;
 
       case Action is
-         when No_Action | Send_Keepalive =>
-            --  Send_Keepalive is handled by the C-facing shim
-            --  (requires Build_And_Encrypt_TX which is SPARK_Mode => Off).
+         when No_Action =>
             null;
+
+         when Send_Keepalive =>
+            --  Encrypt empty payload → keepalive packet
+            declare
+               Empty   : constant Byte_Array (1 .. 0) := [others => 0];
+               OK      : Boolean;
+            begin
+               Build_And_Encrypt_TX (Peer, Empty, TX_Ptr, TX_Len, OK);
+               if not OK then
+                  TX_Ptr := Null_Ptr;
+                  TX_Len := 0;
+               end if;
+            end;
 
          when Session_Expired | Rekey_Timed_Out =>
             Session.Expire_Session (Peer);
