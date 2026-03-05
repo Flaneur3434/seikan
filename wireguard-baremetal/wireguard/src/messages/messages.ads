@@ -233,11 +233,16 @@ is
    with Global => null;
 
    --  TX: write a message record into a TX buffer (copies)
+   --  Global => null tells SPARK the body has no side effects,
+   --  so the access-type dereference inside the SPARK_Mode => Off
+   --  body does not propagate a synthetic heap-read global.
    procedure Write_Initiation
-     (Ref : Buffer_Ref; Msg : Message_Handshake_Initiation);
+     (Ref : Buffer_Ref; Msg : Message_Handshake_Initiation)
+   with Global => null;
 
    procedure Write_Response
-     (Ref : Buffer_Ref; Msg : Message_Handshake_Response);
+     (Ref : Buffer_Ref; Msg : Message_Handshake_Response)
+   with Global => null;
 
    --  Release TX buffer to C layer for transmission.
    --  Handle becomes null; C now owns the buffer.

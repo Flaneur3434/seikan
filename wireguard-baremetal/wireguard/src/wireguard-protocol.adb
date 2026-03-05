@@ -38,6 +38,24 @@ is
    Last_Init_Peer : Session.Peer_Index := 1;
 
    ---------------------------------------------------------------------------
+   --  Init_Protocol
+   ---------------------------------------------------------------------------
+
+   procedure Init_Protocol
+     (Identity : Handshake.Static_Identity;
+      Peers    : Peer_Config_Array)
+   is
+   begin
+      My_Identity    := Identity;
+      for P in Session.Peer_Index loop
+         My_Peers (P) := Peers (P);
+      end loop;
+      HS_States      := [others => Handshake.Empty_Handshake];
+      Last_Init_Peer := 1;
+      Initialized    := True;
+   end Init_Protocol;
+
+   ---------------------------------------------------------------------------
    --  Handle_Initiation_RX
    ---------------------------------------------------------------------------
 
@@ -184,5 +202,132 @@ is
       Peer_Out := Found_Peer;
       Action := Action_None;
    end Handle_Response_RX;
+
+   ---------------------------------------------------------------------------
+   --  Create_Initiation
+   ---------------------------------------------------------------------------
+
+   procedure Create_Initiation
+     (Peer    : Session.Peer_Index;
+      TX_Ptr  : out Utils.C_Buffer_Ptr;
+      TX_Len  : out Messages.Packet_Length;
+      Success : out Boolean)
+   is
+      Null_Ptr : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
+      Result   : Handshake.Initiation_Result;
+      Handle   : Messages.Buffer_Handle;
+      Ref      : Messages.Buffer_Ref;
+   begin
+      TX_Ptr  := Null_Ptr;
+      TX_Len  := 0;
+      Success := False;
+
+      if not Initialized then
+         return;
+      end if;
+
+      --  Allocate a TX pool buffer
+      Messages.TX_Pool.Allocate (Handle);
+      if Messages.TX_Pool.Is_Null (Handle) then
+         return;
+      end if;
+
+      --  Build initiation message, then copy into TX buffer
+      declare
+         Msg : Messages.Message_Handshake_Initiation;
+      begin
+         Handshake.Create_Initiation
+           (Msg, HS_States (Peer), My_Identity, My_Peers (Peer), Result);
+
+         if not Result.Success then
+            Messages.TX_Pool.Free (Handle);
+            return;
+         end if;
+
+         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+         Messages.Write_Initiation (Ref, Msg);
+         Messages.TX_Pool.Return_Ref (Handle, Ref);
+      end;
+
+      --  Release to C layer for transmission
+      Messages.Release_TX_To_C
+        (Handle, Messages.Packet_Length (Result.Length), TX_Ptr);
+
+      TX_Len  := Messages.Packet_Length (Result.Length);
+      Success := True;
+   end Create_Initiation;
+
+   ---------------------------------------------------------------------------
+   --  Create_Response
+   ---------------------------------------------------------------------------
+
+   procedure Create_Response
+     (TX_Ptr  : out Utils.C_Buffer_Ptr;
+      TX_Len  : out Messages.Packet_Length;
+      Success : out Boolean)
+   is
+      Null_Ptr    : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
+      P           : constant Session.Peer_Index := Last_Init_Peer;
+      Resp_Result : Handshake.Response_Result;
+      Handle      : Messages.Buffer_Handle;
+      Ref         : Messages.Buffer_Ref;
+      Sess_Status : Status;
+   begin
+      TX_Ptr  := Null_Ptr;
+      TX_Len  := 0;
+      Success := False;
+
+      if not Initialized then
+         return;
+      end if;
+
+      --  Allocate a TX pool buffer
+      Messages.TX_Pool.Allocate (Handle);
+      if Messages.TX_Pool.Is_Null (Handle) then
+         return;
+      end if;
+
+      --  Build response message, then copy into TX buffer
+      declare
+         Resp : Messages.Message_Handshake_Response;
+      begin
+         Handshake.Create_Response
+           (Resp, HS_States (P), My_Identity, Resp_Result);
+
+         if not Resp_Result.Success then
+            Messages.TX_Pool.Free (Handle);
+            return;
+         end if;
+
+         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+         Messages.Write_Response (Ref, Resp);
+         Messages.TX_Pool.Return_Ref (Handle, Ref);
+      end;
+
+      --  Responder derives transport keys AND activates the new session
+      --  atomically (single lock hold) after Create_Response.
+      --  Per WireGuard spec §5.4.4: responder has all Noise material.
+      declare
+         Now : constant Timer.Clock.Timestamp := Timer.Clock.Now;
+      begin
+         Session.Derive_And_Activate
+           (Peer   => P,
+            HS     => HS_States (P),
+            Now    => Now,
+            Result => Sess_Status);
+      end;
+
+      if not Is_Success (Sess_Status) then
+         Messages.TX_Pool.Free (Handle);
+         return;
+      end if;
+
+      --  Release to C layer for transmission
+      Messages.Release_TX_To_C
+        (Handle, Messages.Packet_Length (Resp_Result.Length), TX_Ptr);
+
+      TX_Len  := Messages.Packet_Length (Resp_Result.Length);
+      Success := True;
+   end Create_Response;
 
 end Wireguard.Protocol;
