@@ -27,27 +27,11 @@
 with System;
 with Interfaces;
 with Interfaces.C;
+with WG_Types; use WG_Types;
 
 package Wireguard
   with SPARK_Mode => Off
 is
-
-   ---------------------------------------------------------------------------
-   --  Action - What C should do after wg_receive
-   ---------------------------------------------------------------------------
-
-   type WG_Action is
-     (Action_None,            --  Nothing to do
-      Action_Send_Response,   --  Call wg_create_response
-      RX_Decryption_Success,  --  Decrypted data in pt_out
-      Action_Error)           --  Processing failed
-   with Convention => C;
-
-   for WG_Action use
-     (Action_None           => 0,
-      Action_Send_Response  => 1,
-      RX_Decryption_Success => 2,
-      Action_Error          => 3);
 
    ---------------------------------------------------------------------------
    --  wg_init

@@ -11,6 +11,7 @@
 with Interfaces;   use Interfaces;
 with Interfaces.C; use Interfaces.C;
 with Utils;        use Utils;
+with WG_Types;     use WG_Types;
 with Crypto.KX;
 with Handshake;
 with Messages;

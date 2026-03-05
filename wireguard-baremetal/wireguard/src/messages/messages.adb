@@ -147,7 +147,8 @@ is
       return Convert (Byte_Array (View.Buf_Ptr.Data) (Src'Range));
    end Read_Response;
 
-   function Read_Undefined (View : RX_Buffer_View) return Undefined_Message
+   function Read_Undefined
+     (View : RX_Buffer_View) return Undefined_Message
    with SPARK_Mode => Off
    is
       subtype Src is Byte_Array (0 .. 3);

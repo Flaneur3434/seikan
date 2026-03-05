@@ -1,7 +1,8 @@
 --  Peer_Table — Implementation
 
 package body Peer_Table
-  with SPARK_Mode => On
+  with SPARK_Mode    => On,
+       Refined_State => (Peer_State => Peers)
 is
 
    --------------------------------------------------------------------------
