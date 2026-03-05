@@ -3,10 +3,10 @@ with Threads.Mutex;
 
 generic
    Packet_Size : Positive;
-   Pool_Size   : Positive;
-package Utils.Memory_Pool
-   with SPARK_Mode     => On,
-        Abstract_State => (Pool_State, Borrow_State)
+   Pool_Size : Positive;
+package Utils.Memory_Pool with
+    SPARK_Mode     => On,
+    Abstract_State => (Pool_State, Borrow_State)
 is
    pragma Unevaluated_Use_Of_Old (Allow);
 
@@ -38,7 +38,7 @@ is
       Offset : Interfaces.Unsigned_16 := 0;
       Data   : aliased Packet_Buffer;
    end record
-     with Convention => C;
+   with Convention => C;
 
    type Buffer_Ptr is access all Buffer;
    pragma No_Strict_Aliasing (Buffer_Ptr);
@@ -68,12 +68,12 @@ is
    ---------------------------------------------------------------------------
 
    type Buffer_Handle is limited private
-     with Default_Initial_Condition => Is_Null (Buffer_Handle),
-          Annotate => (GNATprove, Ownership, "Needs_Reclamation");
+   with
+     Default_Initial_Condition => Is_Null (Buffer_Handle),
+     Annotate                  => (GNATprove, Ownership, "Needs_Reclamation");
 
    function Is_Null (H : Buffer_Handle) return Boolean
-     with Global => null,
-          Annotate => (GNATprove, Ownership, "Is_Reclaimed");
+   with Global => null, Annotate => (GNATprove, Ownership, "Is_Reclaimed");
    --  True if handle doesn't own a buffer
 
    ---------------------------------------------------------------------------
@@ -93,29 +93,36 @@ is
    end record;
    --  Read-only view into buffer (immutable borrow)
 
-   type Buffer_Ref is record
-      Buf_Ptr : Buffer_Ptr := null;
-   end record;
+   type Buffer_Ref is limited private
+   with
+     Default_Initial_Condition => Is_Null_Ref (Buffer_Ref),
+     Annotate                  => (GNATprove, Ownership, "Needs_Reclamation");
    --  Mutable reference to buffer (exclusive borrow)
 
-   function Is_Null_View (V : Buffer_View) return Boolean is (V.Buf_Ptr = null)
-     with Global => null;
+   function Is_Null_View (V : Buffer_View) return Boolean
+   is (V.Buf_Ptr = null)
+   with Global => null;
    --  True if view is null (not borrowing)
 
-   function Is_Null_Ref (R : Buffer_Ref) return Boolean is (R.Buf_Ptr = null)
-     with Global => null;
+   function Is_Null_Ref (R : Buffer_Ref) return Boolean
+   with Global => null, Annotate => (GNATprove, Ownership, "Is_Reclaimed");
    --  True if ref is null (not borrowing)
+
+   function Get_Ptr (R : Buffer_Ref) return not null Buffer_Ptr
+   with Pre => not Is_Null_Ref (R);
+   --  Get underlying mutable pointer for direct buffer field access.
+   --  Store result in a local variable before dereferencing.
 
    ---------------------------------------------------------------------------
    --  Ghost Functions for Specification
    ---------------------------------------------------------------------------
 
    function Free_Count return Valid_Count
-     with Ghost, Global => Pool_State;
+   with Ghost, Global => Pool_State;
    --  Number of free buffers available
 
    function Is_Mutably_Borrowed (H : Buffer_Handle) return Boolean
-     with Ghost, Global => Borrow_State;
+   with Ghost, Global => Borrow_State;
    --  True if this handle has an active mutable borrow (Borrow_Mut called
    --  but Return_Ref not yet called). Used to enforce single mutable borrow.
 
@@ -124,27 +131,30 @@ is
    ---------------------------------------------------------------------------
 
    procedure Initialize (Sem : not null Threads.Mutex.Semaphore_Ref)
-     with Global => (Output => (Pool_State, Borrow_State)),
-          Post   => Free_Count = Pool_Size;
+   with
+     Global => (Output => (Pool_State, Borrow_State)),
+     Post   => Free_Count = Pool_Size;
    --  Initialize the pool with a pre-created lock handle.
    --  Sem must be a valid OS semaphore (SemaphoreHandle_t / pthread_mutex_t*).
 
    procedure Allocate (Handle : out Buffer_Handle)
-     with Global => (In_Out => (Pool_State, Borrow_State)),
-          Post   => (if not Is_Null (Handle)
-                     then Free_Count = Free_Count'Old - 1
-                          and then not Is_Mutably_Borrowed (Handle)
-                     else Free_Count = Free_Count'Old);
+   with
+     Global => (In_Out => (Pool_State, Borrow_State)),
+     Post   =>
+       (if not Is_Null (Handle)
+        then
+          Free_Count = Free_Count'Old - 1
+          and then not Is_Mutably_Borrowed (Handle)
+        else Free_Count = Free_Count'Old);
    --  Allocate a buffer. Handle is null if pool exhausted.
    --  Post: Newly allocated handles are never in a borrowed state.
 
    procedure Free (Handle : in out Buffer_Handle)
-     with Global  => (In_Out => Pool_State, Proof_In => Borrow_State),
-          Depends => (Pool_State =>+ Handle, Handle => null),
-          Pre     => not Is_Null (Handle)
-                     and then not Is_Mutably_Borrowed (Handle),
-          Post    => Is_Null (Handle)
-                     and then Free_Count = Free_Count'Old + 1;
+   with
+     Global  => (In_Out => Pool_State, Proof_In => Borrow_State),
+     Depends => (Pool_State => +Handle, Handle => null),
+     Pre     => not Is_Null (Handle) and then not Is_Mutably_Borrowed (Handle),
+     Post    => Is_Null (Handle) and then Free_Count = Free_Count'Old + 1;
    --  Return buffer to pool. Handle becomes null.
    --  Pre: Buffer must not have active mutable borrow.
 
@@ -153,20 +163,25 @@ is
    ---------------------------------------------------------------------------
 
    procedure Move (From : in out Buffer_Handle; To : out Buffer_Handle)
-     with Global  => (Proof_In => Borrow_State),
-          Depends => (To => From, From => null),
-          Pre     => not Is_Null (From)
-                     and then not Is_Mutably_Borrowed (From),
-          Post    => Is_Null (From)
-                     and then not Is_Null (To)
-                     and then not Is_Mutably_Borrowed (To);
+   with
+     Global  => (Proof_In => Borrow_State),
+     Depends => (To => From, From => null),
+     Pre     => not Is_Null (From) and then not Is_Mutably_Borrowed (From),
+     Post    =>
+       Is_Null (From)
+       and then not Is_Null (To)
+       and then not Is_Mutably_Borrowed (To);
    --  Transfer ownership from From to To. From becomes null.
    --  Pre: Source must not have active mutable borrow.
    procedure Reset_Handle (Handle : in out Buffer_Handle)
-     with SPARK_Mode => Off;
+   with
+     Global  => (Proof_In => Borrow_State),
+     Pre     => not Is_Null (Handle) and then not Is_Mutably_Borrowed (Handle),
+     Post    => Is_Null (Handle);
    --  Clear handle without returning buffer to pool.
    --  Used for C interop when ownership transfers to C layer.
    --  WARNING: Does NOT free the buffer - caller must ensure it will be freed.
+
    ---------------------------------------------------------------------------
    --  Borrowing Operations
    --
@@ -178,40 +193,41 @@ is
    ---------------------------------------------------------------------------
 
    function Borrow (Handle : Buffer_Handle) return Buffer_View
-     with Global => null,
-          Pre    => not Is_Null (Handle),
-          Post   => not Is_Null_View (Borrow'Result);
+   with
+     Global => null,
+     Pre    => not Is_Null (Handle),
+     Post   => not Is_Null_View (Borrow'Result);
    --  Borrow read-only access to buffer data.
    --  Multiple concurrent read borrows are safe.
    --  No need to return - view becomes invalid when Handle is freed.
 
-   procedure Borrow_Mut
-     (Handle : in out Buffer_Handle;
-      Ref    : out Buffer_Ref)
-     with Global  => (In_Out => Borrow_State),
-          Pre     => not Is_Null (Handle)
-                     and then not Is_Mutably_Borrowed (Handle),
-          Post    => not Is_Null (Handle)
-                     and then not Is_Null_Ref (Ref)
-                     and then Is_Mutably_Borrowed (Handle);
+   procedure Borrow_Mut (Handle : in out Buffer_Handle; Ref : out Buffer_Ref)
+   with
+     Global => (In_Out => Borrow_State),
+     Pre    => not Is_Null (Handle) and then not Is_Mutably_Borrowed (Handle),
+     Post   =>
+       not Is_Null (Handle)
+       and then not Is_Null_Ref (Ref)
+       and then Is_Mutably_Borrowed (Handle);
    --  Borrow exclusive mutable access to buffer data.
    --  Pre: No active mutable borrow on this handle.
    --  Post: Handle is marked as mutably borrowed.
    --  MUST call Return_Ref before Free or another Borrow_Mut.
 
    procedure Return_Ref
-     (Handle : in out Buffer_Handle;
-      Ref    : in out Buffer_Ref)
-     with Global  => (In_Out => Borrow_State),
-          Depends => (Borrow_State =>+ (Handle, Ref),
-                      Handle       => Handle,
-                      Ref          => null),
-          Pre     => not Is_Null (Handle)
-                     and then not Is_Null_Ref (Ref)
-                     and then Is_Mutably_Borrowed (Handle),
-          Post    => not Is_Null (Handle)
-                     and then Is_Null_Ref (Ref)
-                     and then not Is_Mutably_Borrowed (Handle);
+     (Handle : in out Buffer_Handle; Ref : in out Buffer_Ref)
+   with
+     Global  => (In_Out => Borrow_State),
+     Depends =>
+       (Borrow_State => +(Handle, Ref), Handle => Handle, Ref => null),
+     Pre     =>
+       not Is_Null (Handle)
+       and then not Is_Null_Ref (Ref)
+       and then Is_Mutably_Borrowed (Handle),
+     Post    =>
+       not Is_Null (Handle)
+       and then Is_Null_Ref (Ref)
+       and then not Is_Mutably_Borrowed (Handle);
    --  Return mutable borrow. Ref becomes null.
    --  After this, Handle can be freed or borrowed again.
 
@@ -220,22 +236,37 @@ is
    ---------------------------------------------------------------------------
 
    function C_Allocate return System.Address
-     with Global => (In_Out => Pool_State),
-          SPARK_Mode => Off;
+   with Global => (In_Out => Pool_State), SPARK_Mode => Off;
    --  Allocate and return buffer address (null if exhausted)
 
    procedure C_Free (Buf_Addr : System.Address)
-     with Global => (In_Out => Pool_State),
-          SPARK_Mode => Off;
+   with Global => (In_Out => Pool_State), SPARK_Mode => Off;
    --  Free by address
 
    procedure Create_From_Address
-     (Addr   : System.Address;
-      Handle : out Buffer_Handle)
-     with SPARK_Mode => Off;
+     (Addr : System.Address; Handle : out Buffer_Handle)
+   with SPARK_Mode => Off;
    --  Create handle from raw buffer address (from C layer).
    --  WARNING: Caller must ensure Addr points to valid pool buffer.
    --  Used for acquiring buffers from C.
+
+   ---------------------------------------------------------------------------
+   --  SPARK-Safe C Pointer Operations
+   --
+   --  Convert between Buffer_Handle and the opaque C_Buffer_Ptr type.
+   --  Specs are SPARK-visible; bodies use SPARK_Mode => Off.
+   ---------------------------------------------------------------------------
+
+   function To_C_Ptr (H : Buffer_Handle) return C_Buffer_Ptr
+   with
+     Pre  => not Is_Null (H) and then not Is_Mutably_Borrowed (H),
+     Post => not Utils.Is_Null (To_C_Ptr'Result);
+   --  Extract a C-safe pointer from a handle (does not transfer ownership).
+
+   procedure From_C_Ptr (Ptr : C_Buffer_Ptr; Handle : out Buffer_Handle)
+   with Pre => not Utils.Is_Null (Ptr), Post => not Is_Null (Handle);
+   --  Create a handle from a C pointer (takes ownership from C).
+   --  Caller must ensure Ptr came from a valid pool buffer.
 
 private
    pragma SPARK_Mode (Off);
@@ -244,7 +275,14 @@ private
       Ptr : Buffer_Ptr := null;
    end record;
 
-   function Is_Null (H : Buffer_Handle) return Boolean is
-     (H.Ptr = null or else H.Ptr.Index = Null_Index);
+   function Is_Null (H : Buffer_Handle) return Boolean
+   is (H.Ptr = null or else H.Ptr.Index = Null_Index);
+
+   type Buffer_Ref is limited record
+      Buf_Ptr : Buffer_Ptr := null;
+   end record;
+
+   function Is_Null_Ref (R : Buffer_Ref) return Boolean
+   is (R.Buf_Ptr = null);
 
 end Utils.Memory_Pool;
