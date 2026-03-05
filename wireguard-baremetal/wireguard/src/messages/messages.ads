@@ -226,6 +226,32 @@ is
    --  Packet length type (matches uint16_t in C struct)
    subtype Packet_Length is Unsigned_16;
 
+   ---------------------
+   --  Buffer to Message Conversions (handshake message types only)
+   --
+   --  Copy-based: safe for SPARK callers, isolates address overlays.
+   --  Small fixed-size messages only (64-148 bytes).
+   ---------------------
+
+   --  RX: read a message record out of an RX buffer (copies)
+   function Read_Initiation
+     (View : RX_Buffer_View) return Message_Handshake_Initiation;
+
+   function Read_Response
+     (View : RX_Buffer_View) return Message_Handshake_Response;
+
+   function Read_Undefined
+     (View : RX_Buffer_View) return Undefined_Message;
+
+   --  TX: write a message record into a TX buffer (copies)
+   procedure Write_Initiation
+     (Ref : Buffer_Ref;
+      Msg : Message_Handshake_Initiation);
+
+   procedure Write_Response
+     (Ref : Buffer_Ref;
+      Msg : Message_Handshake_Response);
+
    --  Release TX buffer to C layer for transmission.
    --  Handle becomes null; C now owns the buffer.
    --  Returns address of wg_packet_t for C to use.

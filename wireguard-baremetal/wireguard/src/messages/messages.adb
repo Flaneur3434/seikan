@@ -1,8 +1,13 @@
 --  Messages - WireGuard Wire Protocol Message Types Implementation
 
+with Ada.Unchecked_Conversion;
+with Utils;
+
 package body Messages
   with SPARK_Mode => On
 is
+
+   use Utils;
 
    ---------------------
    --  MAC1 Prefix Extraction
@@ -23,8 +28,7 @@ is
       Result (Offset .. Offset + 3) := Msg.Sender;
       Offset := Offset + 4;
 
-      Result (Offset .. Offset + Key_Size - 1) :=
-        Utils.Byte_Array (Msg.Ephemeral);
+      Result (Offset .. Offset + Key_Size - 1) := Byte_Array (Msg.Ephemeral);
       Offset := Offset + Key_Size;
 
       Result (Offset .. Offset + Encrypted_Static_Size - 1) :=
@@ -55,8 +59,7 @@ is
       Result (Offset .. Offset + 3) := Msg.Receiver;
       Offset := Offset + 4;
 
-      Result (Offset .. Offset + Key_Size - 1) :=
-        Utils.Byte_Array (Msg.Ephemeral);
+      Result (Offset .. Offset + Key_Size - 1) := Byte_Array (Msg.Ephemeral);
       Offset := Offset + Key_Size;
 
       Result (Offset .. Offset + Encrypted_Empty_Size - 1) :=
@@ -73,7 +76,7 @@ is
      (Handle : in out Buffer_Handle;
       Length : Packet_Length;
       Addr   : out System.Address)
-     with SPARK_Mode => Off
+   with SPARK_Mode => Off
    is
       Ref : Buffer_Ref;
    begin
@@ -96,7 +99,7 @@ is
      (Addr   : System.Address;
       Handle : out RX_Buffer_Handle;
       Length : out Packet_Length)
-     with SPARK_Mode => Off
+   with SPARK_Mode => Off
    is
       use System;
       View : RX_Buffer_View;
@@ -116,9 +119,8 @@ is
    end Acquire_RX_From_C;
 
    procedure Release_RX_To_C
-     (Handle : in out RX_Buffer_Handle;
-      Addr   : out System.Address)
-     with SPARK_Mode => Off
+     (Handle : in out RX_Buffer_Handle; Addr : out System.Address)
+   with SPARK_Mode => Off
    is
       use System;
       Ref : RX_Buffer_Ref;
@@ -136,5 +138,74 @@ is
       --  Null out the handle - C now owns the buffer
       RX_Pool.Reset_Handle (Handle);
    end Release_RX_To_C;
+
+   ---------------------
+   --  Buffer ↔ Message Conversions
+   --
+   --  Bodies are SPARK_Mode => Off (Unchecked_Conversion).
+   --  Specs are SPARK-visible so callers are provable.
+   --  Safe because all fields are Unsigned_8 or Byte_Array — every
+   --  bit pattern is valid.
+   ---------------------
+
+   function Read_Initiation
+     (View : RX_Buffer_View) return Message_Handshake_Initiation
+   with SPARK_Mode => Off
+   is
+      subtype Src is Byte_Array (0 .. Handshake_Init_Size - 1);
+      function Convert is new
+        Ada.Unchecked_Conversion (Src, Message_Handshake_Initiation);
+   begin
+      return Convert (Byte_Array (View.Buf_Ptr.Data) (Src'Range));
+   end Read_Initiation;
+
+   function Read_Response
+     (View : RX_Buffer_View) return Message_Handshake_Response
+   with SPARK_Mode => Off
+   is
+      subtype Src is Byte_Array (0 .. Handshake_Response_Size - 1);
+      function Convert is new
+        Ada.Unchecked_Conversion (Src, Message_Handshake_Response);
+   begin
+      return Convert (Byte_Array (View.Buf_Ptr.Data) (Src'Range));
+   end Read_Response;
+
+   function Read_Undefined (View : RX_Buffer_View) return Undefined_Message
+   with SPARK_Mode => Off
+   is
+      subtype Src is Byte_Array (0 .. 3);
+      function Convert is new
+        Ada.Unchecked_Conversion (Src, Undefined_Message);
+   begin
+      return Convert (Byte_Array (View.Buf_Ptr.Data) (Src'Range));
+   end Read_Undefined;
+
+   procedure Write_Initiation
+     (Ref : Buffer_Ref; Msg : Message_Handshake_Initiation)
+   with SPARK_Mode => Off
+   is
+      subtype Dst is Byte_Array (0 .. Handshake_Init_Size - 1);
+      function Convert is new
+        Ada.Unchecked_Conversion (Message_Handshake_Initiation, Dst);
+      Bytes : constant Dst := Convert (Msg);
+   begin
+      for I in Bytes'Range loop
+         Ref.Buf_Ptr.Data (I) := Bytes (I);
+      end loop;
+   end Write_Initiation;
+
+   procedure Write_Response
+     (Ref : Buffer_Ref; Msg : Message_Handshake_Response)
+   with SPARK_Mode => Off
+   is
+      subtype Dst is Byte_Array (0 .. Handshake_Response_Size - 1);
+      function Convert is new
+        Ada.Unchecked_Conversion (Message_Handshake_Response, Dst);
+      Bytes : constant Dst := Convert (Msg);
+   begin
+      for I in Bytes'Range loop
+         Ref.Buf_Ptr.Data (I) := Bytes (I);
+      end loop;
+   end Write_Response;
 
 end Messages;
