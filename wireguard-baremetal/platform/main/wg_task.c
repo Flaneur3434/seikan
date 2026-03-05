@@ -177,7 +177,9 @@ static void wg_task(void *pvParameters)
         for (unsigned int peer = 1; peer <= WG_MAX_PEERS; peer++)
         {
             if (uxQueueMessagesWaiting(g_wg_inner_queues[peer]) == 0)
+            {
                 continue;
+            }
 
             if (wg_session_is_active(peer))
             {
@@ -262,6 +264,12 @@ static void wg_task(void *pvParameters)
         // rx_buf ownership: returned to C only on RX_DECRYPTION_SUCCESS;
         // Ada has freed it for all other return values.
 
+        // §6.5: update endpoint from authenticated packets only.
+        // Any non-error return means crypto verification passed.
+        if (action != WG_ACTION_ERROR && rx_peer != 0) {
+            update_peer_endpoint(rx_peer, &rx_msg.peer);
+        }
+
         switch (action)
         {
         case WG_ACTION_SEND_RESPONSE:
@@ -280,9 +288,6 @@ static void wg_task(void *pvParameters)
             ESP_LOGI(TAG, "<< Handshake Response (%u bytes) for peer %u",
                      resp_len, rx_peer);
 
-            // §6.5: crypto succeeded — safe to learn endpoint
-            update_peer_endpoint(rx_peer, &rx_msg.peer);
-
             if (!send_outer_packet(resp_pkt, resp_len, &rx_msg.peer)) {
                 ESP_LOGW(TAG, "Failed to send handshake response");
                 tx_pool_free(resp_pkt);
@@ -295,8 +300,6 @@ static void wg_task(void *pvParameters)
             // Transport data decrypted in-place.  Plaintext is at
             // rx_buf->data[WG_TRANSPORT_HEADER_SIZE .. +pt_len-1].
             // C owns rx_buf and must free it (directly or via pbuf_custom).
-            update_peer_endpoint(rx_peer, &rx_msg.peer);
-
             ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext) from peer %u",
                      pt_len, rx_peer);
 
@@ -346,8 +349,6 @@ static void wg_task(void *pvParameters)
 
         case WG_ACTION_NONE:
             // Handshake response processed or keepalive received.
-            // Crypto verified — safe to update endpoint.
-            update_peer_endpoint(rx_peer, &rx_msg.peer);
             ESP_LOGI(TAG, "<< Processed (no reply needed) for peer %u",
                      rx_peer);
             break;
