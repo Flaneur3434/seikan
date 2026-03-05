@@ -22,6 +22,8 @@ package body Wireguard.Protocol
                                             Initialized))
 is
 
+   pragma Unevaluated_Use_Of_Old (Allow);
+
    use type Handshake.Handshake_Error;
    use type Handshake.Handshake_State_Kind;
 
@@ -129,6 +131,13 @@ is
       RX_Length : Messages.Packet_Length;
       Peer_Out  : out Session.Peer_Index;
       Action    : out WG_Action)
+   with
+     Refined_Post =>
+       Messages.RX_Pool.Is_Null (RX_Handle)
+       and then Messages.RX_Pool.Free_Count =
+                  Messages.RX_Pool.Free_Count'Old + 1
+       and then (if Action = Action_None
+                 then Session.Is_Peer_Established (Peer_Out))
    is
       HS_Err      : Handshake.Handshake_Error;
       Sess_Status : Status;
@@ -269,12 +278,21 @@ is
      (TX_Ptr  : out Utils.C_Buffer_Ptr;
       TX_Len  : out Messages.Packet_Length;
       Success : out Boolean)
+   with
+     Refined_Post =>
+       (if Success
+        then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
+             and then Messages.TX_Pool.Free_Count =
+                       Messages.TX_Pool.Free_Count'Old - 1
+             and then Session.Is_Peer_Established (Last_Init_Peer)
+        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
+             and then Messages.TX_Pool.Free_Count =
+                       Messages.TX_Pool.Free_Count'Old)
    is
       Null_Ptr    : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
       P           : constant Session.Peer_Index := Last_Init_Peer;
       Resp_Result : Handshake.Response_Result;
       Handle      : Messages.Buffer_Handle;
-      Ref         : Messages.Buffer_Ref;
       Sess_Status : Status;
    begin
       TX_Ptr  := Null_Ptr;
@@ -303,9 +321,13 @@ is
             return;
          end if;
 
-         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
-         Messages.Write_Response (Ref, Resp);
-         Messages.TX_Pool.Return_Ref (Handle, Ref);
+         declare
+            Ref : Messages.Buffer_Ref;
+         begin
+            Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+            Messages.Write_Response (Ref, Resp);
+            Messages.TX_Pool.Return_Ref (Handle, Ref);
+         end;
       end;
 
       --  Responder derives transport keys AND activates the new session
@@ -365,6 +387,55 @@ is
       Create_Initiation (Peer, TX_Ptr, TX_Len, Success);
       Last_Auto_Inits (Peer) := Now;
    end Auto_Handshake;
+
+   ---------------------------------------------------------------------------
+   --  Dispatch_Timer
+   ---------------------------------------------------------------------------
+
+   procedure Dispatch_Timer
+     (Peer   : Session.Peer_Index;
+      Action : Session.Timers.Timer_Action;
+      TX_Ptr : out Utils.C_Buffer_Ptr;
+      TX_Len : out Messages.Packet_Length)
+   is
+      use Session.Timers;
+      Null_Ptr : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
+   begin
+      TX_Ptr := Null_Ptr;
+      TX_Len := 0;
+
+      case Action is
+         when No_Action | Send_Keepalive =>
+            --  Send_Keepalive is handled by the C-facing shim
+            --  (requires Build_And_Encrypt_TX which is SPARK_Mode => Off).
+            null;
+
+         when Session_Expired | Rekey_Timed_Out =>
+            Session.Expire_Session (Peer);
+
+         when Zero_All_Keys =>
+            --  §6.3: 3×Reject_After_Time (540 s) — erase everything.
+            Session.Expire_Session (Peer);
+            Session.Clear_Handshake_Timestamp (Peer);
+            Clear_HS_State (Peer);
+
+         when Initiate_Rekey =>
+            declare
+               Success : Boolean;
+            begin
+               Create_Initiation (Peer, TX_Ptr, TX_Len, Success);
+               if Success then
+                  declare
+                     Now : constant Timer.Clock.Timestamp := Timer.Clock.Now;
+                  begin
+                     if Now /= Timer.Clock.Never then
+                        Session.Set_Rekey_Flag (Peer, Now);
+                     end if;
+                  end;
+               end if;
+            end;
+      end case;
+   end Dispatch_Timer;
 
    ---------------------------------------------------------------------------
    --  Clear_HS_State

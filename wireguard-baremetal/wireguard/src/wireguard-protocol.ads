@@ -18,6 +18,7 @@ with Handshake;
 with Messages;
 with Peer_Table;
 with Session;
+with Session.Timers;
 with Session_Keys;
 with Utils;
 with WG_Types; use WG_Types;
@@ -25,6 +26,8 @@ with WG_Types; use WG_Types;
 package Wireguard.Protocol
   with SPARK_Mode => On, Abstract_State => Protocol_State
 is
+   pragma Unevaluated_Use_Of_Old (Allow);
+
    use type Messages.Packet_Length;
 
    ---------------------------------------------------------------------------
@@ -57,8 +60,11 @@ is
      Pre    =>
        not Messages.RX_Pool.Is_Null (RX_Handle)
        and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle),
-     Post   => Messages.RX_Pool.Is_Null (RX_Handle);
-   --  Post: buffer is always freed (no leak)
+     Post   =>
+       Messages.RX_Pool.Is_Null (RX_Handle)
+       and then Messages.RX_Pool.Free_Count =
+                  Messages.RX_Pool.Free_Count'Old + 1;
+   --  Post: buffer is always freed (returned to pool, not released to C)
 
    --  Process a received handshake response (Initiator side).
    --
@@ -87,8 +93,11 @@ is
        not Messages.RX_Pool.Is_Null (RX_Handle)
        and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
        and then Session.Session_Ready,
-     Post   => Messages.RX_Pool.Is_Null (RX_Handle);
-   --  Post: buffer is always freed (no leak)
+     Post   =>
+       Messages.RX_Pool.Is_Null (RX_Handle)
+       and then Messages.RX_Pool.Free_Count =
+                  Messages.RX_Pool.Free_Count'Old + 1;
+   --  Post: buffer is always freed (returned to pool, not released to C)
 
    ---------------------------------------------------------------------------
    --  Protocol Initialization (bridge until Init moves to Protocol)
@@ -126,7 +135,11 @@ is
      Post   =>
        (if Success
         then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
-        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0);
+             and then Messages.TX_Pool.Free_Count =
+                       Messages.TX_Pool.Free_Count'Old - 1
+        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
+             and then Messages.TX_Pool.Free_Count =
+                       Messages.TX_Pool.Free_Count'Old);
 
    --  Build a handshake response message (Responder side).
    --
@@ -154,7 +167,11 @@ is
      Post   =>
        (if Success
         then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
-        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0);
+             and then Messages.TX_Pool.Free_Count =
+                       Messages.TX_Pool.Free_Count'Old - 1
+        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
+             and then Messages.TX_Pool.Free_Count =
+                       Messages.TX_Pool.Free_Count'Old);
 
    ---------------------------------------------------------------------------
    --  Auto Handshake — Rate-limited handshake initiation
@@ -177,6 +194,44 @@ is
        (In_Out => (Protocol_State,
                    Messages.TX_Pool.Pool_State,
                    Messages.TX_Pool.Borrow_State));
+
+   ---------------------------------------------------------------------------
+   --  Timer Dispatch — Execute timer-triggered protocol actions
+   ---------------------------------------------------------------------------
+
+   --  Execute the protocol action triggered by a peer's timer tick.
+   --
+   --  Handles all Timer_Action values except Send_Keepalive (which
+   --  requires Transport.Encrypt_Packet, still in SPARK_Mode => Off).
+   --  For Send_Keepalive, this is a no-op — the C-facing shim handles
+   --  it by calling Build_And_Encrypt_TX locally.
+   --
+   --  On Initiate_Rekey: TX_Ptr/TX_Len contain the initiation message.
+   --  On all other arms:  TX_Ptr is null, TX_Len = 0.
+   procedure Dispatch_Timer
+     (Peer   : Session.Peer_Index;
+      Action : Session.Timers.Timer_Action;
+      TX_Ptr : out Utils.C_Buffer_Ptr;
+      TX_Len : out Messages.Packet_Length)
+   with
+     Global =>
+       (In_Out =>
+          (Protocol_State,
+           Messages.TX_Pool.Pool_State,
+           Messages.TX_Pool.Borrow_State,
+           Session.Peer_States,
+           Session.Mutex_State)),
+     Pre    => Session.Session_Ready,
+     Post   =>
+       Session.Session_Ready
+       and then
+         (if not Utils.Is_Null (TX_Ptr)
+          then TX_Len > 0
+               and then Messages.TX_Pool.Free_Count =
+                         Messages.TX_Pool.Free_Count'Old - 1
+          else TX_Len = 0
+               and then Messages.TX_Pool.Free_Count =
+                         Messages.TX_Pool.Free_Count'Old);
 
    ---------------------------------------------------------------------------
    --  State Helpers (for callers that need narrow Protocol_State access)
