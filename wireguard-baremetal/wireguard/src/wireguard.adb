@@ -407,24 +407,22 @@ is
          return Null_Address;
       end if;
 
-      --  Build initiation directly in TX buffer (zero-copy)
-      Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+      --  Build initiation message, then copy into TX buffer
       declare
-         Msg : Messages.Message_Handshake_Initiation
-         with Import, Address => Messages.TX_Pool.Get_Ptr (Ref).Data'Address;
+         Msg : Messages.Message_Handshake_Initiation;
       begin
          Handshake.Create_Initiation
            (Msg, HS_States (P), My_Identity, My_Peers (P), Result);
-      end;
 
-      if not Result.Success then
+         if not Result.Success then
+            Messages.TX_Pool.Free (Handle);
+            return Null_Address;
+         end if;
+
+         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+         Messages.Write_Initiation (Ref, Msg);
          Messages.TX_Pool.Return_Ref (Handle, Ref);
-         Messages.TX_Pool.Free (Handle);
-         return Null_Address;
-      end if;
-
-      Messages.TX_Pool.Get_Ptr (Ref).Len := Unsigned_16 (Result.Length);
-      Messages.TX_Pool.Return_Ref (Handle, Ref);
+      end;
 
       --  Release to C layer for transmission
       Messages.Release_TX_To_C
@@ -462,24 +460,22 @@ is
          return Null_Address;
       end if;
 
-      --  Build response directly in TX buffer (zero-copy)
-      Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+      --  Build response message, then copy into TX buffer
       declare
-         Resp : Messages.Message_Handshake_Response
-         with Import, Address => Messages.TX_Pool.Get_Ptr (Ref).Data'Address;
+         Resp : Messages.Message_Handshake_Response;
       begin
          Handshake.Create_Response
            (Resp, HS_States (P), My_Identity, Resp_Result);
-      end;
 
-      if not Resp_Result.Success then
+         if not Resp_Result.Success then
+            Messages.TX_Pool.Free (Handle);
+            return Null_Address;
+         end if;
+
+         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+         Messages.Write_Response (Ref, Resp);
          Messages.TX_Pool.Return_Ref (Handle, Ref);
-         Messages.TX_Pool.Free (Handle);
-         return Null_Address;
-      end if;
-
-      Messages.TX_Pool.Get_Ptr (Ref).Len := Unsigned_16 (Resp_Result.Length);
-      Messages.TX_Pool.Return_Ref (Handle, Ref);
+      end;
 
       --  Responder derives transport keys AND activates the new session
       --  atomically (single lock hold) after Create_Response.
@@ -916,8 +912,8 @@ is
       declare
          RX_View : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
-         RX_Msg  : constant Messages.Undefined_Message
-         with Import, Address => RX_View.Buf_Ptr.Data'Address;
+         RX_Msg  : constant Messages.Undefined_Message :=
+           Messages.Read_Undefined (RX_View);
          Result  : WG_Action;
       begin
          if not RX_Msg.Kind'Valid then
