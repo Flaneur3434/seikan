@@ -217,13 +217,20 @@ is
    ---------------------
 
    --  RX: read a message record out of an RX buffer (copies)
+   --  Global => null tells SPARK the body has no side effects,
+   --  so the access-type dereference inside the SPARK_Mode => Off
+   --  body does not propagate a synthetic heap-read global.
    function Read_Initiation
-     (View : RX_Buffer_View) return Message_Handshake_Initiation;
+     (View : RX_Buffer_View) return Message_Handshake_Initiation
+   with Global => null;
 
    function Read_Response
-     (View : RX_Buffer_View) return Message_Handshake_Response;
+     (View : RX_Buffer_View) return Message_Handshake_Response
+   with Global => null;
 
-   function Read_Undefined (View : RX_Buffer_View) return Undefined_Message;
+   function Read_Undefined
+     (View : RX_Buffer_View) return Undefined_Message
+   with Global => null;
 
    --  TX: write a message record into a TX buffer (copies)
    procedure Write_Initiation

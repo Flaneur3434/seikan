@@ -11,7 +11,8 @@ with Utils.Result;
 with Crypto.KX;
 
 package Peer_Table
-  with SPARK_Mode => On
+  with SPARK_Mode    => On,
+       Abstract_State => Peer_State
 is
 
    --------------------------------------------------------------------------
