@@ -15,7 +15,8 @@
 --      - Initialized flag
 
 with Crypto.AEAD;
-with Handshake;
+with Crypto.KX;
+with Interfaces;
 with Messages;
 with Peer_Table;
 with Session;
@@ -102,17 +103,39 @@ is
    --  Post: buffer is always freed (returned to pool, not released to C)
 
    ---------------------------------------------------------------------------
-   --  Protocol Initialization (bridge until Init moves to Protocol)
+   --  Protocol Initialization
    ---------------------------------------------------------------------------
 
-   type Peer_Config_Array is
-     array (Session.Peer_Index) of Handshake.Peer_Config;
+   --  Per-peer configuration loaded from C (sdkconfig keys + AllowedIPs).
+   type Peer_Init_Info is record
+      Has_Key     : Boolean                  := False;
+      Public_Key  : Crypto.KX.Public_Key     := [others => 0];
+      Allowed_IP  : Peer_Table.IP_Prefix     := (Addr => 0, Prefix_Len => 0);
+      Keepalive_S : Interfaces.Unsigned_64   := 0;
+   end record;
 
-   --  Copy identity and peer configs into Protocol's state.
-   --  Called by wireguard.adb.Init after setting up the handshake material.
-   procedure Init_Protocol
-     (Identity : Handshake.Static_Identity; Peers : Peer_Config_Array)
-   with Global => (Output => Protocol_State);
+   type Peer_Init_Array is array (Session.Peer_Index) of Peer_Init_Info;
+
+   --  Initialize the protocol core from raw key material.
+   --
+   --  Derives public key, initializes identity and per-peer configs,
+   --  registers public keys and AllowedIPs in Peer_Table, and sets
+   --  persistent keepalive intervals in Session.
+   --
+   --  Peer 1 MUST have a valid key; peers 2+ are optional.
+   --  On failure (bad key derivation, peer 1 missing): Success = False.
+   procedure Init
+     (Priv_Key : Crypto.KX.Secret_Key;
+      Peers    : Peer_Init_Array;
+      Success  : out Boolean)
+   with
+     Global =>
+       (In_Out => (Protocol_State,
+                   Peer_Table.Peer_State,
+                   Session.Peer_States,
+                   Session.Mutex_State)),
+     Pre  => Session.Session_Ready,
+     Post => Session.Session_Ready;
 
    ---------------------------------------------------------------------------
    --  Handshake TX — Build outgoing handshake messages

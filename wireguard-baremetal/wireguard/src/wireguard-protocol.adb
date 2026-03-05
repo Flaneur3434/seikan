@@ -6,6 +6,7 @@
 
 with Interfaces;   use Interfaces;
 with Utils;        use Utils;
+with Crypto.KX;
 with Handshake;
 with Peer_Table;
 with Session;
@@ -32,10 +33,14 @@ is
    --  Protocol State
    ---------------------------------------------------------------------------
 
-   My_Identity    : Handshake.Static_Identity;
+   My_Identity    : Handshake.Static_Identity :=
+     (Key_Pair => (Pub => [others => 0], Sec => [others => 0]),
+      Mac1_Key => [others => 0]);
    Initialized    : Boolean := False;
 
-   My_Peers       : array (Session.Peer_Index) of Handshake.Peer_Config;
+   My_Peers       : array (Session.Peer_Index) of Handshake.Peer_Config :=
+     [others => (Static_Public => [others => 0],
+                 Mac1_Key      => [others => 0])];
    HS_States      : array (Session.Peer_Index) of Handshake.Handshake_State :=
      [others => Handshake.Empty_Handshake];
 
@@ -44,23 +49,74 @@ is
      [others => Timer.Clock.Never];
 
    ---------------------------------------------------------------------------
-   --  Init_Protocol
+   --  Init — Protocol initialization from raw key material
    ---------------------------------------------------------------------------
 
-   procedure Init_Protocol
-     (Identity : Handshake.Static_Identity;
-      Peers    : Peer_Config_Array)
+   procedure Init
+     (Priv_Key : Crypto.KX.Secret_Key;
+      Peers    : Peer_Init_Array;
+      Success  : out Boolean)
    is
+      Key_Pair    : Crypto.KX.Key_Pair;
+      Init_Status : Status;
    begin
-      My_Identity    := Identity;
-      for P in Session.Peer_Index loop
-         My_Peers (P) := Peers (P);
-      end loop;
+      --  Reset ephemeral state unconditionally
       HS_States       := [others => Handshake.Empty_Handshake];
       Last_Init_Peer  := 1;
       Last_Auto_Inits := [others => Timer.Clock.Never];
-      Initialized     := True;
-   end Init_Protocol;
+      Initialized     := False;
+      Success         := False;
+
+      --  Derive public key from the static private key
+      Crypto.KX.Derive_Public_Key (Key_Pair.Pub, Priv_Key, Init_Status);
+      if not Is_Success (Init_Status) then
+         return;
+      end if;
+      Key_Pair.Sec := Priv_Key;
+
+      --  Initialize our static identity (hashes for MAC1 etc.)
+      Handshake.Initialize_Identity (My_Identity, Key_Pair, Init_Status);
+      if not Is_Success (Init_Status) then
+         return;
+      end if;
+
+      --  Process each peer:
+      --  Peer 1 is required; peers 2+ are optional (skipped if no key).
+      for P in Session.Peer_Index loop
+         pragma Loop_Invariant (Session.Session_Ready);
+         if Peers (P).Has_Key then
+            Handshake.Initialize_Peer
+              (My_Peers (P), Peers (P).Public_Key, Init_Status);
+            if not Is_Success (Init_Status) then
+               --  Peer 1 failure is fatal; others are skipped
+               if P = 1 then
+                  return;
+               end if;
+            else
+               Peer_Table.Set_Public_Key (P, Peers (P).Public_Key);
+
+               declare
+                  AIPs : Peer_Table.Allowed_IP_Array :=
+                    [others => (Addr => 0, Prefix_Len => 0)];
+               begin
+                  AIPs (1) := Peers (P).Allowed_IP;
+                  Peer_Table.Set_Allowed_IPs (P, AIPs, Count => 1);
+               end;
+
+               Session.Set_Persistent_Keepalive
+                 (P, Interval_S => Peers (P).Keepalive_S);
+            end if;
+         else
+            --  Peer 1 must have a key configured
+            if P = 1 then
+               return;
+            end if;
+         end if;
+      end loop;
+
+      Initialized := True;
+      Success     := True;
+   end Init;
 
    ---------------------------------------------------------------------------
    --  Handle_Initiation_RX

@@ -1,12 +1,12 @@
 --  Wireguard - Top-level C interface implementation
 --
---  All WireGuard protocol intelligence lives here. C only does I/O.
+--  Thin C-facing shim.  All protocol intelligence lives in
+--  Wireguard.Protocol (SPARK_Mode => On).  This package converts
+--  C types (System.Address, access params, C.unsigned) to Ada types
+--  and delegates to Protocol operations.
 --
 --  State:
---    My_Identity, My_Peer  — loaded once in Init
---    HS_State              — ephemeral, wiped after session derivation
---    Session state         — managed by Session module (Keypair slots)
---    Timer state           — managed by Session.Timer (evaluated by tick)
+--    Initialized — C-facing guard, set once by Init
 
 with Interfaces;   use Interfaces;
 with Interfaces.C; use Interfaces.C;
@@ -14,7 +14,6 @@ with Utils;        use Utils;
 with WG_Types;     use WG_Types;
 with Crypto.AEAD;
 with Crypto.KX;
-with Handshake;
 with Messages;
 with Session;
 with Session.Timers;
@@ -35,11 +34,7 @@ is
    --  Package State
    ---------------------------------------------------------------------------
 
-   My_Identity : Handshake.Static_Identity;
    Initialized : Boolean := False;
-
-   --  Per-peer state arrays (indexed by Session.Peer_Index = 1..Max_Peers)
-   My_Peers : array (Session.Peer_Index) of Handshake.Peer_Config;
 
    ---------------------------------------------------------------------------
    --  Init
@@ -47,71 +42,43 @@ is
 
    function Init return C_bool is
       use type Interfaces.C.C_bool;
-      use type Interfaces.Unsigned_32;
-      Priv_Key    : Crypto.KX.Secret_Key;
-      Peer_Pub    : Crypto.KX.Public_Key;
-      Key_Pair    : Crypto.KX.Key_Pair;
-      Init_Status : Status;
+
+      Priv_Key  : Crypto.KX.Secret_Key;
+      Peer_Keys : Wireguard.Protocol.Peer_Init_Array;
+      Success   : Boolean;
    begin
       --  Load static private key from sdkconfig
       if WG_Keys.Get_Static_Private_Key (Priv_Key) = C_False then
          return C_False;
       end if;
 
-      --  Derive our public key from the private key
-      Crypto.KX.Derive_Public_Key (Key_Pair.Pub, Priv_Key, Init_Status);
-      if not Is_Success (Init_Status) then
-         return C_False;
-      end if;
-      Key_Pair.Sec := Priv_Key;
-
-      --  Initialize our identity
-      Handshake.Initialize_Identity (My_Identity, Key_Pair, Init_Status);
-      if not Is_Success (Init_Status) then
-         return C_False;
-      end if;
-
-      --  Load and configure each peer from sdkconfig.
+      --  Load per-peer configuration from sdkconfig.
       --  Peer 1 is required; peer 2+ are optional (skipped if no key).
       for P in Session.Peer_Index loop
          declare
-            C_Peer : constant Interfaces.C.unsigned :=
+            C_Peer   : constant Interfaces.C.unsigned :=
               Interfaces.C.unsigned (P);
+            Peer_Pub : Crypto.KX.Public_Key;
          begin
             if WG_Keys.Get_Peer_Public_Key (C_Peer, Peer_Pub) = C_True then
-               Handshake.Initialize_Peer (My_Peers (P), Peer_Pub, Init_Status);
-               if not Is_Success (Init_Status) then
-                  --  Peer 1 failure is fatal; others are skipped
-                  if P = 1 then
-                     return C_False;
-                  end if;
-               else
-                  Peer_Table.Set_Public_Key (P, Peer_Pub);
-
-                  declare
-                     AIPs : Peer_Table.Allowed_IP_Array :=
-                       [others => (Addr => 0, Prefix_Len => 0)];
-                     Addr : constant Interfaces.Unsigned_32 :=
+               Peer_Keys (P) :=
+                 (Has_Key     => True,
+                  Public_Key  => Peer_Pub,
+                  Allowed_IP  =>
+                    (Addr       =>
                        Interfaces.Unsigned_32
-                         (WG_Keys.Get_Peer_Allowed_IP (C_Peer));
-                     Pfx  : constant Natural :=
-                       Natural (WG_Keys.Get_Peer_Allowed_Prefix (C_Peer));
-                  begin
-                     AIPs (1) := (Addr => Addr, Prefix_Len => Pfx);
-                     Peer_Table.Set_Allowed_IPs (P, AIPs, Count => 1);
-                  end;
-
-                  Session.Set_Persistent_Keepalive
-                    (P,
-                     Interval_S =>
-                       Interfaces.Unsigned_64
-                         (WG_Keys.Get_Peer_Keepalive (C_Peer)));
-               end if;
+                         (WG_Keys.Get_Peer_Allowed_IP (C_Peer)),
+                     Prefix_Len =>
+                       Natural (WG_Keys.Get_Peer_Allowed_Prefix (C_Peer))),
+                  Keepalive_S =>
+                    Interfaces.Unsigned_64
+                      (WG_Keys.Get_Peer_Keepalive (C_Peer)));
             else
                --  Peer 1 must have a key configured
                if P = 1 then
                   return C_False;
                end if;
+               --  Optional peers left at default (Has_Key = False)
             end if;
          end;
       end loop;
@@ -123,21 +90,10 @@ is
       --  which creates the binary semaphore and calls Session.Init.
       --  That must be called before wg_init().
 
-      Initialized := True;
+      Wireguard.Protocol.Init (Priv_Key, Peer_Keys, Success);
+      Initialized := Success;
 
-      --  Mirror identity and peer configs into Protocol's SPARK-proven state.
-      --  This bridge keeps both state copies in sync until Init itself
-      --  moves to Protocol (Chunk 7).
-      declare
-         Peers : Wireguard.Protocol.Peer_Config_Array;
-      begin
-         for P in Session.Peer_Index loop
-            Peers (P) := My_Peers (P);
-         end loop;
-         Wireguard.Protocol.Init_Protocol (My_Identity, Peers);
-      end;
-
-      return C_True;
+      return (if Initialized then C_True else C_False);
    end Init;
 
    ---------------------------------------------------------------------------
