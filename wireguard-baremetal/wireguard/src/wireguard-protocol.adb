@@ -18,6 +18,7 @@ package body Wireguard.Protocol
                                             My_Peers,
                                             HS_States,
                                             Last_Init_Peer,
+                                            Last_Auto_Inits,
                                             Initialized))
 is
 
@@ -35,7 +36,9 @@ is
    HS_States      : array (Session.Peer_Index) of Handshake.Handshake_State :=
      [others => Handshake.Empty_Handshake];
 
-   Last_Init_Peer : Session.Peer_Index := 1;
+   Last_Init_Peer  : Session.Peer_Index := 1;
+   Last_Auto_Inits : array (Session.Peer_Index) of Timer.Clock.Timestamp :=
+     [others => Timer.Clock.Never];
 
    ---------------------------------------------------------------------------
    --  Init_Protocol
@@ -50,9 +53,10 @@ is
       for P in Session.Peer_Index loop
          My_Peers (P) := Peers (P);
       end loop;
-      HS_States      := [others => Handshake.Empty_Handshake];
-      Last_Init_Peer := 1;
-      Initialized    := True;
+      HS_States       := [others => Handshake.Empty_Handshake];
+      Last_Init_Peer  := 1;
+      Last_Auto_Inits := [others => Timer.Clock.Never];
+      Initialized     := True;
    end Init_Protocol;
 
    ---------------------------------------------------------------------------
@@ -329,5 +333,46 @@ is
       TX_Len  := Messages.Packet_Length (Resp_Result.Length);
       Success := True;
    end Create_Response;
+
+   ---------------------------------------------------------------------------
+   --  Auto_Handshake
+   ---------------------------------------------------------------------------
+
+   procedure Auto_Handshake
+     (Peer   : Session.Peer_Index;
+      TX_Ptr : out Utils.C_Buffer_Ptr;
+      TX_Len : out Messages.Packet_Length)
+   is
+      Null_Ptr    : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
+      Now     : constant Timer.Clock.Timestamp := Timer.Clock.Now;
+      Success : Boolean;
+   begin
+      TX_Ptr  := Null_Ptr;
+      TX_Len := 0;
+
+      --  Handshake already in flight for this peer — don't re-initiate
+      if HS_States (Peer).Kind /= Handshake.State_Empty then
+         return;
+      end if;
+
+      --  Rate limit: at most once every Rekey_Timeout_S seconds per peer
+      if Last_Auto_Inits (Peer) /= Timer.Clock.Never
+        and then Now - Last_Auto_Inits (Peer) < Session.Rekey_Timeout_S
+      then
+         return;
+      end if;
+
+      Create_Initiation (Peer, TX_Ptr, TX_Len, Success);
+      Last_Auto_Inits (Peer) := Now;
+   end Auto_Handshake;
+
+   ---------------------------------------------------------------------------
+   --  Clear_HS_State
+   ---------------------------------------------------------------------------
+
+   procedure Clear_HS_State (Peer : Session.Peer_Index) is
+   begin
+      HS_States (Peer) := Handshake.Empty_Handshake;
+   end Clear_HS_State;
 
 end Wireguard.Protocol;

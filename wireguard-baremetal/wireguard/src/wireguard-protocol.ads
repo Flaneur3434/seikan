@@ -156,4 +156,35 @@ is
         then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
         else Utils.Is_Null (TX_Ptr) and then TX_Len = 0);
 
+   ---------------------------------------------------------------------------
+   --  Auto Handshake — Rate-limited handshake initiation
+   ---------------------------------------------------------------------------
+
+   --  Rate-limited handshake initiation for auto-init.
+   --
+   --  Called when inner data is queued but no session exists.
+   --  Rate-limits to at most once per Rekey_Timeout_S (5 s) and
+   --  skips if a handshake is already in flight for this peer.
+   --
+   --  On success: TX_Ptr/TX_Len point to wire-ready initiation buffer.
+   --  On rate-limit/skip/error: TX_Ptr is null, TX_Len = 0.
+   procedure Auto_Handshake
+     (Peer   : Session.Peer_Index;
+      TX_Ptr : out Utils.C_Buffer_Ptr;
+      TX_Len : out Messages.Packet_Length)
+   with
+     Global =>
+       (In_Out => (Protocol_State,
+                   Messages.TX_Pool.Pool_State,
+                   Messages.TX_Pool.Borrow_State));
+
+   ---------------------------------------------------------------------------
+   --  State Helpers (for callers that need narrow Protocol_State access)
+   ---------------------------------------------------------------------------
+
+   --  Clear handshake ephemeral state for a peer.
+   --  Used by Dispatch_Timer on Zero_All_Keys action.
+   procedure Clear_HS_State (Peer : Session.Peer_Index)
+   with Global => (In_Out => Protocol_State);
+
 end Wireguard.Protocol;

@@ -27,8 +27,6 @@ package body Wireguard
   with SPARK_Mode => Off
 is
 
-   use type Handshake.Handshake_Error;
-
    --  C_bool helpers
    C_True  : constant Interfaces.C.C_bool := Interfaces.C.C_bool'Val (1);
    C_False : constant Interfaces.C.C_bool := Interfaces.C.C_bool'Val (0);
@@ -41,15 +39,7 @@ is
    Initialized : Boolean := False;
 
    --  Per-peer state arrays (indexed by Session.Peer_Index = 1..Max_Peers)
-   My_Peers        : array (Session.Peer_Index) of Handshake.Peer_Config;
-   HS_States       : array (Session.Peer_Index) of Handshake.Handshake_State :=
-     [others => Handshake.Empty_Handshake];
-   Last_Auto_Inits : array (Session.Peer_Index) of Timer.Clock.Timestamp :=
-     [others => Timer.Clock.Never];
-
-   --  Remembers which peer's initiation we processed, so Create_Response
-   --  can find the right HS_States slot without a peer parameter.
-   Last_Init_Peer : Session.Peer_Index := 1;
+   My_Peers : array (Session.Peer_Index) of Handshake.Peer_Config;
 
    ---------------------------------------------------------------------------
    --  Init
@@ -128,10 +118,6 @@ is
 
       --  Packet pools are initialized from C (packet_pool_init) with
       --  statically-allocated semaphore handles before wg_init is called.
-
-      --  Reset per-peer protocol state
-      HS_States := [others => Handshake.Empty_Handshake];
-      Last_Auto_Inits := [others => Timer.Clock.Never];
 
       --  Session table is initialized from C via wg_session_init()
       --  which creates the binary semaphore and calls Session.Init.
@@ -365,13 +351,7 @@ is
    end Send;
 
    ---------------------------------------------------------------------------
-   --  Auto_Handshake — Rate-limited handshake initiation for auto-init
-   --
-   --  Called by C when inner data is queued but no session exists.
-   --  Ada rate-limits to at most once every Rekey_Timeout_S (5 s) and
-   --  skips if a handshake is already in flight.
-   --  Returns a TX buffer + length if C needs to sendto().
-   --  TX_Buf = Null_Address means no packet to send (rate-limited or error).
+   --  Auto_Handshake — Delegate to Protocol
    ---------------------------------------------------------------------------
 
    procedure Auto_Handshake
@@ -379,14 +359,16 @@ is
       TX_Buf : out System.Address;
       TX_Len : out Interfaces.Unsigned_16)
    is
-      use type Handshake.Handshake_State_Kind;
-
-      Now : constant Timer.Clock.Timestamp := Timer.Clock.Now;
-      Len : aliased Unsigned_16 := 0;
-      P   : Session.Peer_Index;
+      P      : Session.Peer_Index;
+      TX_Ptr : C_Buffer_Ptr;
+      Pkt_Len : Messages.Packet_Length;
    begin
       TX_Buf := System.Null_Address;
       TX_Len := 0;
+
+      if not Initialized then
+         return;
+      end if;
 
       --  Validate peer index
       if Peer
@@ -397,21 +379,11 @@ is
       end if;
       P := Session.Peer_Index (Peer);
 
-      --  Handshake already in flight for this peer — don't re-initiate
-      if HS_States (P).Kind /= Handshake.State_Empty then
-         return;
+      Wireguard.Protocol.Auto_Handshake (P, TX_Ptr, Pkt_Len);
+      if not Is_Null (TX_Ptr) then
+         TX_Buf := To_Address (TX_Ptr);
+         TX_Len := Unsigned_16 (Pkt_Len);
       end if;
-
-      --  Rate limit: at most once every Rekey_Timeout_S seconds per peer
-      if Last_Auto_Inits (P) /= Timer.Clock.Never
-        and then Now - Last_Auto_Inits (P) < Session.Rekey_Timeout_S
-      then
-         return;
-      end if;
-
-      TX_Buf := Create_Initiation (Peer, Len'Access);
-      TX_Len := Len;
-      Last_Auto_Inits (P) := Now;
    end Auto_Handshake;
 
    ---------------------------------------------------------------------------
@@ -465,7 +437,7 @@ is
             --  Last_Handshake so the action doesn't re-fire.
             Session.Expire_Session (P);
             Session.Clear_Handshake_Timestamp (P);
-            HS_States (P) := Handshake.Empty_Handshake;
+            Wireguard.Protocol.Clear_HS_State (P);
 
          when Initiate_Rekey                    =>
             declare
