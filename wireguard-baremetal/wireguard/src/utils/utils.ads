@@ -61,7 +61,8 @@ is
    --  The raw address is hidden in the private part (SPARK_Mode => Off).
    ---------------------
 
-   type C_Buffer_Ptr is private;
+   type C_Buffer_Ptr is private
+   with Default_Initial_Condition => Is_Null (C_Buffer_Ptr);
 
    function Is_Null (Ptr : C_Buffer_Ptr) return Boolean
    with Global => null;

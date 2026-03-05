@@ -139,6 +139,18 @@ is
 
       Initialized := True;
 
+      --  Mirror identity and peer configs into Protocol's SPARK-proven state.
+      --  This bridge keeps both state copies in sync until Init itself
+      --  moves to Protocol (Chunk 7).
+      declare
+         Peers : Wireguard.Protocol.Peer_Config_Array;
+      begin
+         for P in Session.Peer_Index loop
+            Peers (P) := My_Peers (P);
+         end loop;
+         Wireguard.Protocol.Init_Protocol (My_Identity, Peers);
+      end;
+
       return C_True;
    end Init;
 
@@ -228,7 +240,7 @@ is
    end Build_And_Encrypt_TX;
 
    ---------------------------------------------------------------------------
-   --  Create_Initiation
+   --  Create_Initiation — Delegate to Protocol
    ---------------------------------------------------------------------------
 
    function Create_Initiation
@@ -237,11 +249,10 @@ is
    is
       use System;
 
-      Result : Handshake.Initiation_Result;
-      Handle : Messages.Buffer_Handle;
-      Ref    : Messages.Buffer_Ref;
-      Ptr    : C_Buffer_Ptr;
-      P      : Session.Peer_Index;
+      P       : Session.Peer_Index;
+      TX_Ptr  : C_Buffer_Ptr;
+      TX_Len  : Messages.Packet_Length;
+      Success : Boolean;
    begin
       Out_Len.all := 0;
 
@@ -258,39 +269,17 @@ is
       end if;
       P := Session.Peer_Index (Peer_ID);
 
-      --  Allocate a TX pool buffer
-      Messages.TX_Pool.Allocate (Handle);
-      if Messages.TX_Pool.Is_Null (Handle) then
+      Wireguard.Protocol.Create_Initiation (P, TX_Ptr, TX_Len, Success);
+      if not Success then
          return Null_Address;
       end if;
 
-      --  Build initiation message, then copy into TX buffer
-      declare
-         Msg : Messages.Message_Handshake_Initiation;
-      begin
-         Handshake.Create_Initiation
-           (Msg, HS_States (P), My_Identity, My_Peers (P), Result);
-
-         if not Result.Success then
-            Messages.TX_Pool.Free (Handle);
-            return Null_Address;
-         end if;
-
-         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
-         Messages.Write_Initiation (Ref, Msg);
-         Messages.TX_Pool.Return_Ref (Handle, Ref);
-      end;
-
-      --  Release to C layer for transmission
-      Messages.Release_TX_To_C
-        (Handle, Messages.Packet_Length (Result.Length), Ptr);
-
-      Out_Len.all := Unsigned_16 (Result.Length);
-      return To_Address (Ptr);
+      Out_Len.all := Unsigned_16 (TX_Len);
+      return To_Address (TX_Ptr);
    end Create_Initiation;
 
    ---------------------------------------------------------------------------
-   --  Create_Response
+   --  Create_Response — Delegate to Protocol
    ---------------------------------------------------------------------------
 
    function Create_Response
@@ -298,12 +287,9 @@ is
    is
       use System;
 
-      P           : constant Session.Peer_Index := Last_Init_Peer;
-      Resp_Result : Handshake.Response_Result;
-      Handle      : Messages.Buffer_Handle;
-      Ref         : Messages.Buffer_Ref;
-      Sess_Status : Status;
-      Ptr         : C_Buffer_Ptr;
+      TX_Ptr  : C_Buffer_Ptr;
+      TX_Len  : Messages.Packet_Length;
+      Success : Boolean;
    begin
       Out_Len.all := 0;
 
@@ -311,48 +297,13 @@ is
          return Null_Address;
       end if;
 
-      --  Allocate a TX pool buffer
-      Messages.TX_Pool.Allocate (Handle);
-      if Messages.TX_Pool.Is_Null (Handle) then
+      Wireguard.Protocol.Create_Response (TX_Ptr, TX_Len, Success);
+      if not Success then
          return Null_Address;
       end if;
 
-      --  Build response message, then copy into TX buffer
-      declare
-         Resp : Messages.Message_Handshake_Response;
-      begin
-         Handshake.Create_Response
-           (Resp, HS_States (P), My_Identity, Resp_Result);
-
-         if not Resp_Result.Success then
-            Messages.TX_Pool.Free (Handle);
-            return Null_Address;
-         end if;
-
-         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
-         Messages.Write_Response (Ref, Resp);
-         Messages.TX_Pool.Return_Ref (Handle, Ref);
-      end;
-
-      --  Responder derives transport keys AND activates the new session
-      --  atomically (single lock hold) after Create_Response.
-      --  Per WireGuard spec §5.4.4: responder has all Noise material.
-      Session.Derive_And_Activate
-        (Peer   => P,
-         HS     => HS_States (P),
-         Now    => Timer.Clock.Now,
-         Result => Sess_Status);
-      if not Is_Success (Sess_Status) then
-         Messages.TX_Pool.Free (Handle);
-         return Null_Address;
-      end if;
-
-      --  Release to C layer for transmission
-      Messages.Release_TX_To_C
-        (Handle, Messages.Packet_Length (Resp_Result.Length), Ptr);
-
-      Out_Len.all := Unsigned_16 (Resp_Result.Length);
-      return To_Address (Ptr);
+      Out_Len.all := Unsigned_16 (TX_Len);
+      return To_Address (TX_Ptr);
    end Create_Response;
 
    ---------------------------------------------------------------------------

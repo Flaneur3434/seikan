@@ -14,16 +14,18 @@
 --      - Last_Auto_Inits (per-peer rate-limit timestamps)
 --      - Initialized flag
 
+with Handshake;
 with Messages;
 with Peer_Table;
 with Session;
 with Session_Keys;
+with Utils;
 with WG_Types; use WG_Types;
 
 package Wireguard.Protocol
-  with SPARK_Mode     => On,
-       Abstract_State => Protocol_State
+  with SPARK_Mode => On, Abstract_State => Protocol_State
 is
+   use type Messages.Packet_Length;
 
    ---------------------------------------------------------------------------
    --  Handshake RX — Process incoming handshake messages
@@ -50,13 +52,12 @@ is
    with
      Global =>
        (Input    => (Peer_Table.Peer_State),
-        In_Out   => (Protocol_State,
-                     Messages.RX_Pool.Pool_State),
+        In_Out   => (Protocol_State, Messages.RX_Pool.Pool_State),
         Proof_In => Messages.RX_Pool.Borrow_State),
-     Pre  => not Messages.RX_Pool.Is_Null (RX_Handle)
-              and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle),
-     Post =>
-       Messages.RX_Pool.Is_Null (RX_Handle);
+     Pre    =>
+       not Messages.RX_Pool.Is_Null (RX_Handle)
+       and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle),
+     Post   => Messages.RX_Pool.Is_Null (RX_Handle);
    --  Post: buffer is always freed (no leak)
 
    --  Process a received handshake response (Initiator side).
@@ -75,17 +76,84 @@ is
       Action    : out WG_Action)
    with
      Global =>
-       (In_Out   => (Protocol_State,
-                     Messages.RX_Pool.Pool_State,
-                     Session.Peer_States,
-                     Session.Mutex_State,
-                     Session_Keys.KP_State),
+       (In_Out   =>
+          (Protocol_State,
+           Messages.RX_Pool.Pool_State,
+           Session.Peer_States,
+           Session.Mutex_State,
+           Session_Keys.KP_State),
         Proof_In => Messages.RX_Pool.Borrow_State),
-     Pre  => not Messages.RX_Pool.Is_Null (RX_Handle)
-              and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
-              and then Session.Session_Ready,
-     Post =>
-       Messages.RX_Pool.Is_Null (RX_Handle);
+     Pre    =>
+       not Messages.RX_Pool.Is_Null (RX_Handle)
+       and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
+       and then Session.Session_Ready,
+     Post   => Messages.RX_Pool.Is_Null (RX_Handle);
    --  Post: buffer is always freed (no leak)
+
+   ---------------------------------------------------------------------------
+   --  Protocol Initialization (bridge until Init moves to Protocol)
+   ---------------------------------------------------------------------------
+
+   type Peer_Config_Array is
+     array (Session.Peer_Index) of Handshake.Peer_Config;
+
+   --  Copy identity and peer configs into Protocol's state.
+   --  Called by wireguard.adb.Init after setting up the handshake material.
+   procedure Init_Protocol
+     (Identity : Handshake.Static_Identity; Peers : Peer_Config_Array)
+   with Global => (Output => Protocol_State);
+
+   ---------------------------------------------------------------------------
+   --  Handshake TX — Build outgoing handshake messages
+   ---------------------------------------------------------------------------
+
+   --  Build a handshake initiation message for a peer (Initiator side).
+   --
+   --  Allocates a TX pool buffer, builds the Noise IK first message,
+   --  copies it into the buffer, and releases the buffer to C.
+   --
+   procedure Create_Initiation
+     (Peer    : Session.Peer_Index;
+      TX_Ptr  : out Utils.C_Buffer_Ptr;
+      TX_Len  : out Messages.Packet_Length;
+      Success : out Boolean)
+   with
+     Global =>
+       (In_Out =>
+          (Protocol_State,
+           Messages.TX_Pool.Pool_State,
+           Messages.TX_Pool.Borrow_State)),
+     Post   =>
+       (if Success
+        then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
+        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0);
+
+   --  Build a handshake response message (Responder side).
+   --
+   --  Must be called after Handle_Initiation_RX returned
+   --  Action_Send_Response.  Uses Last_Init_Peer (set by
+   --  Handle_Initiation_RX) to find the correct handshake state.
+   --
+   --  Derives transport keys and activates the new session
+   --  atomically after building the response.
+   --
+   procedure Create_Response
+     (TX_Ptr  : out Utils.C_Buffer_Ptr;
+      TX_Len  : out Messages.Packet_Length;
+      Success : out Boolean)
+   with
+     Global =>
+       (In_Out =>
+          (Protocol_State,
+           Messages.TX_Pool.Pool_State,
+           Messages.TX_Pool.Borrow_State,
+           Session.Peer_States,
+           Session.Mutex_State,
+           Session_Keys.KP_State)),
+     Pre    => Session.Session_Ready,
+     Post   =>
+       (if Success
+        then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
+        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0);
 
 end Wireguard.Protocol;
