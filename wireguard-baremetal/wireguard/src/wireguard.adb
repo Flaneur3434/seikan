@@ -263,8 +263,11 @@ is
 
       --  Process response using the matched peer's handshake state
       Handshake.Process_Response
-        (Msg, HS_States (Found_Peer), My_Identity,
-         My_Peers (Found_Peer), HS_Err);
+        (Msg,
+         HS_States (Found_Peer),
+         My_Identity,
+         My_Peers (Found_Peer),
+         HS_Err);
 
       if HS_Err /= Handshake.HS_OK then
          return Action_Error;
@@ -311,6 +314,7 @@ is
       TX_Ref       : Messages.Buffer_Ref;
       Enc_Len      : Unsigned_16;
       Enc_Result   : Status;
+      Ptr          : C_Buffer_Ptr;
    begin
       TX_Addr := Null_Address;
       TX_Len := 0;
@@ -334,7 +338,7 @@ is
       Messages.TX_Pool.Borrow_Mut (TX_Handle, TX_Ref);
       declare
          Out_Pkt : Byte_Array (0 .. Messages.Packet_Size - 1)
-         with Import, Address => TX_Ref.Buf_Ptr.Data'Address;
+         with Import, Address => Messages.TX_Pool.Get_Ptr (TX_Ref).Data'Address;
       begin
          Transport.Encrypt_Packet
            (Key            => Session.Send_Key (KP),
@@ -355,12 +359,13 @@ is
       --  Record that we sent a packet (resets keepalive timer)
       Session.Mark_Sent (Peer, Timer.Clock.Now);
 
-      TX_Ref.Buf_Ptr.Len := Enc_Len;
+      Messages.TX_Pool.Get_Ptr (TX_Ref).Len := Enc_Len;
       Messages.TX_Pool.Return_Ref (TX_Handle, TX_Ref);
 
       --  Release TX buffer to C for transmission
       Messages.Release_TX_To_C
-        (TX_Handle, Messages.Packet_Length (Enc_Len), TX_Addr);
+        (TX_Handle, Messages.Packet_Length (Enc_Len), Ptr);
+      TX_Addr := To_Address (Ptr);
       TX_Len := Enc_Len;
       return True;
    end Build_And_Encrypt_TX;
@@ -378,7 +383,7 @@ is
       Result : Handshake.Initiation_Result;
       Handle : Messages.Buffer_Handle;
       Ref    : Messages.Buffer_Ref;
-      Addr   : System.Address;
+      Ptr    : C_Buffer_Ptr;
       P      : Session.Peer_Index;
    begin
       Out_Len.all := 0;
@@ -406,7 +411,7 @@ is
       Messages.TX_Pool.Borrow_Mut (Handle, Ref);
       declare
          Msg : Messages.Message_Handshake_Initiation
-         with Import, Address => Ref.Buf_Ptr.Data'Address;
+         with Import, Address => Messages.TX_Pool.Get_Ptr (Ref).Data'Address;
       begin
          Handshake.Create_Initiation
            (Msg, HS_States (P), My_Identity, My_Peers (P), Result);
@@ -418,15 +423,15 @@ is
          return Null_Address;
       end if;
 
-      Ref.Buf_Ptr.Len := Unsigned_16 (Result.Length);
+      Messages.TX_Pool.Get_Ptr (Ref).Len := Unsigned_16 (Result.Length);
       Messages.TX_Pool.Return_Ref (Handle, Ref);
 
       --  Release to C layer for transmission
       Messages.Release_TX_To_C
-        (Handle, Messages.Packet_Length (Result.Length), Addr);
+        (Handle, Messages.Packet_Length (Result.Length), Ptr);
 
       Out_Len.all := Unsigned_16 (Result.Length);
-      return Addr;
+      return To_Address (Ptr);
    end Create_Initiation;
 
    ---------------------------------------------------------------------------
@@ -443,7 +448,7 @@ is
       Handle      : Messages.Buffer_Handle;
       Ref         : Messages.Buffer_Ref;
       Sess_Status : Status;
-      Addr        : System.Address;
+      Ptr         : C_Buffer_Ptr;
    begin
       Out_Len.all := 0;
 
@@ -461,7 +466,7 @@ is
       Messages.TX_Pool.Borrow_Mut (Handle, Ref);
       declare
          Resp : Messages.Message_Handshake_Response
-         with Import, Address => Ref.Buf_Ptr.Data'Address;
+         with Import, Address => Messages.TX_Pool.Get_Ptr (Ref).Data'Address;
       begin
          Handshake.Create_Response
            (Resp, HS_States (P), My_Identity, Resp_Result);
@@ -473,7 +478,7 @@ is
          return Null_Address;
       end if;
 
-      Ref.Buf_Ptr.Len := Unsigned_16 (Resp_Result.Length);
+      Messages.TX_Pool.Get_Ptr (Ref).Len := Unsigned_16 (Resp_Result.Length);
       Messages.TX_Pool.Return_Ref (Handle, Ref);
 
       --  Responder derives transport keys AND activates the new session
@@ -491,10 +496,10 @@ is
 
       --  Release to C layer for transmission
       Messages.Release_TX_To_C
-        (Handle, Messages.Packet_Length (Resp_Result.Length), Addr);
+        (Handle, Messages.Packet_Length (Resp_Result.Length), Ptr);
 
       Out_Len.all := Unsigned_16 (Resp_Result.Length);
-      return Addr;
+      return To_Address (Ptr);
    end Create_Response;
 
    ---------------------------------------------------------------------------
@@ -779,7 +784,7 @@ is
 
          declare
             Pkt : Byte_Array (0 .. Natural (RX_Length) - 1)
-            with Import, Address => RX_Ref.Buf_Ptr.Data'Address;
+            with Import, Address => Messages.RX_Pool.Get_Ptr (RX_Ref).Data'Address;
          begin
             Transport.Decrypt_Packet
               (Key     => Session.Receive_Key (KP),
@@ -897,7 +902,7 @@ is
          return Action_Error;
       end if;
 
-      Messages.Acquire_RX_From_C (RX_Buf, RX_Handle, RX_Length);
+      Messages.Acquire_RX_From_C (From_Address (RX_Buf), RX_Handle, RX_Length);
 
       if Messages.RX_Pool.Is_Null (RX_Handle) then
          return Action_Error;
