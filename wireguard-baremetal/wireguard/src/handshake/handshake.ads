@@ -162,36 +162,48 @@ is
    --  Handshake Result
    ---------------------
 
-   --  Unified result for all handshake operations.
+   --  Unified result for handshake create/process operations.
    --  On success (Is_Ok), Ok holds the wire message length (or 0
    --  for Process_* which don't produce output).
    --  On failure (Is_Err), Err holds the specific error code.
    package HS_Result is new Utils.Result (T => Natural, E => Handshake_Error);
    use type HS_Result.Result_Kind;
 
+   --  Result for Initialize_Identity: success payload is Static_Identity.
+   package Identity_Result is new Utils.Result
+     (T => Static_Identity, E => Handshake_Error);
+   use type Identity_Result.Result_Kind;
+
+   --  Result for Initialize_Peer: success payload is Peer_Config.
+   package Peer_Result is new Utils.Result
+     (T => Peer_Config, E => Handshake_Error);
+   use type Peer_Result.Result_Kind;
+
    ---------------------
    --  Procedures
    ---------------------
 
-   --  Initialize static identity with a keypair
-   --  Computes MAC1 key from static public key
+   --  Initialize static identity with a keypair.
+   --  On success, Result.Ok holds the fully initialized Static_Identity.
    procedure Initialize_Identity
-     (Identity : out Static_Identity;
-      Key_Pair : Crypto.KX.Key_Pair;
-      Result   : out Status)
+     (Key_Pair : Crypto.KX.Key_Pair;
+      Result   : out Identity_Result.Result)
    with
      Global => null,
-     Post   => (if Is_Success (Result) then Identity.Key_Pair = Key_Pair);
+     Pre    => not Result'Constrained,
+     Post   => (if Result.Kind = Identity_Result.Is_Ok
+                then Result.Ok.Key_Pair = Key_Pair);
 
-   --  Initialize peer configuration
-   --  Computes MAC1 key for the peer
+   --  Initialize peer configuration.
+   --  On success, Result.Ok holds the fully initialized Peer_Config.
    procedure Initialize_Peer
-     (Peer        : out Peer_Config;
-      Peer_Public : Crypto.KX.Public_Key;
-      Result      : out Status)
+     (Peer_Public : Crypto.KX.Public_Key;
+      Result      : out Peer_Result.Result)
    with
      Global => null,
-     Post   => (if Is_Success (Result) then Peer.Static_Public = Peer_Public);
+     Pre    => not Result'Constrained,
+     Post   => (if Result.Kind = Peer_Result.Is_Ok
+                then Result.Ok.Static_Public = Peer_Public);
 
    --  Create a new handshake initiation message (TX path)
    --
