@@ -1,0 +1,11 @@
+# ESP-IDF release build overrides
+# Applied on top of sdkconfig.defaults when building with --release
+#
+# Optimise for size, disable C assertions, keep info logging.
+
+# Compiler: -Os
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE=y
+
+CONFIG_BOOTLOADER_COMPILER_OPTIMIZATION_SIZE=y

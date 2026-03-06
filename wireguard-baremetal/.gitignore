@@ -6,7 +6,11 @@ cmake-build-release/
 # ESP-IDF
 sdkconfig
 sdkconfig.old
+sdkconfig.secrets
 managed_components/
+
+# Build profile marker
+.build_profile
 
 # Editor
 .vscode/

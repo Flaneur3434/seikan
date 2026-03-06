@@ -1,0 +1,5 @@
+--  Enable ghost code at runtime for development builds.
+--  Ghost variables, functions, and procedures are preserved in the
+--  executable so that Pre/Post contracts referencing ghost entities
+--  (e.g. Is_Mutably_Borrowed) become real runtime assertions.
+pragma Assertion_Policy (Ghost => Check);
