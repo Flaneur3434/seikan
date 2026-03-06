@@ -20,7 +20,7 @@ tags = ["wireguard", "vpn", "embedded"]
 # Development  (alr build)  -- full runtime checks, assertions, debug info
 # Note: riscv64-elf-as 2.44 segfaults on DWARF5 debug sections (GCC 15 default).
 # Use -gdwarf-4 explicitly instead of relying on debug_info = "Yes" (which emits -g).
-development.optimization   = ["-O1", "-gnatn", "-ffunction-sections", "-fdata-sections", "-gdwarf-4"]
+development.optimization   = ["-O0", "-gnatn", "-ffunction-sections", "-fdata-sections", "-gdwarf-4"]
 development.runtime_checks = "Everything"
 development.contracts      = "Yes"
 development.debug_info     = "No"
