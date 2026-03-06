@@ -12,8 +12,10 @@ package Utils.Result with SPARK_Mode => On is
    end record;
 
    function Ok (V : T) return Result
-   with Global => null, Post => Ok'Result.Kind = Is_Ok;
+   with Global => null,
+        Post   => Ok'Result.Kind = Is_Ok and then Ok'Result.Ok = V;
 
    function Err (V : E) return Result
-   with Global => null, Post => Err'Result.Kind = Is_Err;
+   with Global => null,
+        Post   => Err'Result.Kind = Is_Err and then Err'Result.Err = V;
 end Utils.Result;

@@ -29,6 +29,7 @@ is
 
    use type Handshake.Handshake_Error;
    use type Handshake.Handshake_State_Kind;
+   use type Handshake.HS_Result.Result_Kind;
 
    ---------------------------------------------------------------------------
    --  Protocol State
@@ -287,7 +288,7 @@ is
       Success : out Boolean)
    is
       Null_Ptr : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
-      Result   : Handshake.Initiation_Result;
+      Result   : Handshake.HS_Result.Result;
       Handle   : Messages.Buffer_Handle;
       Ref      : Messages.Buffer_Ref;
    begin
@@ -312,7 +313,7 @@ is
          Handshake.Create_Initiation
            (Msg, HS_States (Peer), My_Identity, My_Peers (Peer), Result);
 
-         if not Result.Success then
+         if Result.Kind /= Handshake.HS_Result.Is_Ok then
             Messages.TX_Pool.Free (Handle);
             return;
          end if;
@@ -325,9 +326,9 @@ is
       --  Release to C layer for transmission
       pragma Warnings (Off, Handle);  --  nullified by Release_TX_To_C; dead after
       Messages.Release_TX_To_C
-        (Handle, Messages.Packet_Length (Result.Length), TX_Ptr);
+        (Handle, Messages.Packet_Length (Result.Ok), TX_Ptr);
 
-      TX_Len  := Messages.Packet_Length (Result.Length);
+      TX_Len  := Messages.Packet_Length (Result.Ok);
       Success := True;
    end Create_Initiation;
 
@@ -352,7 +353,7 @@ is
    is
       Null_Ptr    : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
       P           : constant Session.Peer_Index := Last_Init_Peer;
-      Resp_Result : Handshake.Response_Result;
+      Resp_Result : Handshake.HS_Result.Result;
       Handle      : Messages.Buffer_Handle;
       Sess_Status : Status;
    begin
@@ -377,7 +378,7 @@ is
          Handshake.Create_Response
            (Resp, HS_States (P), My_Identity, Resp_Result);
 
-         if not Resp_Result.Success then
+         if Resp_Result.Kind /= Handshake.HS_Result.Is_Ok then
             Messages.TX_Pool.Free (Handle);
             return;
          end if;
@@ -412,9 +413,9 @@ is
       --  Release to C layer for transmission
       pragma Warnings (Off, Handle);  --  nullified by Release_TX_To_C; dead after
       Messages.Release_TX_To_C
-        (Handle, Messages.Packet_Length (Resp_Result.Length), TX_Ptr);
+        (Handle, Messages.Packet_Length (Resp_Result.Ok), TX_Ptr);
 
-      TX_Len  := Messages.Packet_Length (Resp_Result.Length);
+      TX_Len  := Messages.Packet_Length (Resp_Result.Ok);
       Success := True;
    end Create_Response;
 

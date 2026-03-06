@@ -293,7 +293,7 @@ is
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
-      Result   : out Initiation_Result)
+      Result   : out HS_Result.Result)
    is
       Local_Status : Status;
       Temp_Key     : Crypto.AEAD.Key_Buffer;
@@ -311,7 +311,7 @@ is
               Encrypted_Timestamp => [others => 0],
               Mac1                => [others => 0],
               Mac2                => [others => 0]);
-      Result := (Success => False, Length => 0);
+      Result := HS_Result.Err (HS_Failed);
 
       --  Allocate local session index
       Allocate_Local_Index (State.Local_Index);
@@ -450,7 +450,7 @@ is
       State.Kind := State_Initiator_Sent;
       State.Role := Role_Initiator;
 
-      Result := (Success => True, Length => Messages.Handshake_Init_Size);
+      Result := HS_Result.Ok (Messages.Handshake_Init_Size);
    end Create_Initiation;
 
    procedure Process_Initiation
@@ -635,7 +635,7 @@ is
      (Msg      : out Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
-      Result   : out Response_Result)
+      Result   : out HS_Result.Result)
    is
       pragma Unreferenced (Identity);
 
@@ -659,7 +659,7 @@ is
               Encrypted_Empty => [others => 0],
               Mac1            => [others => 0],
               Mac2            => [others => 0]);
-      Result := (Success => False, Length => 0);
+      Result := HS_Result.Err (HS_Failed);
 
       --  Generate responder ephemeral keypair
       Crypto.KX.Generate_Key_Pair (State.Ephemeral, Local_Status);
@@ -780,7 +780,7 @@ is
       --  Update state machine
       State.Kind := State_Responder_Sent;
 
-      Result := (Success => True, Length => Messages.Handshake_Response_Size);
+      Result := HS_Result.Ok (Messages.Handshake_Response_Size);
    end Create_Response;
 
    procedure Process_Response
