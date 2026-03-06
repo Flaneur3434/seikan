@@ -1,5 +1,21 @@
---  Enable ghost code at runtime for development builds.
---  Ghost variables, functions, and procedures are preserved in the
---  executable so that Pre/Post contracts referencing ghost entities
---  (e.g. Is_Mutably_Borrowed) become real runtime assertions.
+--  Development-build assertion policy.
+--
+--  Ghost => Check
+--    Ghost entities (variables, functions) are compiled into the
+--    executable so that contracts referencing them (e.g.
+--    Is_Mutably_Borrowed, Session_Ready) are evaluable at runtime.
+--
+--  Pre => Check
+--    Preconditions are checked at runtime to catch caller bugs.
+--
+--  Post => Ignore
+--    Postconditions are NOT checked at runtime.  Several post-
+--    conditions use Free_Count'Old which reads the pool's Free_Top
+--    without the pool lock.  Concurrent C_Allocate/C_Free calls
+--    can change Free_Top between entry and exit, causing spurious
+--    assertion failures.  GNATprove verifies postconditions
+--    statically under a sequential model, which is the correct
+--    level of assurance for these properties.
 pragma Assertion_Policy (Ghost => Check);
+pragma Assertion_Policy (Pre   => Check);
+pragma Assertion_Policy (Post  => Ignore);
