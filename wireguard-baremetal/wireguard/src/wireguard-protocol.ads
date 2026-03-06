@@ -34,6 +34,40 @@ is
    use type Messages.Packet_Length;
 
    ---------------------------------------------------------------------------
+   --  Ghost helpers for postconditions
+   ---------------------------------------------------------------------------
+
+   --  TX buffer was successfully released to C: pointer is live,
+   --  length is positive, one pool slot consumed.
+   function TX_Sent
+     (Ptr         : Utils.C_Buffer_Ptr;
+      Len         : Messages.Packet_Length;
+      Free_Before : Natural;
+      Free_After  : Natural) return Boolean
+   is (not Utils.Is_Null (Ptr) and then Len > 0
+       and then Free_After = Free_Before - 1)
+   with Ghost, Global => null;
+
+   --  TX buffer was NOT released: pointer is null, length is zero,
+   --  pool unchanged.
+   function TX_Unsent
+     (Ptr         : Utils.C_Buffer_Ptr;
+      Len         : Messages.Packet_Length;
+      Free_Before : Natural;
+      Free_After  : Natural) return Boolean
+   is (Utils.Is_Null (Ptr) and then Len = 0
+       and then Free_After = Free_Before)
+   with Ghost, Global => null;
+
+   --  RX buffer was returned to pool: handle is null, one pool slot freed.
+   function RX_Consumed
+     (Handle_Null : Boolean;
+      Free_Before : Natural;
+      Free_After  : Natural) return Boolean
+   is (Handle_Null and then Free_Before = Free_After - 1)
+   with Ghost, Global => null;
+
+   ---------------------------------------------------------------------------
    --  Handshake RX — Process incoming handshake messages
    --
    --  These are the first functions moved into the proven core.
@@ -64,9 +98,9 @@ is
        not Messages.RX_Pool.Is_Null (RX_Handle)
        and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle),
      Post   =>
-       Messages.RX_Pool.Is_Null (RX_Handle)
-       and then Messages.RX_Pool.Free_Count =
-                  Messages.RX_Pool.Free_Count'Old + 1
+       RX_Consumed (Messages.RX_Pool.Is_Null (RX_Handle),
+                    Messages.RX_Pool.Free_Count'Old,
+                    Messages.RX_Pool.Free_Count)
        and then (Action = Action_Send_Response or else Action = Action_Error);
    --  Post: buffer is always freed (returned to pool, not released to C)
 
@@ -99,9 +133,9 @@ is
        and then Session.Session_Ready,
      Post   =>
        Session.Session_Ready
-       and then Messages.RX_Pool.Is_Null (RX_Handle)
-       and then Messages.RX_Pool.Free_Count =
-                  Messages.RX_Pool.Free_Count'Old + 1
+       and then RX_Consumed (Messages.RX_Pool.Is_Null (RX_Handle),
+                             Messages.RX_Pool.Free_Count'Old,
+                             Messages.RX_Pool.Free_Count)
        and then (Action = Action_None or else Action = Action_Error);
    --  Post: buffer is always freed (returned to pool, not released to C)
 
@@ -162,12 +196,12 @@ is
            Messages.TX_Pool.Borrow_State)),
      Post   =>
        (if Success
-        then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
-             and then Messages.TX_Pool.Free_Count =
-                       Messages.TX_Pool.Free_Count'Old - 1
-        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
-             and then Messages.TX_Pool.Free_Count =
-                       Messages.TX_Pool.Free_Count'Old);
+        then TX_Sent (TX_Ptr, TX_Len,
+                      Messages.TX_Pool.Free_Count'Old,
+                      Messages.TX_Pool.Free_Count)
+        else TX_Unsent (TX_Ptr, TX_Len,
+                        Messages.TX_Pool.Free_Count'Old,
+                        Messages.TX_Pool.Free_Count));
 
    --  Build a handshake response message (Responder side).
    --
@@ -194,12 +228,12 @@ is
      Pre    => Session.Session_Ready,
      Post   =>
        (if Success
-        then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
-             and then Messages.TX_Pool.Free_Count =
-                       Messages.TX_Pool.Free_Count'Old - 1
-        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
-             and then Messages.TX_Pool.Free_Count =
-                       Messages.TX_Pool.Free_Count'Old);
+        then TX_Sent (TX_Ptr, TX_Len,
+                      Messages.TX_Pool.Free_Count'Old,
+                      Messages.TX_Pool.Free_Count)
+        else TX_Unsent (TX_Ptr, TX_Len,
+                        Messages.TX_Pool.Free_Count'Old,
+                        Messages.TX_Pool.Free_Count));
 
    ---------------------------------------------------------------------------
    --  Auto Handshake — Rate-limited handshake initiation
@@ -256,12 +290,12 @@ is
        Session.Session_Ready
        and then
          (if Success
-          then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
-               and then Messages.TX_Pool.Free_Count =
-                         Messages.TX_Pool.Free_Count'Old - 1
-          else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
-               and then Messages.TX_Pool.Free_Count =
-                         Messages.TX_Pool.Free_Count'Old);
+          then TX_Sent (TX_Ptr, TX_Len,
+                        Messages.TX_Pool.Free_Count'Old,
+                        Messages.TX_Pool.Free_Count)
+          else TX_Unsent (TX_Ptr, TX_Len,
+                          Messages.TX_Pool.Free_Count'Old,
+                          Messages.TX_Pool.Free_Count));
 
    ---------------------------------------------------------------------------
    --  Timer Dispatch — Execute timer-triggered protocol actions
@@ -297,12 +331,12 @@ is
        Session.Session_Ready
        and then
          (if not Utils.Is_Null (TX_Ptr)
-          then TX_Len > 0
-               and then Messages.TX_Pool.Free_Count =
-                         Messages.TX_Pool.Free_Count'Old - 1
-          else TX_Len = 0
-               and then Messages.TX_Pool.Free_Count =
-                         Messages.TX_Pool.Free_Count'Old);
+          then TX_Sent (TX_Ptr, TX_Len,
+                        Messages.TX_Pool.Free_Count'Old,
+                        Messages.TX_Pool.Free_Count)
+          else TX_Unsent (TX_Ptr, TX_Len,
+                          Messages.TX_Pool.Free_Count'Old,
+                          Messages.TX_Pool.Free_Count));
 
    ---------------------------------------------------------------------------
    --  Transport RX — Decrypt and validate incoming data packets
@@ -350,9 +384,10 @@ is
                and then PT_Len > 0
                and then Messages.RX_Pool.Free_Count =
                          Messages.RX_Pool.Free_Count'Old
-          else Messages.RX_Pool.Is_Null (RX_Handle) and then PT_Len = 0
-               and then Messages.RX_Pool.Free_Count =
-                         Messages.RX_Pool.Free_Count'Old + 1);
+          else RX_Consumed (Messages.RX_Pool.Is_Null (RX_Handle),
+                            Messages.RX_Pool.Free_Count'Old,
+                            Messages.RX_Pool.Free_Count)
+               and then PT_Len = 0);
 
    ---------------------------------------------------------------------------
    --  RX Dispatch — Unified receive dispatch

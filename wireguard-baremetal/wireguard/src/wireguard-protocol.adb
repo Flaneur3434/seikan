@@ -201,9 +201,9 @@ is
    with
      Refined_Post =>
        Session.Session_Ready
-       and then Messages.RX_Pool.Is_Null (RX_Handle)
-       and then Messages.RX_Pool.Free_Count =
-                  Messages.RX_Pool.Free_Count'Old + 1
+       and then RX_Consumed (Messages.RX_Pool.Is_Null (RX_Handle),
+                             Messages.RX_Pool.Free_Count'Old,
+                             Messages.RX_Pool.Free_Count)
        and then (Action = Action_None or else Action = Action_Error)
        and then (if Action = Action_None
                  then Session.Is_Peer_Established (Peer_Out))
@@ -353,13 +353,13 @@ is
    with
      Refined_Post =>
        (if Success
-        then not Utils.Is_Null (TX_Ptr) and then TX_Len > 0
-             and then Messages.TX_Pool.Free_Count =
-                       Messages.TX_Pool.Free_Count'Old - 1
+        then TX_Sent (TX_Ptr, TX_Len,
+                      Messages.TX_Pool.Free_Count'Old,
+                      Messages.TX_Pool.Free_Count)
              and then Session.Is_Peer_Established (Last_Init_Peer)
-        else Utils.Is_Null (TX_Ptr) and then TX_Len = 0
-             and then Messages.TX_Pool.Free_Count =
-                       Messages.TX_Pool.Free_Count'Old)
+        else TX_Unsent (TX_Ptr, TX_Len,
+                        Messages.TX_Pool.Free_Count'Old,
+                        Messages.TX_Pool.Free_Count))
    is
       Null_Ptr    : Utils.C_Buffer_Ptr;  --  DIC: Is_Null holds
       P           : constant Session.Peer_Index := Last_Init_Peer;
