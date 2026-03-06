@@ -27,7 +27,6 @@ is
 
    pragma Unevaluated_Use_Of_Old (Allow);
 
-   use type Handshake.Handshake_Error;
    use type Handshake.Handshake_State_Kind;
    use type Handshake.HS_Result.Result_Kind;
 
@@ -132,7 +131,7 @@ is
    is
       use Peer_Table.Lookup_Result;
 
-      HS_Err  : Handshake.Handshake_Error;
+      HS_Err  : Handshake.HS_Result.Result;
       Temp_HS : Handshake.Handshake_State;
       Lookup  : Peer_Table.Lookup_Result.Result;
    begin
@@ -158,7 +157,7 @@ is
       --  Done with RX buffer
       Messages.RX_Pool.Free (RX_Handle);
 
-      if HS_Err /= Handshake.HS_OK then
+      if HS_Err.Kind /= Handshake.HS_Result.Is_Ok then
          return;
       end if;
 
@@ -200,7 +199,7 @@ is
        and then (if Action = Action_None
                  then Session.Is_Peer_Established (Peer_Out))
    is
-      HS_Err      : Handshake.Handshake_Error;
+      HS_Err      : Handshake.HS_Result.Result;
       Sess_Status : Status;
       Found_Peer  : Session.Peer_Index := 1;
       Found       : Boolean := False;
@@ -253,7 +252,7 @@ is
          My_Peers (Found_Peer),
          HS_Err);
 
-      if HS_Err /= Handshake.HS_OK then
+      if HS_Err.Kind /= Handshake.HS_Result.Is_Ok then
          return;
       end if;
 
@@ -313,23 +312,25 @@ is
          Handshake.Create_Initiation
            (Msg, HS_States (Peer), My_Identity, My_Peers (Peer), Result);
 
-         if Result.Kind /= Handshake.HS_Result.Is_Ok then
-            Messages.TX_Pool.Free (Handle);
-            return;
-         end if;
+         case Result.Kind is
+            when Handshake.HS_Result.Is_Ok  =>
+               Messages.TX_Pool.Borrow_Mut (Handle, Ref);
+               Messages.Write_Initiation (Ref, Msg);
+               Messages.TX_Pool.Return_Ref (Handle, Ref);
 
-         Messages.TX_Pool.Borrow_Mut (Handle, Ref);
-         Messages.Write_Initiation (Ref, Msg);
-         Messages.TX_Pool.Return_Ref (Handle, Ref);
+               --  Release to C layer for transmission
+               --  nullified by Release_TX_To_C; dead after
+               pragma Warnings (Off, Handle);
+               Messages.Release_TX_To_C
+                 (Handle, Messages.Packet_Length (Result.Ok), TX_Ptr);
+
+               TX_Len := Messages.Packet_Length (Result.Ok);
+               Success := True;
+
+            when Handshake.HS_Result.Is_Err =>
+               Messages.TX_Pool.Free (Handle);
+         end case;
       end;
-
-      --  Release to C layer for transmission
-      pragma Warnings (Off, Handle);  --  nullified by Release_TX_To_C; dead after
-      Messages.Release_TX_To_C
-        (Handle, Messages.Packet_Length (Result.Ok), TX_Ptr);
-
-      TX_Len  := Messages.Packet_Length (Result.Ok);
-      Success := True;
    end Create_Initiation;
 
    ---------------------------------------------------------------------------

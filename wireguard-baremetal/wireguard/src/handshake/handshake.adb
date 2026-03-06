@@ -457,7 +457,7 @@ is
      (Msg      : Messages.Message_Handshake_Initiation;
       State    : out Handshake_State;
       Identity : Static_Identity;
-      Result   : out Handshake_Error)
+      Result   : out HS_Result.Result)
    is
       Local_Status : Status;
       Temp_Key     : Crypto.AEAD.Key_Buffer;
@@ -476,7 +476,7 @@ is
 
       --  Verify message type
       if Msg.Msg_Type /= Messages.Msg_Type_Handshake_Initiation then
-         Result := HS_Bad_Msg_Type;
+         Result := HS_Result.Err (HS_Bad_Msg_Type);
          return;
       end if;
 
@@ -487,12 +487,12 @@ is
          Mac     => Computed_Mac,
          Result  => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mac1_Compute;
+         Result := HS_Result.Err (HS_Mac1_Compute);
          return;
       end if;
 
       if Computed_Mac /= Msg.Mac1 then
-         Result := HS_Mac1_Mismatch;
+         Result := HS_Result.Err (HS_Mac1_Mismatch);
          return;
       end if;
 
@@ -509,21 +509,21 @@ is
          Digest => State.Chaining,
          Result => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Init_Chain;
+         Result := HS_Result.Err (HS_Init_Chain);
          return;
       end if;
 
       --  H = HASH(C || Identifier)
       Mix_Hash (State.Chaining, Identifier, State.Hash, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Init_Mix_Id;
+         Result := HS_Result.Err (HS_Init_Mix_Id);
          return;
       end if;
 
       --  H = HASH(H || responder_static_public)
       Mix_Hash (State.Hash, Byte_Array (Identity.Key_Pair.Pub), Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Init_Mix_Spub;
+         Result := HS_Result.Err (HS_Init_Mix_Spub);
          return;
       end if;
 
@@ -531,14 +531,14 @@ is
       Mix_Key (State.Chaining, Byte_Array (State.Remote_Ephemeral),
                Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Ephem_CK;
+         Result := HS_Result.Err (HS_Mix_Ephem_CK);
          return;
       end if;
 
       --  H = HASH(H || initiator_ephemeral)
       Mix_Hash (State.Hash, Byte_Array (State.Remote_Ephemeral), Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Ephem_H;
+         Result := HS_Result.Err (HS_Mix_Ephem_H);
          return;
       end if;
 
@@ -549,14 +549,14 @@ is
          Their_Public => State.Remote_Ephemeral,
          Result       => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_DH_ES;
+         Result := HS_Result.Err (HS_DH_ES);
          return;
       end if;
 
       --  C, K = KDF(C, es)
       Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_KDF_ES;
+         Result := HS_Result.Err (HS_KDF_ES);
          return;
       end if;
 
@@ -570,7 +570,7 @@ is
          Plaintext  => Decrypted_Static,
          Result     => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Decrypt_Static;
+         Result := HS_Result.Err (HS_Decrypt_Static);
          return;
       end if;
 
@@ -579,7 +579,7 @@ is
       --  H = HASH(H || encrypted_static)
       Mix_Hash (State.Hash, Msg.Encrypted_Static, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Enc_Static;
+         Result := HS_Result.Err (HS_Mix_Enc_Static);
          return;
       end if;
 
@@ -590,14 +590,14 @@ is
          Their_Public => State.Remote_Static,
          Result       => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_DH_SS;
+         Result := HS_Result.Err (HS_DH_SS);
          return;
       end if;
 
       --  C, K = KDF(C, ss)
       Mix_Key (State.Chaining, Byte_Array (Shared), Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_KDF_SS;
+         Result := HS_Result.Err (HS_KDF_SS);
          return;
       end if;
 
@@ -610,7 +610,7 @@ is
          Plaintext  => Decrypted_Timestamp,
          Result     => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Decrypt_Timestamp;
+         Result := HS_Result.Err (HS_Decrypt_Timestamp);
          return;
       end if;
 
@@ -620,7 +620,7 @@ is
       --  H = HASH(H || encrypted_timestamp)
       Mix_Hash (State.Hash, Msg.Encrypted_Timestamp, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Enc_Ts;
+         Result := HS_Result.Err (HS_Mix_Enc_Ts);
          return;
       end if;
 
@@ -628,7 +628,7 @@ is
 
       --  Success - update state machine
       State.Role := Role_Responder;
-      Result := HS_OK;
+      Result := HS_Result.Ok (0);
    end Process_Initiation;
 
    procedure Create_Response
@@ -788,7 +788,7 @@ is
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
-      Result   : out Handshake_Error)
+      Result   : out HS_Result.Result)
    is
       pragma Unreferenced (Peer);
 
@@ -806,14 +806,14 @@ is
    begin
       --  Verify message type
       if Msg.Msg_Type /= Messages.Msg_Type_Handshake_Response then
-         Result := HS_Bad_Msg_Type;
+         Result := HS_Result.Err (HS_Bad_Msg_Type);
          State := Empty_Handshake;
          return;
       end if;
 
       --  Verify receiver index matches our local index
       if To_U32 (Msg.Receiver) /= State.Local_Index then
-         Result := HS_Receiver_Mismatch;
+         Result := HS_Result.Err (HS_Receiver_Mismatch);
          State := Empty_Handshake;
          return;
       end if;
@@ -825,13 +825,13 @@ is
          Mac     => Computed_Mac,
          Result  => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mac1_Compute;
+         Result := HS_Result.Err (HS_Mac1_Compute);
          State := Empty_Handshake;
          return;
       end if;
 
       if Computed_Mac /= Msg.Mac1 then
-         Result := HS_Mac1_Mismatch;
+         Result := HS_Result.Err (HS_Mac1_Mismatch);
          State := Empty_Handshake;
          return;
       end if;
@@ -846,7 +846,7 @@ is
       Mix_Key (State.Chaining, Byte_Array (State.Remote_Ephemeral),
                Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Ephem_CK;
+         Result := HS_Result.Err (HS_Mix_Ephem_CK);
          State := Empty_Handshake;
          return;
       end if;
@@ -854,7 +854,7 @@ is
       --  H = HASH(H || responder_ephemeral)
       Mix_Hash (State.Hash, Byte_Array (State.Remote_Ephemeral), Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Ephem_H;
+         Result := HS_Result.Err (HS_Mix_Ephem_H);
          State := Empty_Handshake;
          return;
       end if;
@@ -866,7 +866,7 @@ is
          Their_Public => State.Remote_Ephemeral,
          Result       => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_DH_EE;
+         Result := HS_Result.Err (HS_DH_EE);
          State := Empty_Handshake;
          return;
       end if;
@@ -874,7 +874,7 @@ is
       --  C = KDF1(C, ee)
       Mix_Key (State.Chaining, Byte_Array (Shared), Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_KDF_EE;
+         Result := HS_Result.Err (HS_KDF_EE);
          State := Empty_Handshake;
          return;
       end if;
@@ -886,7 +886,7 @@ is
          Their_Public => State.Remote_Ephemeral,
          Result       => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_DH_SE;
+         Result := HS_Result.Err (HS_DH_SE);
          State := Empty_Handshake;
          return;
       end if;
@@ -894,7 +894,7 @@ is
       --  C = KDF1(C, se)
       Mix_Key (State.Chaining, Byte_Array (Shared), Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_KDF_SE;
+         Result := HS_Result.Err (HS_KDF_SE);
          State := Empty_Handshake;
          return;
       end if;
@@ -902,7 +902,7 @@ is
       --  C, τ, K = KDF3(C, Q) — PSK mixing (Q = 0^32, no PSK configured)
       Mix_Key (State.Chaining, No_PSK, Tau, Temp_Key, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_KDF_PSK;
+         Result := HS_Result.Err (HS_KDF_PSK);
          State := Empty_Handshake;
          return;
       end if;
@@ -910,7 +910,7 @@ is
       --  H = HASH(H || τ)
       Mix_Hash (State.Hash, Tau, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Tau;
+         Result := HS_Result.Err (HS_Mix_Tau);
          State := Empty_Handshake;
          return;
       end if;
@@ -924,7 +924,7 @@ is
          Plaintext  => Decrypted_Empty,
          Result     => Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Decrypt_Empty;
+         Result := HS_Result.Err (HS_Decrypt_Empty);
          State := Empty_Handshake;
          return;
       end if;
@@ -932,7 +932,7 @@ is
       --  H = HASH(H || encrypted_empty)
       Mix_Hash (State.Hash, Msg.Encrypted_Empty, Local_Status);
       if not Is_Success (Local_Status) then
-         Result := HS_Mix_Enc_Empty;
+         Result := HS_Result.Err (HS_Mix_Enc_Empty);
          State := Empty_Handshake;
          return;
       end if;
@@ -941,7 +941,7 @@ is
 
       --  Success - update state machine
       State.Kind := State_Established;
-      Result := HS_OK;
+      Result := HS_Result.Ok (0);
    end Process_Response;
 
 end Handshake;
