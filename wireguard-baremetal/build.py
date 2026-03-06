@@ -3,18 +3,22 @@
 VeriGuard Build Script
 
 Usage:
-    ./build.py                          # Build (default)
+    ./build.py                          # Build (default: release)
     ./build.py build                    # Build Ada crates and ESP-IDF firmware
+    ./build.py build --development      # Debug build (Ada + C with assertions/debug info)
+    ./build.py build --release          # Release build (optimised, checks stripped)
     ./build.py clean                    # Clean both Ada crates and ESP-IDF
     ./build.py clean build              # Chain: clean then build
     ./build.py build --idf monitor      # Build, then run idf.py monitor
     ./build.py build --idf -p /dev/ttyUSB0 flash  # Build, then flash to specific port
-    ./build.py build --alr --release    # Build with --release flag to alr
+    ./build.py build --alr -- -XFOO=bar # Pass extra arguments to alr
     ./build.py keygen                   # Generate test keypairs (ESP32 + Python)
     ./build.py keygen --psk             # Generate keypairs with a pre-shared key
 
 Flags:
-    --alr <args...>     Pass arguments to alr build/clean commands
+    --development       Debug build for both Ada and C (assertions, ghost checks, -Og)
+    --release           Optimised release build for both Ada and C (default)
+    --alr <args...>     Pass extra arguments to alr build/clean commands
     --idf <args...>     Pass arguments to idf.py after build/clean
     --psk               Include a random 32-byte pre-shared key (keygen only)
 """
@@ -135,6 +139,7 @@ def run_command(cmd, cwd=None, description=""):
     try:
         if description:
             print(f"\n  {description}...")
+        print(f"  $ {cmd}")
         
         result = subprocess.run(
             cmd,
@@ -173,7 +178,7 @@ def clean_ada_crates(alr_args=""):
     
     for crate in ADA_CRATES:
         crate_dir = SCRIPT_DIR / crate
-        cmd = f"alr clean {alr_args}".strip()
+        cmd = f"alr clean".strip()
         if not run_command(cmd, cwd=crate_dir, description=f"Cleaning {crate}"):
             all_success = False
     
@@ -187,33 +192,57 @@ def clean_idf(idf_args=""):
     return run_command(cmd, description="Cleaning ESP-IDF")
 
 
-def build_ada_crates(alr_args=""):
+def build_ada_crates(alr_args="", profile="release"):
     """Build all Ada crates."""
     print("\n[1/2] Building Ada crates with Alire...")
     all_success = True
-    
+
     for crate in ADA_CRATES:
         crate_dir = SCRIPT_DIR / crate
-        cmd = f"alr build --release {alr_args}".strip()
+        cmd = f"alr build --{profile} {alr_args}".strip()
         if not run_command(cmd, cwd=crate_dir, description=f"Building {crate}"):
             all_success = False
     
     return all_success
 
 
-def build_idf(idf_args=""):
-    """Build ESP-IDF firmware."""
+def build_idf(idf_args="", profile="release"):
+    """Build ESP-IDF firmware.
+    
+    SDKCONFIG_DEFAULTS is only applied when sdkconfig is first generated.
+    To handle profile switches we track the active profile in .build_profile
+    and delete sdkconfig when it changes, forcing regeneration.
+    """
     print("\n[2/2] Building ESP-IDF firmware...")
-    cmd = f"idf.py build {idf_args}".strip()
+
+    # Detect profile switch → delete sdkconfig so defaults are re-applied
+    profile_marker = SCRIPT_DIR / ".build_profile"
+    previous_profile = profile_marker.read_text().strip() if profile_marker.exists() else None
+    if previous_profile != profile:
+        sdkconfig = SCRIPT_DIR / "sdkconfig"
+        if sdkconfig.exists() and previous_profile is not None:
+            print(f"  Profile changed ({previous_profile} → {profile}), reconfiguring...")
+            sdkconfig.unlink()
+        profile_marker.write_text(profile + "\n")
+
+    if profile == "release":
+        defaults = "sdkconfig.defaults;sdkconfig.release"
+    else:
+        defaults = "sdkconfig.defaults;sdkconfig.development"
+    # Append secrets (WiFi credentials, WG keys) if present
+    secrets = SCRIPT_DIR / "sdkconfig.secrets"
+    if secrets.exists():
+        defaults += ";sdkconfig.secrets"
+    cmd = f"idf.py -DSDKCONFIG_DEFAULTS='{defaults}' build {idf_args}".strip()
     return run_command(cmd, description="Building firmware")
 
 
-def execute_command(cmd, alr_args="", idf_args="", psk=False):
+def execute_command(cmd, alr_args="", idf_args="", psk=False, profile="release"):
     """Execute a single command."""
     if cmd == "clean":
         return clean_ada_crates(alr_args) and clean_idf(idf_args)
     elif cmd == "build":
-        return build_ada_crates(alr_args) and build_idf(idf_args)
+        return build_ada_crates(alr_args, profile) and build_idf(idf_args, profile)
     elif cmd == "keygen":
         return generate_keypairs(with_psk=psk)
     else:
@@ -247,37 +276,44 @@ def print_footer(success):
 def main():
     """Main entry point."""
     
-    # Parse arguments - flags apply only to commands that follow them
+    # Two-pass parser: extract flags first, then build command list.
+    # --alr and --idf flags apply globally to all commands.
     args = sys.argv[1:]
     
     if not args:
         args = ["build"]
     
-    commands = []  # List of (command, alr_args, idf_args)
+    # Pass 1: extract --alr, --idf, --psk, --development, --release flags
+    alr_args = ""
     idf_command_after = ""
     psk_flag = False
+    profile = "release"  # default
+    command_names = []
     
     i = 0
-    current_alr_args = ""
-    current_idf_args = ""
-    
     while i < len(args):
         arg = args[i]
         
         if arg == "--psk":
             psk_flag = True
             i += 1
-            continue
+        
+        elif arg == "--development":
+            profile = "development"
+            i += 1
+        
+        elif arg == "--release":
+            profile = "release"
+            i += 1
         
         elif arg == "--alr":
-            # Collect alr args until --idf or next command
+            # Collect alr args until --idf or a valid command or another flag
             alr_parts = []
             i += 1
-            while i < len(args) and args[i] not in VALID_COMMANDS and args[i] != "--idf":
+            while i < len(args) and args[i] not in VALID_COMMANDS and args[i] not in ("--idf", "--development", "--release", "--psk"):
                 alr_parts.append(args[i])
                 i += 1
-            current_alr_args = " ".join(alr_parts)
-            continue
+            alr_args = " ".join(alr_parts)
         
         elif arg == "--idf":
             # Collect all remaining args as idf args
@@ -287,30 +323,30 @@ def main():
                 idf_parts.append(args[i])
                 i += 1
             idf_command_after = " ".join(idf_parts)
-            break
         
         elif arg in VALID_COMMANDS:
-            # Add command with current flag context
-            commands.append((arg, current_alr_args, current_idf_args))
-            # Reset alr args for next command (but keep idf args if any)
-            current_alr_args = ""
+            command_names.append(arg)
             i += 1
         
         else:
             print(f"ERROR: Unknown argument '{arg}'")
-            print(f"\nUsage: {Path(__file__).name} [command ...] [--alr args...] [--idf args...]")
+            print(f"\nUsage: {Path(__file__).name} [command ...] [--development|--release] [--alr args...] [--idf args...]")
             print("\nValid commands: build, clean, keygen")
             print("\nExamples:")
             print(f"  {Path(__file__).name} build")
-            print(f"  {Path(__file__).name} clean build --alr --release")
-            print(f"  {Path(__file__).name} build --idf monitor")
-            print(f"  {Path(__file__).name} clean build --alr --release --idf monitor")
+            print(f"  {Path(__file__).name} build --development")
+            print(f"  {Path(__file__).name} build --development --idf flash monitor")
+            print(f"  {Path(__file__).name} clean build --release")
+            print(f"  {Path(__file__).name} build --alr -- -XPLATFORM=esp_idf")
             print(f"  {Path(__file__).name} keygen")
             print(f"  {Path(__file__).name} keygen --psk")
             sys.exit(1)
     
-    if not commands:
-        commands = [("build", "", "")]
+    # Pass 2: build command list — all commands share the same alr/idf args
+    if not command_names:
+        command_names = ["build"]
+    
+    commands = [(cmd, alr_args, "") for cmd in command_names]
     
     # Only require IDF_PATH for build/clean (not keygen)
     needs_idf = any(cmd[0] in ("build", "clean") for cmd in commands) or idf_command_after
@@ -319,16 +355,16 @@ def main():
     
     # Determine action description
     action = " → ".join(cmd[0] for cmd in commands)
-    extra = ""
+    extra = f" [{profile}]"
     if idf_command_after:
-        extra = f" → idf.py {idf_command_after}"
+        extra += f" → idf.py {idf_command_after}"
     
     print_header(f"VeriGuard {action.title()}{extra}")
     
     # Execute commands in sequence
     success = True
     for cmd, alr_args, idf_args in commands:
-        if not execute_command(cmd, alr_args, idf_args, psk=psk_flag):
+        if not execute_command(cmd, alr_args, idf_args, psk=psk_flag, profile=profile):
             success = False
             break
     
