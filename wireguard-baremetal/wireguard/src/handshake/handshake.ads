@@ -125,52 +125,49 @@ is
    end record;
 
    ---------------------
-   --  Handshake Result
-   ---------------------
-
-   --  Error type for Create_Initiation / Create_Response.
-   type HS_Error is (HS_Failed);
-
-   --  Unified result for Create_Initiation / Create_Response.
-   --  On success (Is_Ok), Ok holds the wire message length.
-   --  On failure (Is_Err), Err holds HS_Failed.
-   package HS_Result is new Utils.Result (T => Natural, E => HS_Error);
-   use type HS_Result.Result_Kind;
-
-   ---------------------
    --  Handshake Error Codes
    ---------------------
 
-   --  Detailed error codes for Process_Initiation / Process_Response.
-   --  Each value identifies a specific failure point.
+   --  Error codes identifying specific handshake failure points.
    --  Use Handshake_Error'Pos (E) to get an integer for C-side logging.
    type Handshake_Error is
-     (HS_OK,                  --   0: Success
+     (HS_Failed,              --   0: Generic failure (Create_* default)
       HS_Bad_Msg_Type,        --   1: Wrong message type byte
-      HS_Mac1_Compute,        --   2: Failed to compute MAC1
-      HS_Mac1_Mismatch,       --   3: MAC1 verification failed
-      HS_Init_Chain,          --   4: HASH(Construction) failed
-      HS_Init_Mix_Id,         --   5: HASH(C || Identifier) failed
-      HS_Init_Mix_Spub,       --   6: HASH(H || static_public) failed
-      HS_Mix_Ephem_CK,        --   7: KDF(C, ephemeral) failed
-      HS_Mix_Ephem_H,         --   8: HASH(H || ephemeral) failed
-      HS_DH_ES,               --   9: DH(es) failed
-      HS_KDF_ES,              --  10: KDF(C, es) failed
-      HS_Decrypt_Static,      --  11: AEAD decrypt static key failed
-      HS_Mix_Enc_Static,      --  12: HASH(H || encrypted_static) failed
-      HS_DH_SS,               --  13: DH(ss) failed
-      HS_KDF_SS,              --  14: KDF(C, ss) failed
-      HS_Decrypt_Timestamp,   --  15: AEAD decrypt timestamp failed
-      HS_Mix_Enc_Ts,          --  16: HASH(H || encrypted_timestamp) failed
-      HS_Receiver_Mismatch,   --  17: Receiver index mismatch
-      HS_DH_EE,               --  18: DH(ee) failed
-      HS_KDF_EE,              --  19: KDF(C, ee) failed
-      HS_DH_SE,               --  20: DH(se) failed
-      HS_KDF_SE,              --  21: KDF(C, se) failed
-      HS_KDF_PSK,             --  22: KDF3(C, PSK) failed
-      HS_Mix_Tau,             --  23: HASH(H || tau) failed
-      HS_Decrypt_Empty,       --  24: AEAD decrypt empty failed
-      HS_Mix_Enc_Empty);      --  25: HASH(H || encrypted_empty) failed
+      HS_Mac1_Compute,        --   1: Failed to compute MAC1
+      HS_Mac1_Mismatch,       --   2: MAC1 verification failed
+      HS_Init_Chain,          --   3: HASH(Construction) failed
+      HS_Init_Mix_Id,         --   4: HASH(C || Identifier) failed
+      HS_Init_Mix_Spub,       --   5: HASH(H || static_public) failed
+      HS_Mix_Ephem_CK,        --   6: KDF(C, ephemeral) failed
+      HS_Mix_Ephem_H,         --   7: HASH(H || ephemeral) failed
+      HS_DH_ES,               --   8: DH(es) failed
+      HS_KDF_ES,              --   9: KDF(C, es) failed
+      HS_Decrypt_Static,      --  10: AEAD decrypt static key failed
+      HS_Mix_Enc_Static,      --  11: HASH(H || encrypted_static) failed
+      HS_DH_SS,               --  12: DH(ss) failed
+      HS_KDF_SS,              --  13: KDF(C, ss) failed
+      HS_Decrypt_Timestamp,   --  14: AEAD decrypt timestamp failed
+      HS_Mix_Enc_Ts,          --  15: HASH(H || encrypted_timestamp) failed
+      HS_Receiver_Mismatch,   --  16: Receiver index mismatch
+      HS_DH_EE,               --  17: DH(ee) failed
+      HS_KDF_EE,              --  18: KDF(C, ee) failed
+      HS_DH_SE,               --  19: DH(se) failed
+      HS_KDF_SE,              --  20: KDF(C, se) failed
+      HS_KDF_PSK,             --  21: KDF3(C, PSK) failed
+      HS_Mix_Tau,             --  22: HASH(H || tau) failed
+      HS_Decrypt_Empty,       --  23: AEAD decrypt empty failed
+      HS_Mix_Enc_Empty);      --  24: HASH(H || encrypted_empty) failed
+
+   ---------------------
+   --  Handshake Result
+   ---------------------
+
+   --  Unified result for all handshake operations.
+   --  On success (Is_Ok), Ok holds the wire message length (or 0
+   --  for Process_* which don't produce output).
+   --  On failure (Is_Err), Err holds the specific error code.
+   package HS_Result is new Utils.Result (T => Natural, E => Handshake_Error);
+   use type HS_Result.Result_Kind;
 
    ---------------------
    --  Procedures
@@ -245,11 +242,12 @@ is
      (Msg      : Messages.Message_Handshake_Initiation;
       State    : out Handshake_State;
       Identity : Static_Identity;
-      Result   : out Handshake_Error)
+      Result   : out HS_Result.Result)
    with
      Global => null,
+     Pre    => not Result'Constrained,
      Post   =>
-       (if Result = HS_OK
+       (if Result.Kind = HS_Result.Is_Ok
         then State.Role = Role_Responder
         else State.Kind = State_Empty);
 
@@ -293,11 +291,13 @@ is
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
-      Result   : out Handshake_Error)
+      Result   : out HS_Result.Result)
    with
-     Pre  => State.Kind = State_Initiator_Sent,
+     Pre  =>
+       State.Kind = State_Initiator_Sent
+       and then not Result'Constrained,
      Post =>
-       (if Result = HS_OK
+       (if Result.Kind = HS_Result.Is_Ok
         then State.Kind = State_Established
         else State.Kind = State_Empty);
 
