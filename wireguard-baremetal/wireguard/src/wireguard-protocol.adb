@@ -29,6 +29,8 @@ is
 
    use type Handshake.Handshake_State_Kind;
    use type Handshake.HS_Result.Result_Kind;
+   use type Handshake.Identity_Result.Result_Kind;
+   use type Handshake.Peer_Result.Result_Kind;
 
    ---------------------------------------------------------------------------
    --  Protocol State
@@ -60,6 +62,8 @@ is
    is
       Key_Pair    : Crypto.KX.Key_Pair;
       Init_Status : Status;
+      Id_Result   : Handshake.Identity_Result.Result;
+      Peer_Res    : Handshake.Peer_Result.Result;
    begin
       --  Reset ephemeral state unconditionally
       HS_States       := [others => Handshake.Empty_Handshake];
@@ -76,37 +80,42 @@ is
       Key_Pair.Sec := Priv_Key;
 
       --  Initialize our static identity (hashes for MAC1 etc.)
-      Handshake.Initialize_Identity (My_Identity, Key_Pair, Init_Status);
-      if not Is_Success (Init_Status) then
-         return;
-      end if;
+      Handshake.Initialize_Identity (Key_Pair, Id_Result);
+      case Id_Result.Kind is
+         when Handshake.Identity_Result.Is_Ok =>
+            My_Identity := Id_Result.Ok;
+         when Handshake.Identity_Result.Is_Err =>
+            return;
+      end case;
 
       --  Process each peer:
       --  Peer 1 is required; peers 2+ are optional (skipped if no key).
       for P in Session.Peer_Index loop
          pragma Loop_Invariant (Session.Session_Ready);
          if Peers (P).Has_Key then
-            Handshake.Initialize_Peer
-              (My_Peers (P), Peers (P).Public_Key, Init_Status);
-            if not Is_Success (Init_Status) then
-               --  Peer 1 failure is fatal; others are skipped
-               if P = 1 then
-                  return;
-               end if;
-            else
-               Peer_Table.Set_Public_Key (P, Peers (P).Public_Key);
+            Handshake.Initialize_Peer (Peers (P).Public_Key, Peer_Res);
+            case Peer_Res.Kind is
+               when Handshake.Peer_Result.Is_Ok  =>
+                  My_Peers (P) := Peer_Res.Ok;
+                  Peer_Table.Set_Public_Key (P, Peers (P).Public_Key);
 
-               declare
-                  AIPs : Peer_Table.Allowed_IP_Array :=
-                    [others => (Addr => 0, Prefix_Len => 0)];
-               begin
-                  AIPs (1) := Peers (P).Allowed_IP;
-                  Peer_Table.Set_Allowed_IPs (P, AIPs, Count => 1);
-               end;
+                  declare
+                     AIPs : Peer_Table.Allowed_IP_Array :=
+                       [others => (Addr => 0, Prefix_Len => 0)];
+                  begin
+                     AIPs (1) := Peers (P).Allowed_IP;
+                     Peer_Table.Set_Allowed_IPs (P, AIPs, Count => 1);
+                  end;
 
-               Session.Set_Persistent_Keepalive
-                 (P, Interval_S => Peers (P).Keepalive_S);
-            end if;
+                  Session.Set_Persistent_Keepalive
+                    (P, Interval_S => Peers (P).Keepalive_S);
+
+               when Handshake.Peer_Result.Is_Err =>
+                  --  Peer 1 failure is fatal; others are skipped
+                  if P = 1 then
+                     return;
+                  end if;
+            end case;
          else
             --  Peer 1 must have a key configured
             if P = 1 then

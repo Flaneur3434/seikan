@@ -259,33 +259,45 @@ is
    ---------------------
 
    procedure Initialize_Identity
-     (Identity : out Static_Identity;
-      Key_Pair : Crypto.KX.Key_Pair;
-      Result   : out Status)
+     (Key_Pair : Crypto.KX.Key_Pair;
+      Result   : out Identity_Result.Result)
    is
+      Local_Status : Status;
+      Id           : Static_Identity;
    begin
-      Identity.Key_Pair := Key_Pair;
+      Id.Key_Pair := Key_Pair;
 
       --  Compute MAC1 key: HASH(LABEL_MAC1 || static_public)
       Crypto.Blake2.Blake2s
         (Data   => Label_Mac1 & Byte_Array (Key_Pair.Pub),
-         Digest => Identity.Mac1_Key,
-         Result => Result);
+         Digest => Id.Mac1_Key,
+         Result => Local_Status);
+      if Is_Success (Local_Status) then
+         Result := Identity_Result.Ok (Id);
+      else
+         Result := Identity_Result.Err (HS_Mac1_Compute);
+      end if;
    end Initialize_Identity;
 
    procedure Initialize_Peer
-     (Peer        : out Peer_Config;
-      Peer_Public : Crypto.KX.Public_Key;
-      Result      : out Status)
+     (Peer_Public : Crypto.KX.Public_Key;
+      Result      : out Peer_Result.Result)
    is
+      Local_Status : Status;
+      P            : Peer_Config;
    begin
-      Peer.Static_Public := Peer_Public;
+      P.Static_Public := Peer_Public;
 
       --  Compute MAC1 key: HASH(LABEL_MAC1 || peer_public)
       Crypto.Blake2.Blake2s
         (Data   => Label_Mac1 & Byte_Array (Peer_Public),
-         Digest => Peer.Mac1_Key,
-         Result => Result);
+         Digest => P.Mac1_Key,
+         Result => Local_Status);
+      if Is_Success (Local_Status) then
+         Result := Peer_Result.Ok (P);
+      else
+         Result := Peer_Result.Err (HS_Mac1_Compute);
+      end if;
    end Initialize_Peer;
 
    procedure Create_Initiation
