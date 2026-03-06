@@ -340,10 +340,7 @@ is
      Pre    =>
        not Messages.RX_Pool.Is_Null (RX_Handle)
        and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
-       and then Session.Session_Ready
-       and then Natural (RX_Length) <= Utils.Max_Packet_Size
-       and then Natural (RX_Length) >= Messages.Transport_Header_Size
-                                         + Crypto.AEAD.Tag_Bytes,
+       and then Session.Session_Ready,
      Post   =>
        Session.Session_Ready
        and then

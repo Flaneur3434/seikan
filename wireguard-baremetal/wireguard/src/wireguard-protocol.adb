@@ -645,15 +645,8 @@ is
                Handle_Response_RX (RX_Handle, RX_Length, Peer_Out, Action);
 
             when Messages.Kind_Transport_Data       =>
-               --  Minimum packet: header + AEAD tag
-               if RX_Length < Unsigned_16 (Messages.Transport_Header_Size
-                                           + Crypto.AEAD.Tag_Bytes)
-               then
-                  Messages.RX_Pool.Free (RX_Handle);
-               else
-                  Handle_Transport_RX
-                    (RX_Handle, RX_Length, PT_Len, Peer_Out, Action);
-               end if;
+               Handle_Transport_RX
+                 (RX_Handle, RX_Length, PT_Len, Peer_Out, Action);
 
             when Messages.Kind_Cookie_Reply         =>
                Messages.RX_Pool.Free (RX_Handle);
@@ -707,6 +700,18 @@ is
       PT_Len   := 0;
       Peer_Out := 1;
       Action   := Action_Error;
+
+      --  Reject invalid packet sizes
+      declare
+         Packet_Min_Size : constant Natural :=
+           Messages.Transport_Header_Size + Crypto.AEAD.Tag_Bytes;
+         Packet_Max_Size : constant Natural := Utils.Max_Packet_Size;
+      begin
+         if Natural (RX_Length) not in Packet_Min_Size .. Packet_Max_Size then
+            Messages.RX_Pool.Free (RX_Handle);
+            return;
+         end if;
+      end;
 
       --  Extract receiver_index from transport header (bytes 4-7, LE).
       --  Find which peer's Current or Previous keypair has matching
