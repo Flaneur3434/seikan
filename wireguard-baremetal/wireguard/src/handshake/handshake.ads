@@ -18,6 +18,7 @@
 
 with Interfaces; use Interfaces;
 with Utils;      use Utils;
+with Utils.Result;
 with Crypto.KX;
 with Crypto.Blake2;
 with Crypto.TAI64N;
@@ -124,23 +125,17 @@ is
    end record;
 
    ---------------------
-   --  Handshake Initiation Result
+   --  Handshake Result
    ---------------------
 
-   --  Result of building a handshake initiation message
-   type Initiation_Result is record
-      Success : Boolean;
-      --  On success: length of message in buffer
-      --  Message starts at buffer offset 0
-      Length  : Natural;
-   end record;
+   --  Error type for Create_Initiation / Create_Response.
+   type HS_Error is (HS_Failed);
 
-   --  Result of building a handshake response message
-   type Response_Result is record
-      Success : Boolean;
-      --  On success: length of message in buffer
-      Length  : Natural;
-   end record;
+   --  Unified result for Create_Initiation / Create_Response.
+   --  On success (Is_Ok), Ok holds the wire message length.
+   --  On failure (Is_Err), Err holds HS_Failed.
+   package HS_Result is new Utils.Result (T => Natural, E => HS_Error);
+   use type HS_Result.Result_Kind;
 
    ---------------------
    --  Handshake Error Codes
@@ -224,14 +219,15 @@ is
       State    : in out Handshake_State;
       Identity : Static_Identity;
       Peer     : Peer_Config;
-      Result   : out Initiation_Result)
+      Result   : out HS_Result.Result)
    with
+     Pre  => not Result'Constrained,
      Post =>
-       (if Result.Success
+       (if Result.Kind = HS_Result.Is_Ok
         then
           State.Kind = State_Initiator_Sent
           and then State.Role = Role_Initiator
-          and then Result.Length = Messages.Handshake_Init_Size);
+          and then Result.Ok = Messages.Handshake_Init_Size);
 
    --  Process a received handshake initiation message (RX path, Responder)
    --
@@ -271,13 +267,14 @@ is
      (Msg      : out Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
-      Result   : out Response_Result)
+      Result   : out HS_Result.Result)
    with
+     Pre  => not Result'Constrained,
      Post =>
-       (if Result.Success
+       (if Result.Kind = HS_Result.Is_Ok
         then
           State.Kind = State_Responder_Sent
-          and then Result.Length = Messages.Handshake_Response_Size);
+          and then Result.Ok = Messages.Handshake_Response_Size);
 
    --  Process a received handshake response message (RX path, Initiator)
    --
