@@ -828,15 +828,20 @@ is
       --  from spoofing addresses outside its AllowedIPs (§4).
       --  IPv4 source address is at offset 12 in the IP header,
       --  which starts at Transport_Header_Size within the buffer.
+      --
+      --  IPv4 header fields are big-endian (network byte order),
+      --  while To_U32 is little-endian.  Reverse the byte order so
+      --  the resulting Unsigned_32 is in host byte order, matching
+      --  the AllowedIPs addresses stored by parse_ipv4 (HBO).
       declare
          RX_View   : constant Messages.RX_Buffer_View :=
            Messages.RX_Pool.Borrow (RX_Handle);
          Hdr_Off   : constant Natural := Messages.Transport_Header_Size;
          Src_Bytes : constant Bytes_4 :=
-           (RX_View.Buf_Ptr.Data (Hdr_Off + 12),
-            RX_View.Buf_Ptr.Data (Hdr_Off + 13),
-            RX_View.Buf_Ptr.Data (Hdr_Off + 14),
-            RX_View.Buf_Ptr.Data (Hdr_Off + 15));
+           (RX_View.Buf_Ptr.Data (Hdr_Off + 15),   --  NBO byte 3 → LE byte 0
+            RX_View.Buf_Ptr.Data (Hdr_Off + 14),   --  NBO byte 2 → LE byte 1
+            RX_View.Buf_Ptr.Data (Hdr_Off + 13),   --  NBO byte 1 → LE byte 2
+            RX_View.Buf_Ptr.Data (Hdr_Off + 12));  --  NBO byte 0 → LE byte 3
          Src_IP    : constant Unsigned_32 := To_U32 (Src_Bytes);
          Check     : constant Peer_Table.Source_Result.Result :=
            Peer_Table.Check_Source (Found_Peer, Src_IP);

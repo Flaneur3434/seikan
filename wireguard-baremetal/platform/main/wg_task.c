@@ -300,8 +300,8 @@ static void wg_task(void *pvParameters)
             // Transport data decrypted in-place.  Plaintext is at
             // rx_buf->data[WG_TRANSPORT_HEADER_SIZE .. +pt_len-1].
             // C owns rx_buf and must free it (directly or via pbuf_custom).
-            ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext) from peer %u",
-                     pt_len, rx_peer);
+            // ESP_LOGI(TAG, "Decrypted Transport Data (%u plaintext) from peer %u",
+            //          pt_len, rx_peer);
 
             // Echo mode: re-encrypt and send back (test-only)
             if (wg_echo_enabled())
