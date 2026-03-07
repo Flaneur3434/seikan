@@ -8,6 +8,7 @@ with Interfaces;   use Interfaces;
 with Utils;        use Utils;
 with Crypto.AEAD;
 with Crypto.KX;
+with Crypto.TAI64N;
 with Handshake;
 with Peer_Table;
 with Session;
@@ -22,6 +23,9 @@ package body Wireguard.Protocol
                                             HS_States,
                                             Last_Init_Peer,
                                             Last_Auto_Inits,
+                                            Last_Timestamps,
+                                            Peer_Cookies,
+                                            Peer_Last_Mac1s,
                                             Initialized))
 is
 
@@ -51,6 +55,19 @@ is
    Last_Auto_Inits : array (Session.Peer_Index) of Timer.Clock.Timestamp :=
      [others => Timer.Clock.Never];
 
+   --  Per-peer greatest-seen TAI64N timestamp for replay protection.
+   --  Updated on successful Process_Initiation; initiations with a
+   --  timestamp <= the stored value are silently dropped (§5.1).
+   Last_Timestamps : array (Session.Peer_Index) of Crypto.TAI64N.Timestamp :=
+     [others => Crypto.TAI64N.Zero];
+
+   --  Per-peer cookie state for MAC2 computation.
+   --  Populated when we receive a cookie reply (Type 3) from a peer.
+   Peer_Cookies    : array (Session.Peer_Index) of Handshake.Cookie_Value :=
+     [others => Handshake.Zero_Cookie];
+   Peer_Last_Mac1s : array (Session.Peer_Index) of Messages.Mac_Bytes :=
+     [others => [others => 0]];
+
    ---------------------------------------------------------------------------
    --  Init — Protocol initialization from raw key material
    ---------------------------------------------------------------------------
@@ -69,6 +86,9 @@ is
       HS_States       := [others => Handshake.Empty_Handshake];
       Last_Init_Peer  := 1;
       Last_Auto_Inits := [others => Timer.Clock.Never];
+      Last_Timestamps := [others => Crypto.TAI64N.Zero];
+      Peer_Cookies    := [others => Handshake.Zero_Cookie];
+      Peer_Last_Mac1s := [others => [others => 0]];
       Initialized     := False;
       Success         := False;
 
@@ -176,10 +196,19 @@ is
          return;
       end if;
 
-      --  Store handshake state in the correct per-peer slot
+      --  Replay protection: reject if timestamp is not strictly newer
+      --  than the greatest-seen timestamp for this peer (§5.1).
       declare
          P : constant Session.Peer_Index := Lookup.Ok;
       begin
+         if not Crypto.TAI64N.Is_After
+              (Temp_HS.Last_Timestamp, Last_Timestamps (P))
+         then
+            return;  --  replayed or stale initiation
+         end if;
+
+         --  Accept: update greatest-seen timestamp and store state
+         Last_Timestamps (P) := Temp_HS.Last_Timestamp;
          HS_States (P) := Temp_HS;
          Last_Init_Peer := P;
          Peer_Out := P;
@@ -286,6 +315,79 @@ is
    end Handle_Response_RX;
 
    ---------------------------------------------------------------------------
+   --  Handle_Cookie_RX — Process a received cookie reply (Type 3)
+   ---------------------------------------------------------------------------
+
+   procedure Handle_Cookie_RX
+     (RX_Handle : in out Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length)
+   with
+     Pre  =>
+       not Messages.RX_Pool.Is_Null (RX_Handle)
+       and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
+       and then Session.Session_Ready,
+     Post =>
+       Session.Session_Ready
+       and then
+         RX_Consumed
+           (Messages.RX_Pool.Is_Null (RX_Handle),
+            Messages.RX_Pool.Free_Count'Old,
+            Messages.RX_Pool.Free_Count)
+   is
+      Cookie_Msg : Messages.Message_Cookie_Reply;
+      Cookie_Res : Handshake.HS_Result.Result;
+      New_Cookie : Handshake.Cookie_Value;
+      Found_Peer : Session.Peer_Index := 1;
+      Found      : Boolean := False;
+   begin
+      --  Verify minimum length
+      if RX_Length < Unsigned_16 (Messages.Cookie_Reply_Size) then
+         Messages.RX_Pool.Free (RX_Handle);
+         return;
+      end if;
+
+      --  Read cookie reply message from buffer
+      declare
+         RX_View : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+      begin
+         Cookie_Msg := Messages.Read_Cookie_Reply (RX_View);
+      end;
+
+      --  Done with RX buffer
+      Messages.RX_Pool.Free (RX_Handle);
+
+      --  Identify peer by receiver index
+      declare
+         Recv_Idx : constant Unsigned_32 := Utils.To_U32 (Cookie_Msg.Receiver);
+      begin
+         for P in Session.Peer_Index loop
+            if HS_States (P).Local_Index = Recv_Idx then
+               Found_Peer := P;
+               Found := True;
+               exit;
+            end if;
+         end loop;
+      end;
+
+      if not Found then
+         return;
+      end if;
+
+      --  Decrypt cookie and store for next initiation
+      Handshake.Process_Cookie_Reply
+        (Cookie_Msg,
+         My_Peers (Found_Peer),
+         Peer_Last_Mac1s (Found_Peer),
+         New_Cookie,
+         Cookie_Res);
+
+      if Cookie_Res.Kind = Handshake.HS_Result.Is_Ok then
+         Peer_Cookies (Found_Peer) := New_Cookie;
+      end if;
+   end Handle_Cookie_RX;
+
+   ---------------------------------------------------------------------------
    --  Create_Initiation
    ---------------------------------------------------------------------------
 
@@ -316,13 +418,19 @@ is
 
       --  Build initiation message, then copy into TX buffer
       declare
-         Msg : Messages.Message_Handshake_Initiation;
+         Msg      : Messages.Message_Handshake_Initiation;
+         Sent_Mac1 : Messages.Mac_Bytes;
       begin
          Handshake.Create_Initiation
-           (Msg, HS_States (Peer), My_Identity, My_Peers (Peer), Result);
+           (Msg, HS_States (Peer), My_Identity, My_Peers (Peer),
+            Peer_Cookies (Peer), Sent_Mac1, Result);
 
          case Result.Kind is
             when Handshake.HS_Result.Is_Ok  =>
+               --  Store the MAC1 for cookie reply processing
+               Peer_Last_Mac1s (Peer) := Sent_Mac1;
+               --  Clear the used cookie (one-shot)
+               Peer_Cookies (Peer) := Handshake.Zero_Cookie;
                Messages.TX_Pool.Borrow_Mut (Handle, Ref);
                Messages.Write_Initiation (Ref, Msg);
                Messages.TX_Pool.Return_Ref (Handle, Ref);
@@ -659,7 +767,7 @@ is
                  (RX_Handle, RX_Length, PT_Len, Peer_Out, Action);
 
             when Messages.Kind_Cookie_Reply         =>
-               Messages.RX_Pool.Free (RX_Handle);
+               Handle_Cookie_RX (RX_Handle, RX_Length);
          end case;
 
          if Action = RX_Decryption_Success then
