@@ -8,15 +8,7 @@
 --  All multi-byte integer fields use Byte_Array to avoid alignment
 --  issues. Use Utils.To_U32/To_U64 for conversion to native integers.
 --
---  Wire Format:
---    libsodium backend   -> WireGuard compatible (can debug with wg tools)
---    libhydrogen backend -> VeriGuard format (larger messages, not compatible)
---
 --  Message types are defined in Messages_Wire (backend-specific).
---
---  Packet Pool:
---    This package owns the shared buffer pool for network packets.
---    Zero-copy buffer handoff between Ada and C layers via wg_packet_t.
 
 with Interfaces; use Interfaces;
 with Utils;
@@ -126,9 +118,6 @@ is
 
    ---------------------
    --  Message Kind
-   --
-   --  Enum representation matches the WireGuard wire byte values.
-   --  Use 'Valid to detect unknown/invalid type bytes.
    ---------------------
 
    type Message_Kind is
@@ -150,7 +139,6 @@ is
    --
    --  Overlaid on raw packet memory to inspect the message kind
    --  before parsing into a specific message record.
-   --  Check Kind'Valid before reading Kind.
    ---------------------
 
    type Undefined_Message is record
@@ -202,8 +190,7 @@ is
    --  C Interop - Packet Buffer Transfers
    --
    --  Zero-copy buffer handoff between Ada and C layers.
-   --  These operations transfer ownership - after Release_To_C,
-   --  the Ada handle is null; after Acquire_From_C, Ada owns the buffer.
+   --  These operations transfer ownership
    ---------------------
 
    --  Packet length type (matches uint16_t in C struct)
@@ -281,13 +268,5 @@ is
        not RX_Pool.Is_Null (Handle)
        and then not RX_Pool.Is_Mutably_Borrowed (Handle),
      Post => not Utils.Is_Null (Ptr) and then RX_Pool.Is_Null (Handle);
-
-   --  Note: Access buffer fields directly via Borrow/Borrow_Mut:
-   --    View := TX_Pool.Borrow (Handle);
-   --    Len := View.Buf_Ptr.Len;
-   --
-   --    TX_Pool.Borrow_Mut (Handle, Ref);
-   --    Ref.Buf_Ptr.Len := New_Length;
-   --    TX_Pool.Return_Ref (Handle, Ref);
 
 end Messages;

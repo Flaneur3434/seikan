@@ -27,14 +27,14 @@ is
 
    --  IPv4 prefix for AllowedIPs matching
    type IP_Prefix is record
-      Addr       : Unsigned_32;          --  Network byte order
+      Addr       : Unsigned_32; --  Network byte order
       Prefix_Len : Natural range 0 .. 32;
    end record;
 
    type Allowed_IP_Array is
      array (1 .. Max_Allowed_IPs) of IP_Prefix;
 
-   --  Outer UDP endpoint (mutable at runtime)
+   --  Outer UDP endpoint
    type Endpoint is record
       Addr  : Unsigned_32 := 0;  --  IPv4 network byte order
       Port  : Unsigned_16 := 0;  --  Network byte order
@@ -46,23 +46,23 @@ is
    --------------------------------------------------------------------------
 
    --  Register a peer's static public key.
-   --  This is the core of cryptokey routing — maps a public key to a peer.
+   --  This is the core of cryptokey routing. Maps a public key to a peer.
    procedure Set_Public_Key
      (Peer : Session.Peer_Index;
       Key  : Crypto.KX.Public_Key);
 
    subtype AIP_Count is Natural range 0 .. Max_Allowed_IPs;
 
-   --  Register a peer's AllowedIPs (bulk).
+   --  Register a peer's AllowedIPs.
    --  Called once at startup for each configured peer.
-   --  Count = 0 is valid (peer has no AllowedIPs — no routing, no filter).
+   --  Count = 0 is valid (peer has no AllowedIPs (no routing, no filtering)).
    procedure Set_Allowed_IPs
      (Peer  : Session.Peer_Index;
       IPs   : Allowed_IP_Array;
       Count : AIP_Count);
 
    --------------------------------------------------------------------------
-   --  TX routing — Longest Prefix Match
+   --  TX routing (Longest Prefix Match)
    --------------------------------------------------------------------------
 
    type Lookup_Err is (No_Match);
@@ -81,7 +81,7 @@ is
      (Key : Crypto.KX.Public_Key) return Lookup_Result.Result;
 
    --------------------------------------------------------------------------
-   --  RX source filter — cryptokey routing validation
+   --  RX source filter (cryptokey routing validation)
    --------------------------------------------------------------------------
 
    type Source_Err is (Rejected);
@@ -89,7 +89,7 @@ is
      (T => Session.Peer_Index, E => Source_Err);
 
    --  After decryption, verify the inner source IP is in the
-   --  sending peer's AllowedIPs.  Per §4: prevents a compromised
+   --  sending peer's AllowedIPs.  Prevents a compromised
    --  peer from spoofing addresses outside its AllowedIPs.
    --  Returns Ok(peer) if allowed, Err(Rejected) if not.
    function Check_Source
@@ -101,7 +101,7 @@ is
    --------------------------------------------------------------------------
 
    --  Update a peer's outer endpoint.
-   --  Called after cryptographic authentication (§6.5).
+   --  Called after cryptographic authentication.
    procedure Update_Endpoint
      (Peer : Session.Peer_Index;
       Addr : Unsigned_32;

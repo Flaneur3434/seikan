@@ -79,7 +79,8 @@ is
    is
       Ref : Buffer_Ref;
    begin
-      --  Borrow mutably to set length
+      --  SPARK prohibits allocating functions to be used as part of an assignment
+      --  Use a temporary variable to store access object to set length
       TX_Pool.Borrow_Mut (Handle, Ref);
       declare
          P : constant TX_Pool.Buffer_Ptr := TX_Pool.Get_Ptr (Ref);
@@ -88,7 +89,6 @@ is
       end;
       TX_Pool.Return_Ref (Handle, Ref);
 
-      --  Extract C pointer, then release ownership to C
       Ptr := TX_Pool.To_C_Ptr (Handle);
       TX_Pool.Reset_Handle (Handle);
    end Release_TX_To_C;
@@ -100,10 +100,8 @@ is
    is
       View : RX_Buffer_View;
    begin
-      --  Create handle from C pointer (takes ownership)
       RX_Pool.From_C_Ptr (Ptr, Handle);
 
-      --  Read length directly
       View := RX_Pool.Borrow (Handle);
       Length := View.Buf_Ptr.Len;
    end Acquire_RX_From_C;
@@ -111,13 +109,12 @@ is
    procedure Release_RX_To_C
      (Handle : in out RX_Buffer_Handle; Ptr : out Utils.C_Buffer_Ptr) is
    begin
-      --  Extract C pointer, then release ownership to C
       Ptr := RX_Pool.To_C_Ptr (Handle);
       RX_Pool.Reset_Handle (Handle);
    end Release_RX_To_C;
 
    ---------------------
-   --  Buffer ↔ Message Conversions
+   --  Buffer <-> Message Conversions
    --
    --  Bodies are SPARK_Mode => Off (Unchecked_Conversion).
    --  Specs are SPARK-visible so callers are provable.
