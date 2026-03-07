@@ -57,6 +57,8 @@ is
    --  Authenticated Encryption (AEAD)
    ---------------------
 
+   --  ChaCha20-Poly1305 IETF (12-byte nonce)
+
    --  Encrypts and authenticates a message.
    --  Ciphertext_Out: Message_Len + 16 bytes (tag)
    --  Nonce_In: 12 bytes, Key_In: 32 bytes
@@ -93,6 +95,46 @@ is
      Import,
      Convention    => C,
      External_Name => "crypto_aead_chacha20poly1305_ietf_decrypt";
+
+   ---------------------
+   --  XChaCha20-Poly1305 IETF (24-byte nonce, for cookie mechanism)
+   ---------------------
+
+   --  Encrypts and authenticates a message.
+   --  Ciphertext_Out: Message_Len + 16 bytes (tag)
+   --  Nonce_In: 24 bytes, Key_In: 32 bytes
+   --  Returns 0 on success.
+   function XAEAD_Encrypt
+     (Ciphertext_Out     : System.Address;
+      Ciphertext_Len_Out : System.Address;
+      Message_In         : System.Address;
+      Message_Len        : unsigned_long_long;
+      Ad_In              : System.Address;
+      Ad_Len             : unsigned_long_long;
+      Nsec               : System.Address;
+      Nonce_In           : System.Address;
+      Key_In             : System.Address) return int
+   with
+     Import,
+     Convention    => C,
+     External_Name => "crypto_aead_xchacha20poly1305_ietf_encrypt";
+
+   --  Decrypts and verifies ciphertext.
+   --  Returns 0 on success, -1 if authentication fails.
+   function XAEAD_Decrypt
+     (Message_Out     : System.Address;
+      Message_Len_Out : System.Address;
+      Nsec            : System.Address;
+      Ciphertext_In   : System.Address;
+      Ciphertext_Len  : unsigned_long_long;
+      Ad_In           : System.Address;
+      Ad_Len          : unsigned_long_long;
+      Nonce_In        : System.Address;
+      Key_In          : System.Address) return int
+   with
+     Import,
+     Convention    => C,
+     External_Name => "crypto_aead_xchacha20poly1305_ietf_decrypt";
 
    ---------------------
    --  Utility Functions
