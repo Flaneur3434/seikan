@@ -420,7 +420,6 @@ is
          return;
       end if;
 
-      --  Release to C layer for transmission
       pragma Warnings (Off, Handle);  --  nullified by Release_TX_To_C; dead after
       Messages.Release_TX_To_C
         (Handle, Messages.Packet_Length (Resp_Result.Ok), TX_Ptr);
@@ -664,6 +663,8 @@ is
          end case;
 
          if Action = RX_Decryption_Success then
+            pragma Warnings (Off, RX_Handle);  
+            --  nullified by Release_RX_To_C; dead after
             Messages.Release_RX_To_C (RX_Handle, RX_Ptr);
          else
             declare
