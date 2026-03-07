@@ -69,6 +69,31 @@ is
    end To_Mac1_Prefix;
 
    ---------------------
+   --  MAC2 Prefix Extraction
+   ---------------------
+
+   function To_Mac2_Prefix
+     (Msg : Message_Handshake_Initiation) return Initiation_Mac2_Prefix_Bytes
+   is
+      Result : Initiation_Mac2_Prefix_Bytes := [others => 0];
+   begin
+      Result (0 .. Mac1_Initiation_Offset - 1) := To_Mac1_Prefix (Msg);
+      Result (Mac1_Initiation_Offset .. Mac2_Initiation_Offset - 1) :=
+        Msg.Mac1;
+      return Result;
+   end To_Mac2_Prefix;
+
+   function To_Mac2_Prefix
+     (Msg : Message_Handshake_Response) return Response_Mac2_Prefix_Bytes
+   is
+      Result : Response_Mac2_Prefix_Bytes := [others => 0];
+   begin
+      Result (0 .. Mac1_Response_Offset - 1) := To_Mac1_Prefix (Msg);
+      Result (Mac1_Response_Offset .. Mac2_Response_Offset - 1) := Msg.Mac1;
+      return Result;
+   end To_Mac2_Prefix;
+
+   ---------------------
    --  C Interop Implementation
    ---------------------
 
@@ -154,6 +179,17 @@ is
    begin
       return Convert (Byte_Array (View.Buf_Ptr.Data) (Src'Range));
    end Read_Undefined;
+
+   function Read_Cookie_Reply
+     (View : RX_Buffer_View) return Message_Cookie_Reply
+   with SPARK_Mode => Off
+   is
+      subtype Src is Byte_Array (0 .. Cookie_Reply_Size - 1);
+      function Convert is new
+        Ada.Unchecked_Conversion (Src, Message_Cookie_Reply);
+   begin
+      return Convert (Byte_Array (View.Buf_Ptr.Data) (Src'Range));
+   end Read_Cookie_Reply;
 
    procedure Write_Initiation
      (Ref : Buffer_Ref; Msg : Message_Handshake_Initiation)
