@@ -36,7 +36,6 @@ set(ADA_LIBS
     "${PROJECT_ROOT}/wireguard/lib/libWgCrypto.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgMessages.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgTransport.a"
-    "${PROJECT_ROOT}/wireguard/lib/libWgNet.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgUtils.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgThreads.a"
     "${PROJECT_ROOT}/wireguard/lib/libWgSession.a"

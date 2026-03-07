@@ -34,12 +34,5 @@ project(VeriGuard)
 # Link Ada static libraries into the main component.
 # These paths assume `alr build` was run in each crate directory.
 
-set(ADA_LIB_PATHS
-    "${CMAKE_CURRENT_SOURCE_DIR}/crypto/lib/libCrypto.a"
-    "${CMAKE_CURRENT_SOURCE_DIR}/wireguard/lib/libWireguard.a"
-    "${CMAKE_CURRENT_SOURCE_DIR}/net/lib/libNet.a"
-    "${CMAKE_CURRENT_SOURCE_DIR}/bindings/lib/libBindings.a"
-)
-
-# Note: Linking is done in platform/main/CMakeLists.txt
+# Note: Ada library linking is done in platform/main/CMakeLists.txt
 # because component libraries need to be linked at component level.
