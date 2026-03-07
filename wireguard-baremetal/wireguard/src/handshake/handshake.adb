@@ -5,6 +5,7 @@
 with Crypto.Random;
 with Crypto.AEAD;
 with Crypto.KDF;
+with Crypto.XAEAD;
 with Messages_Wire;
 pragma Unreferenced (Messages_Wire);
 
@@ -42,6 +43,11 @@ is
    Label_Mac1 : constant Byte_Array (0 .. Label_Mac1_Length - 1) :=
      (16#6D#, 16#61#, 16#63#, 16#31#,  --  "mac1"
       16#2D#, 16#2D#, 16#2D#, 16#2D#); --  "----"
+
+   --  Label for cookie key derivation: "cookie--"
+   Label_Cookie : constant Byte_Array (0 .. Label_Cookie_Length - 1) :=
+     (16#63#, 16#6F#, 16#6F#, 16#6B#,  --  "cook"
+      16#69#, 16#65#, 16#2D#, 16#2D#); --  "ie--"
 
    --  Reserved bytes (3 zeros)
    Reserved_Zero : constant Messages.Reserved_Bytes := [others => 0];
@@ -213,13 +219,14 @@ is
    --  BLAKE2s mixes digest_length into its parameter block, so
    --  Blake2s(key, msg, outlen=16) ≠ Blake2s(key, msg, outlen=32)[0..15].
    procedure Compute_Mac
-     (Key     : Crypto.Blake2.Key_Buffer;
+     (Key     : Byte_Array;
       Message : Byte_Array;
       Mac     : out Messages.Mac_Bytes;
       Result  : out Status)
    with
      SPARK_Mode => On,
-     Global     => null
+     Global     => null,
+     Pre        => Key'Length in 1 .. Crypto.Blake2.BLAKE2S_KEYBYTES
    is
       State        : aliased Crypto.Blake2.Blake2s_State;
       Local_Result : Status;
@@ -301,11 +308,13 @@ is
    end Initialize_Peer;
 
    procedure Create_Initiation
-     (Msg      : out Messages.Message_Handshake_Initiation;
-      State    : in out Handshake_State;
-      Identity : Static_Identity;
-      Peer     : Peer_Config;
-      Result   : out HS_Result.Result)
+     (Msg       : out Messages.Message_Handshake_Initiation;
+      State     : in out Handshake_State;
+      Identity  : Static_Identity;
+      Peer      : Peer_Config;
+      Cookie    : Cookie_Value;
+      Last_Mac1 : out Messages.Mac_Bytes;
+      Result    : out HS_Result.Result)
    is
       Local_Status : Status;
       Temp_Key     : Crypto.AEAD.Key_Buffer;
@@ -323,6 +332,7 @@ is
               Encrypted_Timestamp => [others => 0],
               Mac1                => [others => 0],
               Mac2                => [others => 0]);
+      Last_Mac1 := [others => 0];
       Result := HS_Result.Err (HS_Failed);
 
       --  Allocate local session index
@@ -453,10 +463,26 @@ is
          Mac     => Msg.Mac1,
          Result  => Local_Status);
       if not Is_Success (Local_Status) then
+         Last_Mac1 := [others => 0];
          return;
+      else
+         --  Return MAC1 so caller can store it for cookie reply processing
+         Last_Mac1 := Msg.Mac1;
       end if;
 
-      --  MAC2 = 0 (no cookie present, already zeroed)
+      --  MAC2: if we have a valid cookie from a previous cookie reply,
+      --  compute MAC2 = MAC(cookie, msg[0..mac2_offset-1]).
+      --  Otherwise MAC2 = zeros (already initialised).
+      if Cookie /= Zero_Cookie then
+         Compute_Mac
+           (Key     => Byte_Array (Cookie),
+            Message => Messages.To_Mac2_Prefix (Msg),
+            Mac     => Msg.Mac2,
+            Result  => Local_Status);
+         if not Is_Success (Local_Status) then
+            Msg.Mac2 := [others => 0];
+         end if;
+      end if;
 
       --  Update state machine
       State.Kind := State_Initiator_Sent;
@@ -955,5 +981,47 @@ is
       State.Kind := State_Established;
       Result := HS_Result.Ok (0);
    end Process_Response;
+
+   ---------------------
+   --  Cookie Processing
+   ---------------------
+
+   procedure Process_Cookie_Reply
+     (Msg       : Messages.Message_Cookie_Reply;
+      Peer      : Peer_Config;
+      Last_Mac1 : Messages.Mac_Bytes;
+      Cookie    : out Cookie_Value;
+      Result    : out HS_Result.Result)
+   is
+      Cookie_Key   : Crypto.Blake2.Key_Buffer;
+      Local_Status : Status;
+   begin
+      Cookie := Zero_Cookie;
+
+      --  Derive cookie decryption key: HASH("cookie--" || peer_public_key)
+      Crypto.Blake2.Blake2s
+        (Data   => Label_Cookie & Byte_Array (Peer.Static_Public),
+         Digest => Cookie_Key,
+         Result => Local_Status);
+      if not Is_Success (Local_Status) then
+         Result := HS_Result.Err (HS_Failed);
+         return;
+      end if;
+
+      --  Decrypt cookie: XChaCha20-Poly1305(cookie_key, nonce, ct, mac1)
+      Crypto.XAEAD.Decrypt
+        (Ciphertext => Msg.Encrypted_Cookie,
+         Ad         => Last_Mac1,
+         Nonce      => Msg.Nonce,
+         Key        => Crypto.XAEAD.Key_Buffer (Cookie_Key),
+         Plaintext  => Cookie,
+         Result     => Local_Status);
+      if not Is_Success (Local_Status) then
+         Result := HS_Result.Err (HS_Failed);
+         return;
+      end if;
+
+      Result := HS_Result.Ok (0);
+   end Process_Cookie_Reply;
 
 end Handshake;

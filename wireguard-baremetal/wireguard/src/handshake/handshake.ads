@@ -45,6 +45,17 @@ is
    --  Label for MAC1 key derivation
    Label_Mac1_Length : constant := 8;  --  "mac1----"
 
+   --  Label for cookie key derivation
+   Label_Cookie_Length : constant := 8;  --  "cookie--"
+
+   ---------------------
+   --  Cookie Types
+   ---------------------
+
+   --  A 16-byte cookie value computed from the rotating secret and sender IP.
+   subtype Cookie_Value is Byte_Array (0 .. Messages.Cookie_Size - 1);
+   Zero_Cookie : constant Cookie_Value := [others => 0];
+
    ---------------------
    --  Handshake State
    ---------------------
@@ -147,16 +158,17 @@ is
       HS_DH_SS,               --  12: DH(ss) failed
       HS_KDF_SS,              --  13: KDF(C, ss) failed
       HS_Decrypt_Timestamp,   --  14: AEAD decrypt timestamp failed
-      HS_Mix_Enc_Ts,          --  15: HASH(H || encrypted_timestamp) failed
-      HS_Receiver_Mismatch,   --  16: Receiver index mismatch
-      HS_DH_EE,               --  17: DH(ee) failed
-      HS_KDF_EE,              --  18: KDF(C, ee) failed
-      HS_DH_SE,               --  19: DH(se) failed
-      HS_KDF_SE,              --  20: KDF(C, se) failed
-      HS_KDF_PSK,             --  21: KDF3(C, PSK) failed
-      HS_Mix_Tau,             --  22: HASH(H || tau) failed
-      HS_Decrypt_Empty,       --  23: AEAD decrypt empty failed
-      HS_Mix_Enc_Empty);      --  24: HASH(H || encrypted_empty) failed
+      HS_Replay,              --  15: Replayed initiation (timestamp not newer)
+      HS_Mix_Enc_Ts,          --  16: HASH(H || encrypted_timestamp) failed
+      HS_Receiver_Mismatch,   --  17: Receiver index mismatch
+      HS_DH_EE,               --  18: DH(ee) failed
+      HS_KDF_EE,              --  19: KDF(C, ee) failed
+      HS_DH_SE,               --  20: DH(se) failed
+      HS_KDF_SE,              --  21: KDF(C, se) failed
+      HS_KDF_PSK,             --  22: KDF3(C, PSK) failed
+      HS_Mix_Tau,             --  23: HASH(H || tau) failed
+      HS_Decrypt_Empty,       --  24: AEAD decrypt empty failed
+      HS_Mix_Enc_Empty);      --  25: HASH(H || encrypted_empty) failed
 
    ---------------------
    --  Handshake Result
@@ -216,6 +228,9 @@ is
    --    - Buffer contains the complete Message_Handshake_Initiation
    --    - State is updated to State_Initiator_Sent
    --    - Result.Length contains the message length
+   --    - Last_Mac1 contains the MAC1 we sent (needed for cookie processing)
+   --
+   --  Cookie: if non-zero, used to compute MAC2. Otherwise MAC2 = zeros.
    --
    --  Noise IK pattern (Initiator side, first message):
    --    -> e, es, s, ss
@@ -224,11 +239,13 @@ is
    --    s:  Encrypt initiator static with current key
    --    ss: DH(initiator_static_secret, responder_static)
    procedure Create_Initiation
-     (Msg      : out Messages.Message_Handshake_Initiation;
-      State    : in out Handshake_State;
-      Identity : Static_Identity;
-      Peer     : Peer_Config;
-      Result   : out HS_Result.Result)
+     (Msg       : out Messages.Message_Handshake_Initiation;
+      State     : in out Handshake_State;
+      Identity  : Static_Identity;
+      Peer      : Peer_Config;
+      Cookie    : Cookie_Value;
+      Last_Mac1 : out Messages.Mac_Bytes;
+      Result    : out HS_Result.Result)
    with
      Pre  => not Result'Constrained,
      Post =>
@@ -312,6 +329,27 @@ is
        (if Result.Kind = HS_Result.Is_Ok
         then State.Kind = State_Established
         else State.Kind = State_Empty);
+
+   ---------------------
+   --  Cookie Processing
+   ---------------------
+
+   --  Process a received cookie reply message (Type 3).
+   --
+   --  Decrypts the cookie using XChaCha20-Poly1305 with:
+   --    Key = HASH("cookie--" || peer_public_key)
+   --    AD  = last MAC1 we sent to this peer
+   --
+   --  On success, Cookie_Out contains the 16-byte cookie that should
+   --  be used in the MAC2 field of the next initiation to this peer.
+   procedure Process_Cookie_Reply
+     (Msg       : Messages.Message_Cookie_Reply;
+      Peer      : Peer_Config;
+      Last_Mac1 : Messages.Mac_Bytes;
+      Cookie    : out Cookie_Value;
+      Result    : out HS_Result.Result)
+   with Global => null,
+       Pre => not Result'Constrained;
 
 private
 
