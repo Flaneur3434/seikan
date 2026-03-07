@@ -500,3 +500,166 @@ class WireGuardPeer:
             local_index=state.local_index,
             remote_index=sender,
         )
+
+
+# ── XChaCha20-Poly1305 (via HChaCha20) ──────────────────────────────
+
+def _quarter_round(state: list[int], a: int, b: int, c: int, d: int) -> None:
+    """ChaCha20 quarter-round (in-place, mod 2^32)."""
+    M = 0xFFFFFFFF
+    state[a] = (state[a] + state[b]) & M; state[d] ^= state[a]; state[d] = ((state[d] << 16) | (state[d] >> 16)) & M
+    state[c] = (state[c] + state[d]) & M; state[b] ^= state[c]; state[b] = ((state[b] << 12) | (state[b] >> 20)) & M
+    state[a] = (state[a] + state[b]) & M; state[d] ^= state[a]; state[d] = ((state[d] <<  8) | (state[d] >> 24)) & M
+    state[c] = (state[c] + state[d]) & M; state[b] ^= state[c]; state[b] = ((state[b] <<  7) | (state[b] >> 25)) & M
+
+
+def hchacha20(key: bytes, nonce16: bytes) -> bytes:
+    """HChaCha20: derive a 32-byte subkey from a 32-byte key and 16-byte nonce.
+
+    RFC 7539 §2.3 / draft-irtf-cfrg-xchacha §2.2.
+    Input: 32-byte key, first 16 bytes of the 24-byte XChaCha20 nonce.
+    Output: 32-byte subkey.
+    """
+    assert len(key) == 32 and len(nonce16) == 16
+    # "expand 32-byte k"
+    sigma = [0x61707865, 0x3320646E, 0x79622D32, 0x6B206574]
+    k = list(struct.unpack("<8I", key))
+    n = list(struct.unpack("<4I", nonce16))
+    state = sigma + k + n  # 16 uint32s
+
+    # 20 rounds (10 double-rounds)
+    working = list(state)
+    for _ in range(10):
+        # Column rounds
+        _quarter_round(working, 0, 4,  8, 12)
+        _quarter_round(working, 1, 5,  9, 13)
+        _quarter_round(working, 2, 6, 10, 14)
+        _quarter_round(working, 3, 7, 11, 15)
+        # Diagonal rounds
+        _quarter_round(working, 0, 5, 10, 15)
+        _quarter_round(working, 1, 6, 11, 12)
+        _quarter_round(working, 2, 7,  8, 13)
+        _quarter_round(working, 3, 4,  9, 14)
+
+    # Output: state words [0..3, 12..15] (NOT added to input, unlike ChaCha20)
+    return struct.pack("<4I", working[0], working[1], working[2], working[3]) + \
+           struct.pack("<4I", working[12], working[13], working[14], working[15])
+
+
+def xchacha20poly1305_encrypt(
+    key: bytes, nonce: bytes, plaintext: bytes, ad: bytes
+) -> bytes:
+    """XChaCha20-Poly1305 AEAD encrypt.
+
+    Nonce: 24 bytes.  Returns ciphertext + 16-byte tag.
+    Construction: HChaCha20(key, nonce[0:16]) → subkey,
+                  ChaCha20-Poly1305(subkey, 0x00000000 ‖ nonce[16:24]).
+    """
+    assert len(key) == 32 and len(nonce) == 24
+    subkey = hchacha20(key, nonce[:16])
+    # Sub-nonce: 4 zero bytes + last 8 bytes of the 24-byte nonce
+    sub_nonce = b"\x00\x00\x00\x00" + nonce[16:]
+    return ChaCha20Poly1305(subkey).encrypt(sub_nonce, plaintext, ad)
+
+
+def xchacha20poly1305_decrypt(
+    key: bytes, nonce: bytes, ciphertext: bytes, ad: bytes
+) -> bytes:
+    """XChaCha20-Poly1305 AEAD decrypt.
+
+    Nonce: 24 bytes.  Ciphertext includes 16-byte tag.
+    Raises on authentication failure.
+    """
+    assert len(key) == 32 and len(nonce) == 24
+    subkey = hchacha20(key, nonce[:16])
+    sub_nonce = b"\x00\x00\x00\x00" + nonce[16:]
+    return ChaCha20Poly1305(subkey).decrypt(sub_nonce, ciphertext, ad)
+
+
+# ── Cookie mechanism (§5.4.7) ────────────────────────────────────────
+
+COOKIE_REPLY_SIZE = 64
+
+
+def cookie_key(static_public: bytes) -> bytes:
+    """Derive cookie key: HASH(LABEL_COOKIE ‖ Spub)."""
+    return blake2s(LABEL_COOKIE + static_public)
+
+
+def build_cookie_reply(
+    receiver_index: int,
+    cookie: bytes,
+    mac1: bytes,
+    responder_public: bytes,
+) -> bytes:
+    """Build a 64-byte Cookie Reply message (Type 3).
+
+    Wire format (§5.4.7):
+        [0]      msg_type  = 3
+        [1..3]   reserved  = 0
+        [4..7]   receiver  = LE32 (sender index from the triggering message)
+        [8..31]  nonce     = random 24 bytes
+        [32..63] encrypted_cookie = XChaCha20-Poly1305(cookie_key, nonce,
+                                                        cookie, mac1)
+
+    cookie: 16-byte value (Mac(Rm, source_ip_port) per §5.4.7)
+    mac1: 16-byte MAC1 from the message that triggered this reply
+    responder_public: static public key of the peer sending the cookie reply
+    """
+    assert len(cookie) == 16 and len(mac1) == 16
+    nonce = os.urandom(24)
+    key = cookie_key(responder_public)
+    encrypted_cookie = xchacha20poly1305_encrypt(key, nonce, cookie, mac1)
+    assert len(encrypted_cookie) == 32  # 16 + 16 tag
+
+    msg = struct.pack("<B3xI", MSG_TYPE_COOKIE, receiver_index)
+    msg += nonce + encrypted_cookie
+    assert len(msg) == COOKIE_REPLY_SIZE
+    return msg
+
+
+def parse_cookie_reply(
+    msg: bytes,
+    mac1: bytes,
+    responder_public: bytes,
+) -> tuple[int, bytes]:
+    """Parse and decrypt a Cookie Reply message.
+
+    Returns (receiver_index, cookie).
+    Raises on authentication failure.
+    """
+    assert len(msg) == COOKIE_REPLY_SIZE, f"bad cookie reply size {len(msg)}"
+    assert msg[0] == MSG_TYPE_COOKIE, f"bad type {msg[0]}"
+
+    receiver_index = struct.unpack("<I", msg[4:8])[0]
+    nonce = msg[8:32]
+    encrypted_cookie = msg[32:64]
+
+    key = cookie_key(responder_public)
+    cookie = xchacha20poly1305_decrypt(key, nonce, encrypted_cookie, mac1)
+    assert len(cookie) == 16
+    return receiver_index, cookie
+
+
+def create_initiation_with_mac2(
+    peer: WireGuardPeer,
+    responder_public: bytes,
+    cookie: bytes,
+) -> tuple[bytes, HandshakeState, bytes]:
+    """Create a Handshake Initiation with MAC2 computed from a cookie.
+
+    Returns (msg, state, mac1).
+    MAC2 = Mac(cookie, msg[0..mac2_offset-1]) where mac2_offset = 132.
+    """
+    # Build a normal initiation first (MAC2 = zeros)
+    msg, state = peer.create_initiation(responder_public)
+    # Extract the MAC1 that was computed
+    mac1 = msg[116:132]
+
+    if cookie != bytes(16):
+        # Recompute MAC2 = Mac(cookie, msg[0..132))
+        mac2 = compute_mac(cookie, msg[:132])
+        msg = msg[:132] + mac2
+        assert len(msg) == INITIATION_SIZE
+
+    return msg, state, mac1
