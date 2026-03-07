@@ -49,11 +49,12 @@ is
 
    --  Initialize with a key
    procedure Blake2s_Init_Key
-     (Key    : Key_Buffer;
+     (Key    : Byte_Array;
       Outlen : Digest_Length;
       State  : aliased out Blake2s_State;
       Result : out Status)
-   with Global => null;
+   with Global => null,
+        Pre    => Key'Length in 1 .. BLAKE2S_KEYBYTES;
 
    --  Update hash with more data
    procedure Blake2s_Update

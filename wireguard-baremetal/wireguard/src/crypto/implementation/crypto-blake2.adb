@@ -95,7 +95,7 @@ is
    --  with keyed mode — feed data with Blake2s_Update, finalize
    --  with Blake2s_Final to produce a keyed MAC digest.
    procedure Blake2s_Init_Key
-     (Key    : Key_Buffer;
+     (Key    : Byte_Array;
       Outlen : Digest_Length;
       State  : aliased out Blake2s_State;
       Result : out Status)
