@@ -333,7 +333,8 @@ is
 
    procedure Handle_Cookie_RX
      (RX_Handle : in out Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length)
+      RX_Length : Messages.Packet_Length;
+      Action    : out WG_Action)
    with
      Pre  =>
        not Messages.RX_Pool.Is_Null (RX_Handle)
@@ -346,6 +347,7 @@ is
            (Messages.RX_Pool.Is_Null (RX_Handle),
             Messages.RX_Pool.Free_Count'Old,
             Messages.RX_Pool.Free_Count)
+       and then (Action = Action_None or else Action = Action_Error)
    is
       Cookie_Msg : Messages.Message_Cookie_Reply;
       Cookie_Res : Handshake.HS_Result.Result;
@@ -353,6 +355,8 @@ is
       Found_Peer : Session.Peer_Index := 1;
       Found      : Boolean := False;
    begin
+      Action := Action_Error;
+
       --  Verify minimum length
       if RX_Length < Unsigned_16 (Messages.Cookie_Reply_Size) then
          Messages.RX_Pool.Free (RX_Handle);
@@ -395,9 +399,12 @@ is
          New_Cookie,
          Cookie_Res);
 
-      if Cookie_Res.Kind = Handshake.HS_Result.Is_Ok then
-         Peer_Cookies (Found_Peer) := New_Cookie;
+      if Cookie_Res.Kind /= Handshake.HS_Result.Is_Ok then
+         return;
       end if;
+
+      Peer_Cookies (Found_Peer) := New_Cookie;
+      Action := Action_None;
    end Handle_Cookie_RX;
 
    ---------------------------------------------------------------------------
@@ -996,7 +1003,7 @@ is
                  (RX_Handle, RX_Length, PT_Len, Peer_Out, Action);
 
             when Messages.Kind_Cookie_Reply         =>
-               Handle_Cookie_RX (RX_Handle, RX_Length);
+               Handle_Cookie_RX (RX_Handle, RX_Length, Action);
          end case;
 
          if Action = RX_Decryption_Success then
