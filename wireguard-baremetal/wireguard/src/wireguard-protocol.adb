@@ -157,6 +157,15 @@ is
       RX_Length : Messages.Packet_Length;
       Peer_Out  : out Session.Peer_Index;
       Action    : out WG_Action)
+   with
+     Pre  =>
+       not Messages.RX_Pool.Is_Null (RX_Handle)
+       and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle),
+     Post =>
+       RX_Consumed (Messages.RX_Pool.Is_Null (RX_Handle),
+                    Messages.RX_Pool.Free_Count'Old,
+                    Messages.RX_Pool.Free_Count)
+       and then (Action = Action_Send_Response or else Action = Action_Error)
    is
       use Peer_Table.Lookup_Result;
 
@@ -228,7 +237,11 @@ is
       Peer_Out  : out Session.Peer_Index;
       Action    : out WG_Action)
    with
-     Refined_Post =>
+     Pre  =>
+       not Messages.RX_Pool.Is_Null (RX_Handle)
+       and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
+       and then Session.Session_Ready,
+     Post =>
        Session.Session_Ready
        and then RX_Consumed (Messages.RX_Pool.Is_Null (RX_Handle),
                              Messages.RX_Pool.Free_Count'Old,
@@ -707,85 +720,6 @@ is
    end Dispatch_Timer;
 
    ---------------------------------------------------------------------------
-   --  Dispatch_RX — Unified receive dispatch
-   ---------------------------------------------------------------------------
-
-   procedure Dispatch_RX
-     (RX_Ptr   : in out Utils.C_Buffer_Ptr;
-      PT_Len   : out Messages.Packet_Length;
-      Peer_Out : out Session.Peer_Index;
-      Action   : out WG_Action)
-   is
-      RX_Handle : Messages.RX_Buffer_Handle;
-      RX_Length : Messages.Packet_Length;
-   begin
-      PT_Len   := 0;
-      Peer_Out := 1;
-      Action   := Action_Error;
-
-      --  Acquire the RX buffer from C (takes ownership)
-      Messages.Acquire_RX_From_C (RX_Ptr, RX_Handle, RX_Length);
-
-      if RX_Length = 0
-        or else Natural (RX_Length) > Utils.Max_Packet_Size
-      then
-         Messages.RX_Pool.Free (RX_Handle);
-         declare
-            Null_Ptr : Utils.C_Buffer_Ptr;
-         begin
-            RX_Ptr := Null_Ptr;
-         end;
-         return;
-      end if;
-
-      --  Read message type from the first byte of the packet
-      declare
-         RX_View : constant Messages.RX_Buffer_View :=
-           Messages.RX_Pool.Borrow (RX_Handle);
-         RX_Msg  : constant Messages.Undefined_Message :=
-           Messages.Read_Undefined (RX_View);
-      begin
-         if not RX_Msg.Kind'Valid then
-            Messages.RX_Pool.Free (RX_Handle);
-            declare
-               Null_Ptr : Utils.C_Buffer_Ptr;
-            begin
-               RX_Ptr := Null_Ptr;
-            end;
-            return;
-         end if;
-
-         case RX_Msg.Kind is
-            when Messages.Kind_Handshake_Initiation =>
-               Handle_Initiation_RX (RX_Handle, RX_Length, Peer_Out, Action);
-
-            when Messages.Kind_Handshake_Response   =>
-               Handle_Response_RX (RX_Handle, RX_Length, Peer_Out, Action);
-
-            when Messages.Kind_Transport_Data       =>
-               Handle_Transport_RX
-                 (RX_Handle, RX_Length, PT_Len, Peer_Out, Action);
-
-            when Messages.Kind_Cookie_Reply         =>
-               Handle_Cookie_RX (RX_Handle, RX_Length);
-         end case;
-
-         if Action = RX_Decryption_Success then
-            pragma Warnings (Off, RX_Handle);  
-            --  nullified by Release_RX_To_C; dead after
-            Messages.Release_RX_To_C (RX_Handle, RX_Ptr);
-         else
-            declare
-               dummy : Utils.C_Buffer_Ptr;
-            begin
-               --  Set RX_Ptr to null as the buffer has been free-ed
-               RX_Ptr := dummy;
-            end;
-         end if;
-      end;
-   end Dispatch_RX;
-
-   ---------------------------------------------------------------------------
    --  Clear_HS_State
    ---------------------------------------------------------------------------
 
@@ -804,6 +738,24 @@ is
       PT_Len    : out Messages.Packet_Length;
       Peer_Out  : out Session.Peer_Index;
       Action    : out WG_Action)
+   with
+     Pre  =>
+       not Messages.RX_Pool.Is_Null (RX_Handle)
+       and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
+       and then Session.Session_Ready,
+     Post =>
+       Session.Session_Ready
+       and then
+         (if Action = RX_Decryption_Success
+          then not Messages.RX_Pool.Is_Null (RX_Handle)
+               and then not Messages.RX_Pool.Is_Mutably_Borrowed (RX_Handle)
+               and then PT_Len > 0
+               and then Messages.RX_Pool.Free_Count =
+                         Messages.RX_Pool.Free_Count'Old
+          else RX_Consumed (Messages.RX_Pool.Is_Null (RX_Handle),
+                            Messages.RX_Pool.Free_Count'Old,
+                            Messages.RX_Pool.Free_Count)
+               and then PT_Len = 0)
    is
       use Peer_Table.Source_Result;
 
@@ -982,5 +934,84 @@ is
       PT_Len := Messages.Packet_Length (Decrypt_Len);
       Action := RX_Decryption_Success;
    end Handle_Transport_RX;
+
+   ---------------------------------------------------------------------------
+   --  Dispatch_RX — Unified receive dispatch
+   ---------------------------------------------------------------------------
+
+   procedure Dispatch_RX
+     (RX_Ptr   : in out Utils.C_Buffer_Ptr;
+      PT_Len   : out Messages.Packet_Length;
+      Peer_Out : out Session.Peer_Index;
+      Action   : out WG_Action)
+   is
+      RX_Handle : Messages.RX_Buffer_Handle;
+      RX_Length : Messages.Packet_Length;
+   begin
+      PT_Len   := 0;
+      Peer_Out := 1;
+      Action   := Action_Error;
+
+      --  Acquire the RX buffer from C (takes ownership)
+      Messages.Acquire_RX_From_C (RX_Ptr, RX_Handle, RX_Length);
+
+      if RX_Length = 0
+        or else Natural (RX_Length) > Utils.Max_Packet_Size
+      then
+         Messages.RX_Pool.Free (RX_Handle);
+         declare
+            Null_Ptr : Utils.C_Buffer_Ptr;
+         begin
+            RX_Ptr := Null_Ptr;
+         end;
+         return;
+      end if;
+
+      --  Read message type from the first byte of the packet
+      declare
+         RX_View : constant Messages.RX_Buffer_View :=
+           Messages.RX_Pool.Borrow (RX_Handle);
+         RX_Msg  : constant Messages.Undefined_Message :=
+           Messages.Read_Undefined (RX_View);
+      begin
+         if not RX_Msg.Kind'Valid then
+            Messages.RX_Pool.Free (RX_Handle);
+            declare
+               Null_Ptr : Utils.C_Buffer_Ptr;
+            begin
+               RX_Ptr := Null_Ptr;
+            end;
+            return;
+         end if;
+
+         case RX_Msg.Kind is
+            when Messages.Kind_Handshake_Initiation =>
+               Handle_Initiation_RX (RX_Handle, RX_Length, Peer_Out, Action);
+
+            when Messages.Kind_Handshake_Response   =>
+               Handle_Response_RX (RX_Handle, RX_Length, Peer_Out, Action);
+
+            when Messages.Kind_Transport_Data       =>
+               Handle_Transport_RX
+                 (RX_Handle, RX_Length, PT_Len, Peer_Out, Action);
+
+            when Messages.Kind_Cookie_Reply         =>
+               Handle_Cookie_RX (RX_Handle, RX_Length);
+         end case;
+
+         if Action = RX_Decryption_Success then
+            pragma Warnings (Off, RX_Handle);  
+            --  nullified by Release_RX_To_C; dead after
+            Messages.Release_RX_To_C (RX_Handle, RX_Ptr);
+         else
+            declare
+               dummy : Utils.C_Buffer_Ptr;
+            begin
+               --  Set RX_Ptr to null as the buffer has been free-ed
+               RX_Ptr := dummy;
+            end;
+         end if;
+      end;
+   end Dispatch_RX;
 
 end Wireguard.Protocol;
