@@ -3,21 +3,27 @@
 VeriGuard Build Script
 
 Usage:
-    ./build.py                          # Build (default: release)
-    ./build.py build                    # Build Ada crates and ESP-IDF firmware
-    ./build.py build --development      # Debug build (Ada + C with assertions/debug info)
-    ./build.py build --release          # Release build (optimised, checks stripped)
-    ./build.py clean                    # Clean both Ada crates and ESP-IDF
-    ./build.py clean build              # Chain: clean then build
-    ./build.py build --idf monitor      # Build, then run idf.py monitor
+    ./build.py                                    # Build (default: release)
+    ./build.py build                              # Build Ada crates and ESP-IDF firmware
+    ./build.py build --development                # Debug build (Ada + C with assertions/debug info)
+    ./build.py build --release                    # Release build (optimised, checks stripped)
+    ./build.py clean                              # Clean both Ada crates and ESP-IDF
+    ./build.py clean build                        # Chain: clean then build
+    ./build.py build --idf monitor                # Build, then run idf.py monitor
     ./build.py build --idf -p /dev/ttyUSB0 flash  # Build, then flash to specific port
-    ./build.py build --alr -- -XFOO=bar # Pass extra arguments to alr
-    ./build.py keygen                   # Generate test keypairs (ESP32 + Python)
-    ./build.py keygen --psk             # Generate keypairs with a pre-shared key
+    ./build.py build --alr -- -XFOO=bar           # Pass extra arguments to alr
+    ./build.py keygen                             # Generate test keypairs (ESP32 + Python)
+    ./build.py keygen --psk                       # Generate keypairs with a pre-shared key
+    ./build.py build --container                  # Build inside the OCI container
+    ./build.py build --container --development    # Dev build in container
+    ./build.py prove                              # Run SPARK proofs only (gold level)
+    ./build.py build --no-prove                   # Skip SPARK proofs before building
 
 Flags:
     --development       Debug build for both Ada and C (assertions, ghost checks, -Og)
     --release           Optimised release build for both Ada and C (default)
+    --container         Run the build inside the reproducible OCI container
+    --no-prove          Skip SPARK proof step during build
     --alr <args...>     Pass extra arguments to alr build/clean commands
     --idf <args...>     Pass arguments to idf.py after build/clean
     --psk               Include a random 32-byte pre-shared key (keygen only)
@@ -25,13 +31,16 @@ Flags:
 
 import os
 import sys
+import shutil
 import subprocess
 from pathlib import Path
 
 # Configuration
 SCRIPT_DIR = Path(__file__).parent.absolute()
 ADA_CRATES = ["wireguard"]  # Single consolidated crate
-VALID_COMMANDS = {"build", "clean", "keygen"}
+VALID_COMMANDS = {"build", "clean", "keygen", "prove"}
+CONTAINER_IMAGE = "seikan-build"
+CONTAINERFILE = SCRIPT_DIR / "Containerfile"
 
 
 def generate_keypairs(with_psk=False):
@@ -127,6 +136,66 @@ def generate_keypairs(with_psk=False):
     return True
 
 
+def find_container_runtime():
+    """Find podman or docker on PATH. Prefer podman (rootless, daemonless)."""
+    for runtime in ("podman", "docker"):
+        if shutil.which(runtime):
+            return runtime
+    return None
+
+
+def ensure_container_image(runtime):
+    """Build the container image if it doesn't already exist."""
+    # Check if image exists
+    result = subprocess.run(
+        [runtime, "image", "exists", CONTAINER_IMAGE],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return True
+
+    print(f"\n  Container image '{CONTAINER_IMAGE}' not found — building...")
+    print(f"  $ {runtime} build -t {CONTAINER_IMAGE} -f Containerfile .")
+    result = subprocess.run(
+        [runtime, "build", "-t", CONTAINER_IMAGE, "-f", str(CONTAINERFILE), "."],
+        cwd=SCRIPT_DIR,
+    )
+    if result.returncode != 0:
+        print("ERROR: Failed to build container image.")
+        return False
+    return True
+
+
+def run_in_container(args):
+    """Re-invoke build.py inside the OCI container.
+
+    Bind-mounts the project directory at /work. Passes through all
+    arguments except --container itself.
+    """
+    runtime = find_container_runtime()
+    if runtime is None:
+        print("ERROR: Neither podman nor docker found on PATH.")
+        print("       Install podman:  sudo dnf install podman")
+        sys.exit(1)
+
+    if not ensure_container_image(runtime):
+        sys.exit(1)
+
+    # Strip --container from the forwarded args
+    forwarded = [a for a in args if a != "--container"]
+
+    cmd = [
+        runtime, "run", "--rm",
+        "-v", f"{SCRIPT_DIR}:/work:Z",
+        CONTAINER_IMAGE,
+    ] + forwarded
+
+    print(f"\n  Delegating to container ({runtime})...")
+    print(f"  $ {' '.join(cmd)}")
+    result = subprocess.run(cmd)
+    sys.exit(result.returncode)
+
+
 def check_idf_path():
     """Verify IDF_PATH environment variable is set."""
     if not os.environ.get("IDF_PATH"):
@@ -188,13 +257,37 @@ def clean_ada_crates(alr_args=""):
 def clean_idf(idf_args=""):
     """Clean ESP-IDF build."""
     print("\n[2/2] Cleaning ESP-IDF firmware...")
+    build_dir = SCRIPT_DIR / "build"
+    if build_dir.exists():
+        # Remove build/ directly — idf.py fullclean refuses to delete a
+        # directory it didn't create (e.g. bind-mounted from the host).
+        shutil.rmtree(build_dir)
+        print("  Removed build/")
     cmd = f"idf.py fullclean {idf_args}".strip()
     return run_command(cmd, description="Cleaning ESP-IDF")
 
 
+def prove_ada_crates():
+    """Run SPARK proofs (gold level) on all Ada crates."""
+    print("\n[1/3] Running SPARK proofs (gold level)...")
+    all_success = True
+
+    for crate in ADA_CRATES:
+        crate_dir = SCRIPT_DIR / crate
+        cmd = (
+            "alr exec -- gnatprove -P wireguard.gpr"
+            " --mode=gold --timeout=5 -j0"
+            " -XPLATFORM=esp_idf -XCRYPTO_BACKEND=libsodium"
+        )
+        if not run_command(cmd, cwd=crate_dir, description=f"Proving {crate}"):
+            all_success = False
+
+    return all_success
+
+
 def build_ada_crates(alr_args="", profile="release"):
     """Build all Ada crates."""
-    print("\n[1/2] Building Ada crates with Alire...")
+    print("\n[2/3] Building Ada crates with Alire...")
     all_success = True
 
     for crate in ADA_CRATES:
@@ -213,7 +306,7 @@ def build_idf(idf_args="", profile="release"):
     To handle profile switches we track the active profile in .build_profile
     and delete sdkconfig when it changes, forcing regeneration.
     """
-    print("\n[2/2] Building ESP-IDF firmware...")
+    print("\n[3/3] Building ESP-IDF firmware...")
 
     # Detect profile switch → delete sdkconfig so defaults are re-applied
     profile_marker = SCRIPT_DIR / ".build_profile"
@@ -237,11 +330,17 @@ def build_idf(idf_args="", profile="release"):
     return run_command(cmd, description="Building firmware")
 
 
-def execute_command(cmd, alr_args="", idf_args="", psk=False, profile="release"):
+def execute_command(cmd, alr_args="", idf_args="", psk=False, profile="release",
+                    skip_prove=False):
     """Execute a single command."""
     if cmd == "clean":
         return clean_ada_crates(alr_args) and clean_idf(idf_args)
+    elif cmd == "prove":
+        return prove_ada_crates()
     elif cmd == "build":
+        if not skip_prove:
+            if not prove_ada_crates():
+                return False
         return build_ada_crates(alr_args, profile) and build_idf(idf_args, profile)
     elif cmd == "keygen":
         return generate_keypairs(with_psk=psk)
@@ -282,11 +381,17 @@ def main():
     
     if not args:
         args = ["build"]
+
+    # If --container is present, delegate to the OCI container immediately
+    if "--container" in args:
+        run_in_container(args)
+        # run_in_container calls sys.exit — we never reach here
     
     # Pass 1: extract --alr, --idf, --psk, --development, --release flags
     alr_args = ""
     idf_command_after = ""
     psk_flag = False
+    skip_prove = False
     profile = "release"  # default
     command_names = []
     
@@ -306,11 +411,19 @@ def main():
             profile = "release"
             i += 1
         
+        elif arg == "--no-prove":
+            skip_prove = True
+            i += 1
+        
+        elif arg == "--container":
+            # Already handled above; skip if it somehow reaches here
+            i += 1
+        
         elif arg == "--alr":
             # Collect alr args until --idf or a valid command or another flag
             alr_parts = []
             i += 1
-            while i < len(args) and args[i] not in VALID_COMMANDS and args[i] not in ("--idf", "--development", "--release", "--psk"):
+            while i < len(args) and args[i] not in VALID_COMMANDS and args[i] not in ("--idf", "--development", "--release", "--psk", "--no-prove"):
                 alr_parts.append(args[i])
                 i += 1
             alr_args = " ".join(alr_parts)
@@ -330,11 +443,14 @@ def main():
         
         else:
             print(f"ERROR: Unknown argument '{arg}'")
-            print(f"\nUsage: {Path(__file__).name} [command ...] [--development|--release] [--alr args...] [--idf args...]")
-            print("\nValid commands: build, clean, keygen")
+            print(f"\nUsage: {Path(__file__).name} [command ...] [--development|--release] [--container] [--no-prove] [--alr args...] [--idf args...]")
+            print("\nValid commands: build, clean, keygen, prove")
             print("\nExamples:")
             print(f"  {Path(__file__).name} build")
             print(f"  {Path(__file__).name} build --development")
+            print(f"  {Path(__file__).name} build --container")
+            print(f"  {Path(__file__).name} build --no-prove")
+            print(f"  {Path(__file__).name} prove")
             print(f"  {Path(__file__).name} build --development --idf flash monitor")
             print(f"  {Path(__file__).name} clean build --release")
             print(f"  {Path(__file__).name} build --alr -- -XPLATFORM=esp_idf")
@@ -364,7 +480,8 @@ def main():
     # Execute commands in sequence
     success = True
     for cmd, alr_args, idf_args in commands:
-        if not execute_command(cmd, alr_args, idf_args, psk=psk_flag, profile=profile):
+        if not execute_command(cmd, alr_args, idf_args, psk=psk_flag,
+                              profile=profile, skip_prove=skip_prove):
             success = False
             break
     

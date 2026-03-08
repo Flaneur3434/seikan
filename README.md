@@ -128,6 +128,8 @@ lwIP, appearing as normal IP traffic on `wg0`.
   - Installs GNAT toolchain for RISC-V (`gnat_risc64_elf`)
   - Installs SPARK prover
 - [ESP-IDF](https://docs.espressif.com/projects/esp-idf/) v6.x
+- [Podman](https://podman.io/) or [Docker](https://www.docker.com/) (optional,
+  for reproducible container builds)
 
 ## Building
 
@@ -141,16 +143,13 @@ libraries.
 > Run `git submodule update --init --recursive` before building for the first time
 
 ```bash
-
 # Generate test keys (first time only)
 python build.py keygen
 
 # Release build (optimised, no runtime checks) — default
-# Automatically flashes and starts monitoring esp32c6 serial output
 python build.py build
 
 # Development build (runtime checks, debug logs, ghost assertions)
-# Automatically flashes and starts monitoring esp32c6 serial output
 python build.py build --development
 
 # Build and flash to device
@@ -165,6 +164,36 @@ python build.py clean
 # Can aggregate multiple flags together
 python build.py clean build --development --idf flash monitor
 ```
+
+### Container Build (Reproducible)
+
+Use `--container` to build inside an OCI container with all toolchains pinned.
+Requires [Podman](https://podman.io/) or Docker — the image is built
+automatically on first run.
+
+```bash
+# Release build in container
+python build.py build --container
+
+# Development build in container
+python build.py build --container --development
+
+# Clean + rebuild in container
+python build.py clean build --container
+```
+
+> [!NOTE]
+> The `--idf flash` and `--idf monitor` flags require USB device access and
+> should be run outside the container.
+
+> [!Warning]
+> The default target is **ESP32-C6** (RISC-V). To build the container image for
+> a different chip, pass `IDF_TARGET` as a build arg:
+> ```bash
+> podman build --build-arg IDF_TARGET=esp32s3 -t veriguard-build -f Containerfile .
+> ```
+> You will also need to update `CONFIG_IDF_TARGET` in `sdkconfig.defaults` to
+> match.
 
 ### Build Profiles
 
