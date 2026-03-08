@@ -338,10 +338,11 @@ def execute_command(cmd, alr_args="", idf_args="", psk=False, profile="release",
     elif cmd == "prove":
         return prove_ada_crates()
     elif cmd == "build":
-        if not skip_prove:
-            if not prove_ada_crates():
-                return False
-        return build_ada_crates(alr_args, profile) and build_idf(idf_args, profile)
+        return (
+            build_ada_crates(alr_args, profile)
+            and (skip_prove or prove_ada_crates())
+            and build_idf(idf_args, profile)
+        )
     elif cmd == "keygen":
         return generate_keypairs(with_psk=psk)
     else:
@@ -497,4 +498,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
