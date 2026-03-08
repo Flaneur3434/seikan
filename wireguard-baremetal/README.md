@@ -1,11 +1,18 @@
 # VeriGuard: Formally Verified WireGuard for Bare-Metal Systems
 
-A **formally verified WireGuard client** for embedded systems, targeting the ESP32-C6.
-The protocol core is written in Ada/SPARK, and validated to SPARK's Gold level (full functional correctness and absence of runtime errors). The protocol layer doesn't allocate any heap memory and instead uses static memory pools for deterministic runtime and low memory footprint. The protocol layer is designed to be portable, but the platform layer uses plain C on ESP-IDF with FreeRTOS.
+The protocol core is written in Ada/SPARK and validated to SPARK's
+[Gold level](https://docs.adacore.com/live/wave/spark2014/html/spark2014_ug/en/usage_scenarios.html#levels-of-software-assurance).
+The core does not allocate any heap memory and instead uses static memory pools
+for deterministic runtime and low memory footprint.
+The Ada code is designed to be portable, but the platform layer uses the ESP-IDF
+framework with FreeRTOS.
 
-The tunnel packets are WireGuard-compatible wire format which achieves interoperable with the standard Linux `wg0` kernel interface. The ESP32 appears as a normal WireGuard peer to any Linux, macOS, or Windows endpoint.
+The tunnel packets are WireGuard-compatible wire format which achieves
+interoperable with the standard Linux `wg0` kernel interface.
+The ESP32 appears as a normal WireGuard peer to any Linux, macOS, or Windows
+endpoint.
 
-## Architecture
+## Code Architecture
 
 ```
 Ada/SPARK  (proven, no heap)              C / ESP-IDF  (unverified I/O)
@@ -25,9 +32,95 @@ Ada/SPARK  (proven, no heap)              C / ESP-IDF  (unverified I/O)
 
 - Ada owns all protocol state: C never interprets WireGuard semantics
 - C is an untrusted I/O layer: Ada validates every byte
-- Formally verified memory ownership: Ada/SPARK guarantees wireguard protocol's internal memory usage correctness
-- Zero-copy RX: C provides a buffer pointer, Ada decrypts in-place, Ada returns the buffer
-- Zero-copy TX: Ada borrows a buffer from the pool, encrypts in place, C transmits and returns it
+- Zero-copy RX: C provides a buffer pointer, Ada decrypts in-place, Ada returns
+the buffer
+- Zero-copy TX: Ada borrows a buffer from the pool, encrypts in place, C
+transmits and returns it
+
+## Wireguard Network Interface
+
+The tunnel uses a **split architecture** built on lwIP's `netif` API to create a
+pseudo network interface (`wg0`) that the ESP32's TCP/IP stack routes through
+transparently.
+Application code never touches WireGuard directly. It uses standard BSD sockets
+pointed at tunnel IP addresses, and lwIP handles the rest.
+
+```
+                    Application (BSD sockets)
+                           │
+                      ┌────▼────┐
+                      │  lwIP   │  ← IP routing table
+                      └────┬────┘
+                  ┌────────┴─────────┐
+                  │                  │
+            ┌─────▼─────┐     ┌──────▼─────┐
+            │  sta netif │    │  wg0 netif │  ← WireGuard tunnel
+            │  (WiFi)    │    │  10.0.0.2  │
+            └────────────┘    └─────┬──────┘
+                                    │  output callback
+                              ┌─────▼──────┐
+                              │  wg_task   │  ← encrypts/decrypts
+                              └─────┬──────┘
+                                    │  UDP :51820
+                              ┌─────▼──────┐
+                              │  sta netif │  ← outer transport
+                              └────────────┘
+```
+
+**Outer side**: A UDP PCB bound to port 51820 receives encrypted WireGuard
+datagrams from the WiFi interface. Incoming packets are copied into RX pool
+buffers and enqueued to `wg_task`, which hands them to Ada for decryption.
+Decrypted plaintext is injected back into lwIP via `tcpip_input()` as if it
+arrived on the `wg0` interface.
+
+**Inner side**: When lwIP routes an outbound IP packet to `wg0`, the netif
+output callback copies the plaintext into a TX pool buffer (with 16 bytes of
+headroom for the WireGuard transport header), then enqueues it to `wg_task`.
+Ada encrypts in-place and the ciphertext is sent over UDP through the WiFi
+interface.
+
+Both directions use `pbuf_custom` / `PBUF_REF` wrappers for zero-copy
+handoff between pool buffers and lwIP, no extra memcpy on the hot path.
+
+### Using the Tunnel
+
+Once the handshake completes, application code on the ESP32 can communicate
+through the tunnel using ordinary BSD sockets. The tunnel peer's IP is routed
+through `wg0` automatically by lwIP:
+
+```c
+#include <lwip/sockets.h>
+
+// Open a UDP socket — nothing WireGuard-specific
+int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+// Send to the tunnel peer's IP (routed through wg0 by lwIP)
+struct sockaddr_in dest = {
+    .sin_family      = AF_INET,
+    .sin_port        = htons(9999),
+    .sin_addr.s_addr = inet_addr("10.0.0.1"),  // peer's tunnel IP
+};
+
+sendto(sock, "hello", 5, 0,
+       (struct sockaddr *)&dest, sizeof(dest));
+
+// Receive works the same way
+char buf[256];
+recvfrom(sock, buf, sizeof(buf), 0, NULL, NULL);
+
+close(sock);
+```
+
+The application has no awareness of WireGuard. lwIP's routing table sends
+`10.0.0.0/24` traffic through `wg0`, whose output callback encrypts it and
+transmits over WiFi. Incoming encrypted packets are decrypted and injected into
+lwIP, appearing as normal IP traffic on `wg0`.
+
+> [!NOTE]
+> If `wg_task` receives an outbound packet for a peer that has no active session,
+> it initiates a handshake automatically, establishes the tunnel, and then
+> encrypts the queued packet. Rekeys are also automatic when a session
+> approaches expiry.
 
 ## Dependencies
 
@@ -39,7 +132,8 @@ Ada/SPARK  (proven, no heap)              C / ESP-IDF  (unverified I/O)
 ## Building
 
 All builds go through `build.py`, which first compiles the Ada crate with Alire,
-then runs `idf.py` to build the ESP-IDF firmware and link the Ada static libraries.
+then runs `idf.py` to build the ESP-IDF firmware and link the Ada static
+libraries.
 
 ### Quick Start
 
@@ -76,7 +170,10 @@ python build.py clean build --development --idf flash monitor
 | `--development` | `-O0` | Everything | `Pre => Check` | Core dump to UART, GDB stub, `DEBUG` log level |
 
 > [!NOTE]
-> Postconditions are verified statically only (`Post => Ignore`). Runtime postcondition checks are disabled because the `Free_Count` ghost function reads pool state without the pool lock, and concurrent C allocations can change it between function entry and exit
+> Postconditions are verified statically only (`Post => Ignore`). Runtime
+> postcondition checks are disabled because the `Free_Count` ghost function
+> reads pool state without the pool lock, and concurrent C allocations can
+> change it between function entry and exit
 
 
 ### Configuration
@@ -98,9 +195,10 @@ configure interactively. The Kconfig menu provides:
 
 Up to 2 peers are supported. `build.py keygen` generates matching keypairs
 for the ESP32 and Python test side, writing `sdkconfig.secrets` and
-`tests/integration/test_keys.py` automatically. 
+`tests/integration/test_keys.py` automatically.
 
-Keys can be extracted to create a wireguard network interface for testing as well.
+Keys can be extracted to create a wireguard network interface for testing as
+well.
 ```bash
 # Create a new interface
 $ ip link add dev wg0 type wireguard
@@ -183,7 +281,8 @@ pytest -s -v
 
 The tests use two Python reference implementations as oracles:
 - `wg_noise.py` — full Noise IKpsk2 handshake + transport packet construction
-- `wg_session.py` — session timer model mirroring the Ada `Session.Timers` package
+- `wg_session.py` — session timer model mirroring the Ada `Session.Timers`
+package
 
 ## Performance
 
