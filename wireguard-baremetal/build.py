@@ -37,6 +37,7 @@ from pathlib import Path
 
 # Configuration
 SCRIPT_DIR = Path(__file__).parent.absolute()
+REPO_ROOT = SCRIPT_DIR.parent
 ADA_CRATES = ["wireguard"]  # Single consolidated crate
 VALID_COMMANDS = {"build", "clean", "keygen", "prove"}
 CONTAINER_IMAGE = "seikan-build"
@@ -169,8 +170,9 @@ def ensure_container_image(runtime):
 def run_in_container(args):
     """Re-invoke build.py inside the OCI container.
 
-    Bind-mounts the project directory at /work. Passes through all
-    arguments except --container itself.
+    Bind-mounts the repo root at /work so the container has access to
+    .git and submodules. Passes through all arguments except --container
+    itself.
     """
     runtime = find_container_runtime()
     if runtime is None:
@@ -186,7 +188,7 @@ def run_in_container(args):
 
     cmd = [
         runtime, "run", "--rm",
-        "-v", f"{SCRIPT_DIR}:/work:Z",
+        "-v", f"{REPO_ROOT}:/work:Z",
         CONTAINER_IMAGE,
     ] + forwarded
 
