@@ -12,6 +12,8 @@ interoperable with the standard Linux `wg0` kernel interface.
 The ESP32 appears as a normal WireGuard peer to any Linux, macOS, or Windows
 endpoint.
 
+![2 WireGuard peers pinging ESP32-C6 via WireGuard tunnel from Linux](.github/output.gif)
+
 ## Code Architecture
 
 ```
