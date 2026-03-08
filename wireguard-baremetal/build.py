@@ -9,14 +9,15 @@ Usage:
     ./build.py build --release                    # Release build (optimised, checks stripped)
     ./build.py clean                              # Clean both Ada crates and ESP-IDF
     ./build.py clean build                        # Chain: clean then build
-    ./build.py build --idf monitor                # Build, then run idf.py monitor
-    ./build.py build --idf -p /dev/ttyUSB0 flash  # Build, then flash to specific port
+    ./build.py build flash monitor                # Build, flash, then open serial monitor
+    ./build.py flash                              # Flash firmware to device
+    ./build.py monitor                            # Open serial monitor (no build)
     ./build.py build --alr -- -XFOO=bar           # Pass extra arguments to alr
     ./build.py keygen                             # Generate test keypairs (ESP32 + Python)
     ./build.py keygen --psk                       # Generate keypairs with a pre-shared key
     ./build.py build --container                  # Build inside the OCI container
     ./build.py build --container --development    # Dev build in container
-    ./build.py build --container --idf flash monitor  # Build, flash, and monitor from container (Linux)
+    ./build.py build flash monitor --container    # Build, flash, and monitor from container (Linux)
     ./build.py prove                              # Run SPARK proofs only (gold level)
     ./build.py build --no-prove                   # Skip SPARK proofs before building
 
@@ -26,7 +27,6 @@ Flags:
     --container         Run the build inside the reproducible OCI container
     --no-prove          Skip SPARK proof step during build
     --alr <args...>     Pass extra arguments to alr build/clean commands
-    --idf <args...>     Pass arguments to idf.py after build/clean
     --psk               Include a random 32-byte pre-shared key (keygen only)
 """
 
@@ -40,7 +40,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.absolute()
 REPO_ROOT = SCRIPT_DIR.parent
 ADA_CRATES = ["wireguard"]  # Single consolidated crate
-VALID_COMMANDS = {"build", "clean", "keygen", "prove"}
+VALID_COMMANDS = {"build", "clean", "keygen", "prove", "flash", "monitor"}
 CONTAINER_IMAGE = "seikan-build"
 CONTAINERFILE = SCRIPT_DIR / "Containerfile"
 
@@ -365,14 +365,12 @@ def execute_command(cmd, alr_args="", idf_args="", psk=False, profile="release",
         )
     elif cmd == "keygen":
         return generate_keypairs(with_psk=psk)
+    elif cmd == "flash":
+        return run_command_interactive("idf.py flash", description="Flashing firmware")
+    elif cmd == "monitor":
+        return run_command_interactive("idf.py monitor", description="Opening serial monitor")
     else:
         return False
-
-
-def execute_idf_command(idf_args):
-    """Execute a standalone idf.py command interactively."""
-    cmd = f"idf.py {idf_args}".strip()
-    return run_command_interactive(cmd, description="Running idf.py")
 
 
 def print_header(title):
@@ -397,7 +395,6 @@ def main():
     """Main entry point."""
     
     # Two-pass parser: extract flags first, then build command list.
-    # --alr and --idf flags apply globally to all commands.
     args = sys.argv[1:]
     
     if not args:
@@ -408,9 +405,8 @@ def main():
         run_in_container(args)
         # run_in_container calls sys.exit — we never reach here
     
-    # Pass 1: extract --alr, --idf, --psk, --development, --release flags
+    # Pass 1: extract flags
     alr_args = ""
-    idf_command_after = ""
     psk_flag = False
     skip_prove = False
     profile = "release"  # default
@@ -441,22 +437,13 @@ def main():
             i += 1
         
         elif arg == "--alr":
-            # Collect alr args until --idf or a valid command or another flag
+            # Collect alr args until a valid command or another flag
             alr_parts = []
             i += 1
-            while i < len(args) and args[i] not in VALID_COMMANDS and args[i] not in ("--idf", "--development", "--release", "--psk", "--no-prove"):
+            while i < len(args) and args[i] not in VALID_COMMANDS and args[i] not in ("--development", "--release", "--psk", "--no-prove"):
                 alr_parts.append(args[i])
                 i += 1
             alr_args = " ".join(alr_parts)
-        
-        elif arg == "--idf":
-            # Collect all remaining args as idf args
-            idf_parts = []
-            i += 1
-            while i < len(args):
-                idf_parts.append(args[i])
-                i += 1
-            idf_command_after = " ".join(idf_parts)
         
         elif arg in VALID_COMMANDS:
             command_names.append(arg)
@@ -464,37 +451,36 @@ def main():
         
         else:
             print(f"ERROR: Unknown argument '{arg}'")
-            print(f"\nUsage: {Path(__file__).name} [command ...] [--development|--release] [--container] [--no-prove] [--alr args...] [--idf args...]")
-            print("\nValid commands: build, clean, keygen, prove")
+            print(f"\nUsage: {Path(__file__).name} [command ...] [--development|--release] [--container] [--no-prove] [--alr args...]")
+            print("\nValid commands: build, clean, keygen, prove, flash, monitor")
             print("\nExamples:")
             print(f"  {Path(__file__).name} build")
             print(f"  {Path(__file__).name} build --development")
             print(f"  {Path(__file__).name} build --container")
             print(f"  {Path(__file__).name} build --no-prove")
             print(f"  {Path(__file__).name} prove")
-            print(f"  {Path(__file__).name} build --development --idf flash monitor")
+            print(f"  {Path(__file__).name} build flash monitor")
+            print(f"  {Path(__file__).name} monitor")
             print(f"  {Path(__file__).name} clean build --release")
             print(f"  {Path(__file__).name} build --alr -- -XPLATFORM=esp_idf")
             print(f"  {Path(__file__).name} keygen")
             print(f"  {Path(__file__).name} keygen --psk")
             sys.exit(1)
     
-    # Pass 2: build command list — all commands share the same alr/idf args
+    # Pass 2: build command list
     if not command_names:
         command_names = ["build"]
     
     commands = [(cmd, alr_args, "") for cmd in command_names]
     
-    # Only require IDF_PATH for build/clean (not keygen)
-    needs_idf = any(cmd[0] in ("build", "clean") for cmd in commands) or idf_command_after
+    # Only require IDF_PATH for build/clean/flash/monitor (not keygen)
+    needs_idf = any(cmd[0] in ("build", "clean", "flash", "monitor") for cmd in commands)
     if needs_idf:
         check_idf_path()
     
     # Determine action description
     action = " → ".join(cmd[0] for cmd in commands)
     extra = f" [{profile}]"
-    if idf_command_after:
-        extra += f" → idf.py {idf_command_after}"
     
     print_header(f"VeriGuard {action.title()}{extra}")
     
@@ -505,11 +491,6 @@ def main():
                               profile=profile, skip_prove=skip_prove):
             success = False
             break
-    
-    # Execute idf.py command if specified
-    if success and idf_command_after:
-        if not execute_idf_command(idf_command_after):
-            success = False
     
     print_footer(success)
     

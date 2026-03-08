@@ -155,16 +155,19 @@ python build.py build
 python build.py build --development
 
 # Build and flash to device
-python build.py build --idf flash
+python build.py build flash
 
 # Build, flash, and open serial monitor
-python build.py build --idf flash monitor
+python build.py build flash monitor
+
+# Just open serial monitor (no build)
+python build.py monitor
 
 # Clean everything (Ada + ESP-IDF)
 python build.py clean
 
-# Can aggregate multiple flags together
-python build.py clean build --development --idf flash monitor
+# Can aggregate multiple commands together
+python build.py clean build --development flash monitor
 ```
 
 ### Container Build (Reproducible)
@@ -184,13 +187,13 @@ python build.py build --container --development
 python build.py clean build --container
 
 # Build, flash, and monitor from inside the container (Linux only)
-python build.py build --container --idf flash monitor
+python build.py build flash monitor --container
 ```
 
 > [!NOTE]
-> On Linux, `--idf flash` and `--idf monitor` work inside the container by
-> passing through `/dev` for USB serial access. On macOS/Windows, run these
-> flags outside the container.
+> On Linux, `flash` and `monitor` work inside the container by passing through
+> `/dev` for USB serial access. On macOS/Windows, run these commands outside
+> the container.
 
 > [!Warning]
 > The default target is **ESP32-C6** (RISC-V). To build the container image for
