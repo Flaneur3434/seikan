@@ -182,11 +182,15 @@ python build.py build --container --development
 
 # Clean + rebuild in container
 python build.py clean build --container
+
+# Build, flash, and monitor from inside the container (Linux only)
+python build.py build --container --idf flash monitor
 ```
 
 > [!NOTE]
-> The `--idf flash` and `--idf monitor` flags require USB device access and
-> should be run outside the container.
+> On Linux, `--idf flash` and `--idf monitor` work inside the container by
+> passing through `/dev` for USB serial access. On macOS/Windows, run these
+> flags outside the container.
 
 > [!Warning]
 > The default target is **ESP32-C6** (RISC-V). To build the container image for

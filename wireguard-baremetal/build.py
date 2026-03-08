@@ -16,6 +16,7 @@ Usage:
     ./build.py keygen --psk                       # Generate keypairs with a pre-shared key
     ./build.py build --container                  # Build inside the OCI container
     ./build.py build --container --development    # Dev build in container
+    ./build.py build --container --idf flash monitor  # Build, flash, and monitor from container (Linux)
     ./build.py prove                              # Run SPARK proofs only (gold level)
     ./build.py build --no-prove                   # Skip SPARK proofs before building
 
@@ -186,11 +187,23 @@ def run_in_container(args):
     # Strip --container from the forwarded args
     forwarded = [a for a in args if a != "--container"]
 
+    # If forwarded args include flash or monitor, pass through /dev for USB
+    # serial access (Linux only).
+    needs_device = any(a in ("flash", "monitor") for a in forwarded)
+
     cmd = [
         runtime, "run", "--rm", "-t",
         "-v", f"{REPO_ROOT}:/work:Z",
-        CONTAINER_IMAGE,
-    ] + forwarded
+    ]
+
+    if needs_device and sys.platform == "linux":
+        cmd += ["--privileged", "-v", "/dev:/dev"]
+    elif needs_device:
+        print("ERROR: flash/monitor inside the container requires Linux.")
+        print("       Run without --container to flash/monitor on this OS.")
+        sys.exit(1)
+
+    cmd += [CONTAINER_IMAGE] + forwarded
 
     print(f"\n  Delegating to container ({runtime})...")
     print(f"  $ {' '.join(cmd)}")
