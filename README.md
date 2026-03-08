@@ -137,7 +137,11 @@ libraries.
 
 ### Quick Start
 
+> [!NOTE]
+> Run `git submodule update --init --recursive` before building for the first time
+
 ```bash
+
 # Generate test keys (first time only)
 python build.py keygen
 
