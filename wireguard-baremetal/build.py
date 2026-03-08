@@ -190,11 +190,16 @@ def run_in_container(args):
     # If forwarded args include flash or monitor, pass through /dev for USB
     # serial access (Linux only).
     needs_device = any(a in ("flash", "monitor") for a in forwarded)
+    needs_interactive = "monitor" in forwarded
 
     cmd = [
         runtime, "run", "--rm", "-t",
-        "-v", f"{REPO_ROOT}:/work:Z",
     ]
+
+    if needs_interactive:
+        cmd += ["-i"]
+
+    cmd += ["-v", f"{REPO_ROOT}:/work:Z"]
 
     if needs_device and sys.platform == "linux":
         cmd += ["--privileged", "-v", "/dev:/dev"]
