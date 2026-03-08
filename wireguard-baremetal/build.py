@@ -187,7 +187,7 @@ def run_in_container(args):
     forwarded = [a for a in args if a != "--container"]
 
     cmd = [
-        runtime, "run", "--rm",
+        runtime, "run", "--rm", "-t",
         "-v", f"{REPO_ROOT}:/work:Z",
         CONTAINER_IMAGE,
     ] + forwarded
