@@ -1,4 +1,4 @@
-# VeriGuard: Formally Verified WireGuard for Bare-Metal Systems
+# Seikan: Formally Verified WireGuard for Bare-Metal Systems
 
 The protocol core is written in Ada/SPARK and validated to SPARK's
 [Gold level](https://docs.adacore.com/live/wave/spark2014/html/spark2014_ug/en/usage_scenarios.html#levels-of-software-assurance).
