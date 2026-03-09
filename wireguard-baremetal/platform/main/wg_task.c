@@ -402,7 +402,7 @@ bool wg_task_start(void)
     BaseType_t ret = xTaskCreate(
         wg_task,
         "wg_proto",
-        8192,
+        12288,
         NULL,
         6,    /* Priority 6 (IO thread is 5) */
         NULL
