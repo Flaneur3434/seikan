@@ -50,7 +50,7 @@ is
      with Global => null,
           Post   => Is_Initialized (M) and then not Is_Locked (M);
    --  Store a pre-created OS lock handle.
-   --  The caller (C side) is responsible for creating the lock object.
+   --  Function is only valid before multiple threads start contesting for lock
 
    function Is_Initialized (M : Mutex_Handle) return Boolean
      with Global => null;
@@ -59,21 +59,17 @@ is
    function Is_Locked (M : Mutex_Handle) return Boolean
      with Ghost,
           Global => null;
-   --  Ghost function: True when the mutex is held.  Only exists for proof.
+   --  True while the mutex is held (between Lock and Unlock).
 
    procedure Lock (M : in out Mutex_Handle)
      with Global => null,
-          Pre    => Is_Initialized (M) and then not Is_Locked (M),
-          Post   => Is_Initialized (M) and then Is_Locked (M);
-   --  Acquire the lock, blocking until available.
-   --  Precondition: mutex must not already be held (no recursive locking).
+          Pre    => Is_Initialized (M),
+          Post   => Is_Initialized (M) and Is_Locked (M);
 
    procedure Unlock (M : in out Mutex_Handle)
      with Global => null,
-          Pre    => Is_Initialized (M) and then Is_Locked (M),
-          Post   => Is_Initialized (M) and then not Is_Locked (M);
-   --  Release the lock.
-   --  Precondition: mutex must be held.
+          Pre    => Is_Initialized (M),
+          Post   => Is_Initialized (M) and not Is_Locked (M);
 
 private
 

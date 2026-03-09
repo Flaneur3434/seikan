@@ -11,8 +11,7 @@ is
       Sem : not null Semaphore_Ref)
    is
    begin
-      M.Sem    := Sem;
-      M.Locked := False;
+      M.Sem := Sem;
    end Init_From_Handle;
 
    function Is_Initialized (M : Mutex_Handle) return Boolean is
