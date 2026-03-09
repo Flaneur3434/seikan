@@ -283,6 +283,14 @@ def clean_idf(idf_args=""):
         # directory it didn't create (e.g. bind-mounted from the host).
         shutil.rmtree(build_dir)
         print("  Removed build/")
+    sdkconfig = SCRIPT_DIR / "sdkconfig"
+    if sdkconfig.exists():
+        sdkconfig.unlink()
+        print("  Removed sdkconfig")
+    profile_marker = SCRIPT_DIR / ".build_profile"
+    if profile_marker.exists():
+        profile_marker.unlink()
+        print("  Removed .build_profile")
     cmd = f"idf.py fullclean {idf_args}".strip()
     return run_command(cmd, description="Cleaning ESP-IDF")
 
