@@ -191,31 +191,39 @@ is
      (T => Peer_Config, E => Handshake_Error);
    use type Peer_Result.Result_Kind;
 
+   --  Result for Process_Cookie_Reply: success payload is Cookie_Value.
+   package Cookie_Result is new Utils.Result
+     (T => Cookie_Value, E => Handshake_Error);
+   use type Cookie_Result.Result_Kind;
+
+   --  Result for Process_Initiation: success payload is Handshake_State.
+   package State_Result is new Utils.Result
+     (T => Handshake_State, E => Handshake_Error);
+   use type State_Result.Result_Kind;
+
    ---------------------
    --  Procedures
    ---------------------
 
    --  Initialize static identity with a keypair.
    --  On success, Result.Ok holds the fully initialized Static_Identity.
-   procedure Initialize_Identity
-     (Key_Pair : Crypto.KX.Key_Pair;
-      Result   : out Identity_Result.Result)
+   function Initialize_Identity
+     (Key_Pair : Crypto.KX.Key_Pair)
+      return Identity_Result.Result
    with
      Global => null,
-     Pre    => not Result'Constrained,
-     Post   => (if Result.Kind = Identity_Result.Is_Ok
-                then Result.Ok.Key_Pair = Key_Pair);
+     Post   => (if Initialize_Identity'Result.Kind = Identity_Result.Is_Ok
+                then Initialize_Identity'Result.Ok.Key_Pair = Key_Pair);
 
    --  Initialize peer configuration.
    --  On success, Result.Ok holds the fully initialized Peer_Config.
-   procedure Initialize_Peer
-     (Peer_Public : Crypto.KX.Public_Key;
-      Result      : out Peer_Result.Result)
+   function Initialize_Peer
+     (Peer_Public : Crypto.KX.Public_Key)
+      return Peer_Result.Result
    with
      Global => null,
-     Pre    => not Result'Constrained,
-     Post   => (if Result.Kind = Peer_Result.Is_Ok
-                then Result.Ok.Static_Public = Peer_Public);
+     Post   => (if Initialize_Peer'Result.Kind = Peer_Result.Is_Ok
+                then Initialize_Peer'Result.Ok.Static_Public = Peer_Public);
 
    --  Create a new handshake initiation message (TX path)
    --
@@ -269,16 +277,14 @@ is
    --    ss: DH(responder_static_secret, initiator_static)
    procedure Process_Initiation
      (Msg      : Messages.Message_Handshake_Initiation;
-      State    : out Handshake_State;
       Identity : Static_Identity;
-      Result   : out HS_Result.Result)
+      Result   : out State_Result.Result)
    with
      Global => null,
      Pre    => not Result'Constrained,
      Post   =>
-       (if Result.Kind = HS_Result.Is_Ok
-        then State.Role = Role_Responder
-        else State.Kind = State_Empty);
+       (if Result.Kind = State_Result.Is_Ok
+        then Result.Ok.Role = Role_Responder);
 
    --  Create a handshake response message (TX path, Responder)
    --
@@ -340,16 +346,14 @@ is
    --    Key = HASH("cookie--" || peer_public_key)
    --    AD  = last MAC1 we sent to this peer
    --
-   --  On success, Cookie_Out contains the 16-byte cookie that should
+   --  On success, Result.Ok contains the 16-byte cookie that should
    --  be used in the MAC2 field of the next initiation to this peer.
-   procedure Process_Cookie_Reply
+   function Process_Cookie_Reply
      (Msg       : Messages.Message_Cookie_Reply;
       Peer      : Peer_Config;
-      Last_Mac1 : Messages.Mac_Bytes;
-      Cookie    : out Cookie_Value;
-      Result    : out HS_Result.Result)
-   with Global => null,
-       Pre => not Result'Constrained;
+      Last_Mac1 : Messages.Mac_Bytes)
+      return Cookie_Result.Result
+   with Global => null;
 
 private
 

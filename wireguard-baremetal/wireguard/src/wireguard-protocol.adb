@@ -35,6 +35,8 @@ is
    use type Handshake.HS_Result.Result_Kind;
    use type Handshake.Identity_Result.Result_Kind;
    use type Handshake.Peer_Result.Result_Kind;
+   use type Handshake.Cookie_Result.Result_Kind;
+   use type Handshake.State_Result.Result_Kind;
 
    ---------------------------------------------------------------------------
    --  Protocol State
@@ -100,7 +102,7 @@ is
       Key_Pair.Sec := Priv_Key;
 
       --  Initialize our static identity (hashes for MAC1 etc.)
-      Handshake.Initialize_Identity (Key_Pair, Id_Result);
+      Id_Result := Handshake.Initialize_Identity (Key_Pair);
       case Id_Result.Kind is
          when Handshake.Identity_Result.Is_Ok =>
             My_Identity := Id_Result.Ok;
@@ -113,7 +115,7 @@ is
       for P in Session.Peer_Index loop
          pragma Loop_Invariant (Session.Session_Ready);
          if Peers (P).Has_Key then
-            Handshake.Initialize_Peer (Peers (P).Public_Key, Peer_Res);
+            Peer_Res := Handshake.Initialize_Peer (Peers (P).Public_Key);
             case Peer_Res.Kind is
                when Handshake.Peer_Result.Is_Ok  =>
                   My_Peers (P) := Peer_Res.Ok;
@@ -169,9 +171,8 @@ is
    is
       use Peer_Table.Lookup_Result;
 
-      HS_Err  : Handshake.HS_Result.Result;
-      Temp_HS : Handshake.Handshake_State;
-      Lookup  : Peer_Table.Lookup_Result.Result;
+      Init_Res : Handshake.State_Result.Result;
+      Lookup   : Peer_Table.Lookup_Result.Result;
    begin
       Peer_Out := 1;  --  default
       Action := Action_Error;
@@ -189,18 +190,18 @@ is
          Msg     : constant Messages.Message_Handshake_Initiation :=
            Messages.Read_Initiation (RX_View);
       begin
-         Handshake.Process_Initiation (Msg, Temp_HS, My_Identity, HS_Err);
+         Handshake.Process_Initiation (Msg, My_Identity, Init_Res);
       end;
 
       --  Done with RX buffer
       Messages.RX_Pool.Free (RX_Handle);
 
-      if HS_Err.Kind /= Handshake.HS_Result.Is_Ok then
+      if Init_Res.Kind /= Handshake.State_Result.Is_Ok then
          return;
       end if;
 
       --  Identify which peer sent the initiation via their static key
-      Lookup := Peer_Table.Lookup_By_Key (Temp_HS.Remote_Static);
+      Lookup := Peer_Table.Lookup_By_Key (Init_Res.Ok.Remote_Static);
       if Lookup.Kind /= Is_Ok then
          return;
       end if;
@@ -211,14 +212,14 @@ is
          P : constant Session.Peer_Index := Lookup.Ok;
       begin
          if not Crypto.TAI64N.Is_After
-              (Temp_HS.Last_Timestamp, Last_Timestamps (P))
+              (Init_Res.Ok.Last_Timestamp, Last_Timestamps (P))
          then
             return;  --  replayed or stale initiation
          end if;
 
          --  Accept: update greatest-seen timestamp and store state
-         Last_Timestamps (P) := Temp_HS.Last_Timestamp;
-         HS_States (P) := Temp_HS;
+         Last_Timestamps (P) := Init_Res.Ok.Last_Timestamp;
+         HS_States (P) := Init_Res.Ok;
          Last_Init_Peer := P;
          Peer_Out := P;
       end;
@@ -350,8 +351,7 @@ is
        and then (Action = Action_None or else Action = Action_Error)
    is
       Cookie_Msg : Messages.Message_Cookie_Reply;
-      Cookie_Res : Handshake.HS_Result.Result;
-      New_Cookie : Handshake.Cookie_Value;
+      Cookie_Res : Handshake.Cookie_Result.Result;
       Found_Peer : Session.Peer_Index := 1;
       Found      : Boolean := False;
    begin
@@ -392,18 +392,16 @@ is
       end if;
 
       --  Decrypt cookie and store for next initiation
-      Handshake.Process_Cookie_Reply
+      Cookie_Res := Handshake.Process_Cookie_Reply
         (Cookie_Msg,
          My_Peers (Found_Peer),
-         Peer_Last_Mac1s (Found_Peer),
-         New_Cookie,
-         Cookie_Res);
+         Peer_Last_Mac1s (Found_Peer));
 
-      if Cookie_Res.Kind /= Handshake.HS_Result.Is_Ok then
+      if Cookie_Res.Kind /= Handshake.Cookie_Result.Is_Ok then
          return;
       end if;
 
-      Peer_Cookies (Found_Peer) := New_Cookie;
+      Peer_Cookies (Found_Peer) := Cookie_Res.Ok;
       Action := Action_None;
    end Handle_Cookie_RX;
 
