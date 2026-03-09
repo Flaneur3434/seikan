@@ -301,7 +301,6 @@ is
         (Msg,
          HS_States (Found_Peer),
          My_Identity,
-         My_Peers (Found_Peer),
          HS_Err);
 
       if HS_Err.Kind /= Handshake.HS_Result.Is_Ok then
@@ -512,7 +511,7 @@ is
          Resp : Messages.Message_Handshake_Response;
       begin
          Handshake.Create_Response
-           (Resp, HS_States (P), My_Identity, Resp_Result);
+           (Resp, HS_States (P), Resp_Result);
 
          if Resp_Result.Kind /= Handshake.HS_Result.Is_Ok then
             Messages.TX_Pool.Free (Handle);

@@ -669,10 +669,8 @@ is
    procedure Create_Response
      (Msg      : out Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
-      Identity : Static_Identity;
       Result   : out HS_Result.Result)
    is
-      pragma Unreferenced (Identity);
 
       Local_Status : Status;
       Temp_Key     : Crypto.AEAD.Key_Buffer;
@@ -822,10 +820,8 @@ is
      (Msg      : Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
-      Peer     : Peer_Config;
       Result   : out HS_Result.Result)
    is
-      pragma Unreferenced (Peer);
 
       Local_Status : Status;
       Temp_Key     : Crypto.AEAD.Key_Buffer;
@@ -837,6 +833,9 @@ is
 
       --  Decrypted empty payload (should be zero-length after stripping tag)
       Decrypted_Empty : Byte_Array (1 .. 0);
+      pragma Warnings (Off, Decrypted_Empty,
+         Reason => "Decrypt output unused: empty payload decryption is " &
+                   "for authentication only (tag verification)");
       Computed_Mac     : Messages.Mac_Bytes;
    begin
       --  Verify message type

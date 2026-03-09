@@ -299,7 +299,6 @@ is
    procedure Create_Response
      (Msg      : out Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
-      Identity : Static_Identity;
       Result   : out HS_Result.Result)
    with
      Pre  => not Result'Constrained,
@@ -325,7 +324,6 @@ is
      (Msg      : Messages.Message_Handshake_Response;
       State    : in out Handshake_State;
       Identity : Static_Identity;
-      Peer     : Peer_Config;
       Result   : out HS_Result.Result)
    with
      Pre  =>
