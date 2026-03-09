@@ -5,7 +5,8 @@
 with Utils; use Utils;
 
 package Crypto.Helper
-  with SPARK_Mode => On
+  with SPARK_Mode => On,
+       Always_Terminates
 is
    --  Securely zero any object (generic, SPARK-compatible)
    --

@@ -14,7 +14,8 @@
 with Utils; use Utils;
 
 package Crypto.KDF
-  with SPARK_Mode => On
+  with SPARK_Mode => On,
+       Always_Terminates
 is
 
    --  Output size constants

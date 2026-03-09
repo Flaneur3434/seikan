@@ -11,7 +11,8 @@
 with Utils; use Utils;
 
 package Crypto.XAEAD
-  with SPARK_Mode => On
+  with SPARK_Mode => On,
+       Always_Terminates
 is
    Key_Bytes   : constant := 32;
    Nonce_Bytes : constant := 24;

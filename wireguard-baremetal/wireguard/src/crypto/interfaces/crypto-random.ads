@@ -5,7 +5,8 @@
 with Utils; use Utils;
 
 package Crypto.Random
-  with SPARK_Mode => On
+  with SPARK_Mode => On,
+       Always_Terminates
 is
    --  Fill buffer with cryptographically secure random bytes
    procedure Fill_Random (Buffer : out Byte_Array)

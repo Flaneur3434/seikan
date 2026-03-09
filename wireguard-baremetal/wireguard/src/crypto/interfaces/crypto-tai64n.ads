@@ -17,7 +17,8 @@
 with Utils; use Utils;
 
 package Crypto.TAI64N
-  with SPARK_Mode => On, Elaborate_Body
+  with SPARK_Mode => On, Elaborate_Body,
+       Always_Terminates
 is
 
    --  TAI64N timestamp (12 bytes big-endian, network byte order).

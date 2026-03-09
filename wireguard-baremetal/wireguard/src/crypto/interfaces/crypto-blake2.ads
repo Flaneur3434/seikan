@@ -3,7 +3,8 @@ with Interfaces.C; use Interfaces.C;
 with Utils; use Utils;
 
 package Crypto.Blake2
-  with SPARK_Mode => On
+  with SPARK_Mode => On,
+       Always_Terminates
 is
 
    --  BLAKE2s constants

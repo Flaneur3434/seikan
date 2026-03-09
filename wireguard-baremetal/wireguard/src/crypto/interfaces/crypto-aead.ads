@@ -30,7 +30,8 @@ with Utils; use Utils;
 with Crypto.Config;
 
 package Crypto.AEAD
-  with SPARK_Mode => On
+  with SPARK_Mode => On,
+       Always_Terminates
 is
    use Interfaces;
 
