@@ -59,6 +59,19 @@ typedef enum {
  */
 void session_tick_all(uint64_t now, uint8_t actions[]);
 
+/**
+ * Single-peer timer evaluation, taken when the timer-driven urgent
+ * path marks one peer as due. Equivalent to extracting the relevant
+ * slot from session_tick_all() but without the per-peer scan.
+ *
+ * Acquires the session mutex internally.
+ *
+ * @param peer  1-based peer index (Ada Session.Peer_Index).
+ * @param now   Monotonic clock value (seconds; matches session_tick_all).
+ * @return      Per-peer timer action (wg_timer_action_t).
+ */
+uint8_t session_on_peer_timer_due(unsigned int peer, uint64_t now);
+
 /* --------------------------------------------------------------------
  * Session query
  * -------------------------------------------------------------------- */

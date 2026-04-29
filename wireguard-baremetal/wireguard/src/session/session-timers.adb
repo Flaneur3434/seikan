@@ -223,4 +223,19 @@ is
       Unlock;
    end Tick_All;
 
+   ---------------------------------------------------------------------------
+   --  On_Peer_Timer_Due — Single-peer locked tick
+   ---------------------------------------------------------------------------
+
+   procedure On_Peer_Timer_Due
+     (Peer_Idx : Peer_Index;
+      Now      : Timer.Clock.Timestamp;
+      Action   : out Timer_Action)
+   is
+   begin
+      Lock;
+      Action := Tick (Peer_Idx, Now);
+      Unlock;
+   end On_Peer_Timer_Due;
+
 end Session.Timers;

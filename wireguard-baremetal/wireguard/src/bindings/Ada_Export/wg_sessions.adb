@@ -34,6 +34,31 @@ is
    end C_Session_Tick_All;
 
    ---------------------------------------------------------------------------
+   --  Single-peer timer evaluation
+   ---------------------------------------------------------------------------
+
+   function C_Session_On_Peer_Timer_Due
+     (Peer : Interfaces.C.unsigned;
+      Now  : Interfaces.Unsigned_64) return C_Timer_Action
+   is
+      Action : Session.Timers.Timer_Action;
+   begin
+      if Peer not in
+        Interfaces.C.unsigned (Session.Peer_Index'First) ..
+        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      then
+         return 0;
+      end if;
+
+      Session.Timers.On_Peer_Timer_Due
+        (Peer_Idx => Session.Peer_Index (Peer),
+         Now      => Now,
+         Action   => Action);
+
+      return C_Timer_Action (Session.Timers.Timer_Action'Pos (Action));
+   end C_Session_On_Peer_Timer_Due;
+
+   ---------------------------------------------------------------------------
    --  Session query
    ---------------------------------------------------------------------------
 
