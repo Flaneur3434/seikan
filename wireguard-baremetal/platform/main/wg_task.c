@@ -15,6 +15,8 @@
 #include "wg_peer_table.h"
 #include "wg_clock.h"
 #include "wg_netif.h"
+#include "wg_timer_manager.h"
+#include "wg_urgent_task.h"
 
 #include <string.h>
 #include <esp_log.h>
@@ -391,6 +393,15 @@ bool wg_task_init(void)
         return false;
     }
 
+    /* Create per-peer esp_timer handles. The wg_urgent task is not
+     * yet running, so callbacks (if any are armed before then) will
+     * just update the pending mask. */
+    if (!wg_timer_manager_init())
+    {
+        ESP_LOGE(TAG, "wg_timer_manager_init() failed");
+        return false;
+    }
+
     ESP_LOGI(TAG, "WireGuard initialized: %zu buffers of %zu bytes per pool",
              packet_pool_get_pool_size(), packet_pool_get_buffer_size());
 
@@ -399,6 +410,15 @@ bool wg_task_init(void)
 
 bool wg_task_start(void)
 {
+    /* Spawn the urgent task first so that by the time the transport
+     * task starts arming peer timers, expiries can already be
+     * delivered. wg_urgent_task_start() also registers the new task
+     * with the timer manager. */
+    if (!wg_urgent_task_start())
+    {
+        return false;
+    }
+
     BaseType_t ret = xTaskCreate(
         wg_task,
         "wg_proto",
