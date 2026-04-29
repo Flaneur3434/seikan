@@ -64,4 +64,31 @@ is
      Post   =>
        Is_Mtx_Initialized and then not Is_Mtx_Locked;
 
+   --  Next_Deadline — When should this peer be re-evaluated?
+   --
+   --  Returns the earliest absolute Now at which Tick would (or might)
+   --  produce a non-No_Action result for Peer_Idx, given the peer's
+   --  current state.
+   --
+   --  Counter-driven triggers (Send_Counter >= Rekey_After_Messages,
+   --  Reject_After_Messages) are NOT predictable in time and are not
+   --  reflected here; they fire at the next normal Tick after they
+   --  become true. Callers must therefore treat the returned value as
+   --  a *latest* re-evaluation deadline, not a guarantee that no
+   --  action will fire earlier.
+   --
+   --  If no time-based deadline is currently meaningful for the peer
+   --  (e.g. Inactive peer with no Last_Handshake, no persistent
+   --  keepalive), Timer.Clock.Never is returned. C interprets that
+   --  as "do not arm a timer for this peer."
+   function Next_Deadline
+     (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp)
+      return Timer.Clock.Timestamp
+   with
+     Global => (Input => Peer_States),
+     Pre    => Now > Timer.Clock.Never,
+     Post   =>
+       Next_Deadline'Result = Timer.Clock.Never
+       or else Next_Deadline'Result >= Now;
+
 end Session.Timers;
