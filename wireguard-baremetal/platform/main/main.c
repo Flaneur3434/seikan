@@ -36,6 +36,7 @@ void app_main(void)
     esp_log_level_set("wifi", ESP_LOG_DEBUG);
 
     wifi_init_sta();
+
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
 
     // WG subsystem: queues, packet pools, session mutex, Ada init
