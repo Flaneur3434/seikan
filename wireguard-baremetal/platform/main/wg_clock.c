@@ -11,3 +11,10 @@ uint64_t wg_clock_now(void)
     // Converts esp_timer_get_time() (microseconds) to seconds.
     return (uint64_t)(esp_timer_get_time() / 1000000ULL);
 }
+
+int64_t wg_clock_now_ms(void)
+{
+    // Converts esp_timer_get_time() (microseconds) to milliseconds.
+    // esp_timer_get_time() returns int64_t microseconds since boot.
+    return esp_timer_get_time() / 1000;
+}
