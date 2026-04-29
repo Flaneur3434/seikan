@@ -54,6 +54,16 @@ is
         Peer.Last_Received /= Timer.Clock.Never
         and then Elapsed (Peer.Last_Received, Now) < Keepalive_Timeout_Ms
         and then Elapsed (Peer.Last_Sent, Now) >= Keepalive_Timeout_Ms;
+
+      --  Unresponsive peer probe (§6.5 last paragraph): we sent DATA
+      --  and got no authenticated reply within New_Handshake_Time_Ms.
+      --  Last_Data_Sent is set only for real payloads, so reactive
+      --  keepalives never trigger this.
+      Peer.Unresponsive_Peer_Due :=
+        Peer.Last_Data_Sent /= Timer.Clock.Never
+        and then Peer.Last_Data_Sent > Peer.Last_Received
+        and then Elapsed (Peer.Last_Data_Sent, Now)
+                   >= New_Handshake_Time_Ms;
    end Refresh_Time_Flags;
 
    ---------------------------------------------------------------------------
@@ -95,13 +105,7 @@ is
             or else
               Peers (Peer_Idx).Current.Send_Counter >= Rekey_After_Messages
             or else
-              (Peers (Peer_Idx).Last_Data_Sent /= Timer.Clock.Never
-               and then
-                 Peers (Peer_Idx).Last_Data_Sent
-                 > Peers (Peer_Idx).Last_Received
-               and then
-                 Elapsed (Peers (Peer_Idx).Last_Data_Sent, Now)
-                 >= New_Handshake_Time_Ms))
+              Peers (Peer_Idx).Unresponsive_Peer_Due)
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
       Age  : Unsigned_64;
@@ -169,16 +173,9 @@ is
 
             --  Unresponsive peer detection — §6.5 last paragraph
             --  Matches wireguard-go expiredNewHandshake (15 s).
-            --  If we sent DATA (not just keepalive) and got no
-            --  authenticated reply in New_Handshake_Time (15 s),
-            --  initiate a handshake to probe peer liveness.
-            --  Uses Last_Data_Sent (set only for real payloads)
-            --  so reactive keepalives don't trigger false positives.
-            if Peer.Last_Data_Sent /= Timer.Clock.Never
-              and then Peer.Last_Data_Sent > Peer.Last_Received
-              and then Elapsed (Peer.Last_Data_Sent, Now)
-                       >= New_Handshake_Time_Ms
-            then
+            --  Step 6b.3: read the transition flag set by
+            --  Refresh_Time_Flags from Last_Data_Sent / Last_Received.
+            if Peer.Unresponsive_Peer_Due then
                return Initiate_Rekey;
             end if;
 

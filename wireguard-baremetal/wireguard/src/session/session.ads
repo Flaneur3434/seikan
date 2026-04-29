@@ -332,6 +332,13 @@ private
       --  Keepalive_Timeout_Ms).  Computed by Refresh_Time_Flags
       --  from Last_Received, Last_Sent and Now.  Step 6b.2.
       Reactive_Keepalive_Due : Boolean := False;
+
+      --  Transition flag: we sent DATA (not just keepalive) and got
+      --  no authenticated reply within New_Handshake_Time_Ms (15 s).
+      --  Per §6.5 last paragraph; matches wireguard-go
+      --  expiredNewHandshake.  Computed by Refresh_Time_Flags from
+      --  Last_Data_Sent, Last_Received and Now.  Step 6b.3.
+      Unresponsive_Peer_Due : Boolean := False;
    end record;
 
    --  Structural invariant as a ghost predicate.
