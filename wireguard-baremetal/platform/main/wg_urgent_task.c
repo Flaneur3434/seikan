@@ -5,8 +5,12 @@
 
 #include "wg_urgent_task.h"
 #include "wg_clock.h"
+#include "wg_netif.h"
 #include "wg_sessions.h"        /* WG_MAX_PEERS, session_on_peer_timer_due */
+#include "wg_task.h"            /* wg_task_get_peer_endpoint */
 #include "wg_timer_manager.h"
+#include "wireguard.h"          /* wg_dispatch_timer */
+#include "packet_pool.h"        /* packet_buffer_t, tx_pool_free */
 
 #include <stdint.h>
 
@@ -20,52 +24,93 @@ static const char *TAG = "wg_urgent";
 #define WG_URGENT_TASK_STACK     4096
 #define WG_URGENT_TASK_PRIORITY  7   /* one above wg_proto (6) */
 
-/* Shadow-mode polling interval. Each due peer is re-armed for
- * (now + WG_URGENT_RECHECK_MS) after a tick. While the legacy
- * 100 ms polling loop remains live this matches its order of
- * magnitude and keeps timer-driven evaluation cheap. */
+/* Per-peer rearm cadence used until Ada emits next-deadline intents
+ * (Phase 3 chunk 3). All WireGuard timers (keepalive, rekey, expiry,
+ * zero-keys) operate on second-scale deadlines, so 1 s slop is fine. */
 #define WG_URGENT_RECHECK_MS     1000
 
 static TaskHandle_t s_urgent_task;
 
 /* -----------------------------------------------------------------------
- * Action name table — for shadow-mode logging only.
+ * send_outer_packet — transmit then free.
+ *
+ * Mirrors the helper in wg_task.c: wg_netif_send_outer uses PBUF_REF
+ * and calls tx_pool_free via the pbuf_custom callback on success. On
+ * failure the buffer was never handed to lwIP, so we free it here.
  * --------------------------------------------------------------------- */
 
-static const char *action_name(uint8_t action)
+static bool send_outer_packet(packet_buffer_t *pkt,
+                              uint16_t len,
+                              const struct sockaddr_in *peer)
 {
-    switch (action) {
-    case WG_TIMER_NO_ACTION:       return "no_action";
-    case WG_TIMER_SEND_KEEPALIVE:  return "keepalive";
-    case WG_TIMER_INITIATE_REKEY:  return "rekey";
-    case WG_TIMER_REKEY_TIMED_OUT: return "rekey_timed_out";
-    case WG_TIMER_SESSION_EXPIRED: return "expired";
-    default:                       return "unknown";
+    if (pkt == NULL || len == 0 || peer == NULL) {
+        return false;
     }
+
+    if (!wg_netif_send_outer(pkt, len, peer)) {
+        tx_pool_free(pkt);
+        return false;
+    }
+
+    return true;
 }
 
 /* -----------------------------------------------------------------------
- * Per-peer due handler — SHADOW MODE
+ * Per-peer due handler
  *
- * Calls Ada's single-peer evaluation under the session mutex (acquired
- * internally by Ada) and logs what action it would take. It does NOT
- * call wg_dispatch_timer: the legacy polling path in wg_task remains
- * the only side-effecting consumer of Timer_Action this chunk.
+ * Evaluates the peer's current timer action via Ada (single-peer
+ * locked tick) and dispatches via wg_dispatch_timer. Any resulting
+ * outer packet is sent on the peer's last-known endpoint. The peer's
+ * timer is then re-armed for the next recheck deadline so we keep
+ * producing wakeups until Ada returns next-deadline intents.
  *
- * After evaluation the peer's timer is re-armed so the urgent path
- * keeps producing observations at WG_URGENT_RECHECK_MS cadence.
+ * Mutex discipline: session_on_peer_timer_due and wg_dispatch_timer
+ * each take/release the Ada session mutex internally. The send and
+ * the timer rearm happen outside any Ada lock.
  * --------------------------------------------------------------------- */
 
-static void handle_peer_due_shadow(unsigned int peer)
+static void handle_peer_due(unsigned int peer)
 {
     uint64_t now_s = wg_clock_now();
     uint8_t  action = session_on_peer_timer_due(peer, now_s);
 
     if (action != WG_TIMER_NO_ACTION) {
-        ESP_LOGI(TAG, "[shadow] peer %u would dispatch %s",
-                 peer, action_name(action));
-    } else {
-        ESP_LOGD(TAG, "[shadow] peer %u no action", peer);
+        void *tx_buf = NULL;
+        uint16_t tx_len = 0;
+
+        wg_dispatch_timer(peer, action, &tx_buf, &tx_len);
+
+        switch (action) {
+        case WG_TIMER_SEND_KEEPALIVE:
+            ESP_LOGI(TAG, "Peer %u: keepalive sent", peer);
+            break;
+        case WG_TIMER_INITIATE_REKEY:
+            ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
+            break;
+        case WG_TIMER_REKEY_TIMED_OUT:
+            ESP_LOGW(TAG, "Peer %u: rekey timed out", peer);
+            break;
+        case WG_TIMER_SESSION_EXPIRED:
+            ESP_LOGW(TAG, "Peer %u: session expired", peer);
+            break;
+        default:
+            break;
+        }
+
+        if (tx_buf != NULL && tx_len > 0) {
+            struct sockaddr_in endpoint;
+            if (wg_task_get_peer_endpoint(peer, &endpoint)) {
+                if (!send_outer_packet((packet_buffer_t *)tx_buf,
+                                       tx_len, &endpoint)) {
+                    ESP_LOGW(TAG, "Peer %u: timer-initiated send failed",
+                             peer);
+                }
+            } else {
+                ESP_LOGW(TAG, "Peer %u: no endpoint for timer-initiated send",
+                         peer);
+                tx_pool_free((packet_buffer_t *)tx_buf);
+            }
+        }
     }
 
     int64_t next_deadline_ms = wg_clock_now_ms() + WG_URGENT_RECHECK_MS;
@@ -79,7 +124,7 @@ static void handle_peer_due_shadow(unsigned int peer)
 static void wg_urgent_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "wg_urgent task running (prio=%d, shadow mode)",
+    ESP_LOGI(TAG, "wg_urgent task running (prio=%d)",
              WG_URGENT_TASK_PRIORITY);
 
     for (;;) {
@@ -96,7 +141,7 @@ static void wg_urgent_task(void *arg)
             unsigned int peer = bit + 1u;
             due &= ~(1u << bit);
 
-            handle_peer_due_shadow(peer);
+            handle_peer_due(peer);
         }
     }
 }
@@ -127,7 +172,7 @@ bool wg_urgent_task_start(void)
     wg_timer_manager_set_notify_task(s_urgent_task);
 
     /* Bootstrap: arm every peer's first deadline. From here on, each
-     * tick re-arms itself in handle_peer_due_shadow. */
+     * tick re-arms itself in handle_peer_due. */
     int64_t first_deadline_ms = wg_clock_now_ms() + WG_URGENT_RECHECK_MS;
     for (unsigned int peer = 1; peer <= WG_MAX_PEERS; peer++) {
         (void)wg_timer_manager_arm(peer, first_deadline_ms);

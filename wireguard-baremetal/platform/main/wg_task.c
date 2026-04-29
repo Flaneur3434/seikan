@@ -124,53 +124,10 @@ static void wg_task(void *pvParameters)
 
     while (1)
     {
-        // Evaluate all peer timers inline, dispatch in Ada
-        {
-            uint64_t now = wg_clock_now();
-            uint8_t actions[WG_MAX_PEERS];
-            session_tick_all(now, actions);
-            for (unsigned int i = 0; i < WG_MAX_PEERS; i++)
-            {
-                if (actions[i] != WG_TIMER_NO_ACTION)
-                {
-                    unsigned int peer = i + 1;  /* Ada Peer_Index is 1-based */
-                    void *tx_buf = NULL;
-                    uint16_t tx_len = 0;
-
-                    wg_dispatch_timer(peer, actions[i], &tx_buf, &tx_len);
-
-                    switch (actions[i]) {
-                    case WG_TIMER_NO_ACTION:
-                        break;
-                    case WG_TIMER_SEND_KEEPALIVE:
-                        ESP_LOGI(TAG, "Peer %u: keepalive sent", peer);
-                        break;
-                    case WG_TIMER_INITIATE_REKEY:
-                        ESP_LOGI(TAG, "Peer %u: initiating rekey", peer);
-                        break;
-                    case WG_TIMER_REKEY_TIMED_OUT:
-                        ESP_LOGW(TAG, "Peer %u: rekey timed out", peer);
-                        break;
-                    case WG_TIMER_SESSION_EXPIRED:
-                        ESP_LOGW(TAG, "Peer %u: session expired", peer);
-                        break;
-                    default:
-                        ESP_LOGE(TAG, "Unrecognized wg session action");
-                    }
-
-                    if (tx_buf != NULL && tx_len > 0)
-                    {
-                        struct sockaddr_in endpoint = get_peer_endpoint(peer);
-                        if (!send_outer_packet((packet_buffer_t *)tx_buf,
-                                               tx_len, &endpoint))
-                        {
-                            ESP_LOGW(TAG, "Peer %u: timer-initiated send failed",
-                                     peer);
-                        }
-                    }
-                }
-            }
-        }
+        /* Timer-driven actions (keepalive, rekey, expiry, zeroing) are
+         * now handled by the wg_urgent task via wg_timer_manager. The
+         * legacy session_tick_all() polling block was removed in
+         * Phase 3 of docs/timer_driven_urgent_queue_design.md. */
 
         // Per-peer inner TX queues: for each peer, if data is pending,
         // either drain+encrypt (session active) or auto-handshake.
