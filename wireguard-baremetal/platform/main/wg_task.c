@@ -97,15 +97,14 @@ bool wg_task_get_peer_endpoint(unsigned int peer, struct sockaddr_in *out)
  * change lags by up to 1 s.
  *
  * Calls session_next_deadline (lock + Next_Deadline read, no Tick),
- * then arms the peer's esp_timer.  Caps at WG_REARM_FALLBACK_MS to
- * keep the wg_urgent-driven safety recheck cadence even when Ada
- * returns Never (counter-driven triggers, etc.).
+ * then arms the peer's esp_timer at that exact deadline.  If Ada
+ * returns Never (0), the peer has no time-based work pending and we
+ * leave the timer disarmed; the next traffic-driven rearm on this
+ * peer will bring it back online.
  *
- * Concurrency: wg_timer_manager_arm is now serialized internally
+ * Concurrency: wg_timer_manager_arm is serialized internally
  * against wg_urgent's concurrent arms via taskENTER_CRITICAL.
  * --------------------------------------------------------------------- */
-
-#define WG_REARM_FALLBACK_MS  1000
 
 static void rearm_peer_timer(unsigned int peer)
 {
@@ -117,19 +116,15 @@ static void rearm_peer_timer(unsigned int peer)
     uint64_t next_deadline_s = 0;
     session_next_deadline(peer, now_s, &next_deadline_s);
 
-    int64_t now_ms = wg_clock_now_ms();
-    int64_t next_deadline_ms;
-    if (next_deadline_s != 0) {
-        next_deadline_ms = (int64_t)next_deadline_s * 1000;
-        int64_t fallback_ms = now_ms + WG_REARM_FALLBACK_MS;
-        if (next_deadline_ms > fallback_ms) {
-            next_deadline_ms = fallback_ms;
-        }
-        if (next_deadline_ms < now_ms + 1) {
-            next_deadline_ms = now_ms + 1;
-        }
-    } else {
-        next_deadline_ms = now_ms + WG_REARM_FALLBACK_MS;
+    if (next_deadline_s == 0) {
+        /* Never — no time-based deadline is meaningful right now. */
+        return;
+    }
+
+    int64_t now_ms          = wg_clock_now_ms();
+    int64_t next_deadline_ms = (int64_t)next_deadline_s * 1000;
+    if (next_deadline_ms < now_ms + 1) {
+        next_deadline_ms = now_ms + 1;
     }
     (void)wg_timer_manager_arm(peer, next_deadline_ms);
 }

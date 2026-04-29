@@ -24,15 +24,6 @@ static const char *TAG = "wg_urgent";
 #define WG_URGENT_TASK_STACK     4096
 #define WG_URGENT_TASK_PRIORITY  7   /* one above wg_proto (6) */
 
-/* Fallback rearm cadence used when Ada returns "Never" (no
- * time-based deadline meaningful for this peer right now). Counter-
- * driven Tick triggers (Send_Counter limits) and not-yet-emitted
- * transition deadlines are caught at this cadence until later
- * Phase-3 chunks make every state change emit a precise next
- * deadline. All WireGuard timers are second-scale, so 1 s slop is
- * fine. */
-#define WG_URGENT_RECHECK_MS     1000
-
 static TaskHandle_t s_urgent_task;
 
 /* -----------------------------------------------------------------------
@@ -120,22 +111,19 @@ static void handle_peer_due(unsigned int peer)
         }
     }
 
-    /* Rearm. If Ada gave us a precise deadline, use it (clamped to
-     * future). Otherwise fall back to the fixed recheck cadence so
-     * counter-driven and not-yet-emitted deadlines still get caught. */
-    int64_t now_ms = wg_clock_now_ms();
-    int64_t next_deadline_ms;
-    if (next_deadline_s != 0) {
-        next_deadline_ms = (int64_t)next_deadline_s * 1000;
-        int64_t fallback_ms = now_ms + WG_URGENT_RECHECK_MS;
-        if (next_deadline_ms > fallback_ms) {
-            next_deadline_ms = fallback_ms;
-        }
-        if (next_deadline_ms < now_ms + 1) {
-            next_deadline_ms = now_ms + 1;
-        }
-    } else {
-        next_deadline_ms = now_ms + WG_URGENT_RECHECK_MS;
+    /* Rearm at the precise deadline Ada gave us.  Next_Deadline now
+     * folds counter-driven triggers into Now, so we no longer need a
+     * periodic recheck cap.  If Ada returned Never, leave the peer
+     * disarmed — the next state change in wg_proto (wg_send,
+     * wg_auto_handshake, wg_receive_netif, wg_create_response) will
+     * call rearm_peer_timer and bring the timer back online. */
+    if (next_deadline_s == 0) {
+        return;
+    }
+    int64_t now_ms          = wg_clock_now_ms();
+    int64_t next_deadline_ms = (int64_t)next_deadline_s * 1000;
+    if (next_deadline_ms < now_ms + 1) {
+        next_deadline_ms = now_ms + 1;
     }
     (void)wg_timer_manager_arm(peer, next_deadline_ms);
 }
@@ -194,12 +182,11 @@ bool wg_urgent_task_start(void)
     /* Register so timer callbacks notify us on non-stale expiries. */
     wg_timer_manager_set_notify_task(s_urgent_task);
 
-    /* Bootstrap: arm every peer's first deadline. From here on, each
-     * tick re-arms itself in handle_peer_due. */
-    int64_t first_deadline_ms = wg_clock_now_ms() + WG_URGENT_RECHECK_MS;
-    for (unsigned int peer = 1; peer <= WG_MAX_PEERS; peer++) {
-        (void)wg_timer_manager_arm(peer, first_deadline_ms);
-    }
+    /* No bootstrap arm: peers come online when wg_proto first calls
+     * rearm_peer_timer (after wg_auto_handshake on queued inner data,
+     * or after wg_receive_netif on incoming UDP).  An Inactive peer
+     * with no traffic has no time-based deadline and does not need a
+     * timer. */
 
     return true;
 }

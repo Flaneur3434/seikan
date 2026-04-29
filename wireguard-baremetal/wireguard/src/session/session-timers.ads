@@ -101,12 +101,13 @@ is
    --  produce a non-No_Action result for Peer_Idx, given the peer's
    --  current state.
    --
-   --  Counter-driven triggers (Send_Counter >= Rekey_After_Messages,
-   --  Reject_After_Messages) are NOT predictable in time and are not
-   --  reflected here; they fire at the next normal Tick after they
-   --  become true. Callers must therefore treat the returned value as
-   --  a *latest* re-evaluation deadline, not a guarantee that no
-   --  action will fire earlier.
+   --  Counter-driven triggers (Send_Counter >= Rekey_After_Messages /
+   --  Reject_After_Messages) become true synchronously inside
+   --  wg_send/wg_receive.  After every such call, wg_proto re-arms
+   --  via session_next_deadline; if the counter has already crossed
+   --  the limit, this function returns Now so the timer fires
+   --  immediately.  Callers therefore do NOT need a separate periodic
+   --  recheck cap.
    --
    --  If no time-based deadline is currently meaningful for the peer
    --  (e.g. Inactive peer with no Last_Handshake, no persistent

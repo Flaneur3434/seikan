@@ -345,6 +345,20 @@ is
       D := Earliest
              (D, Add_Capped (Peer.Current.Created_At, Reject_After_Time_S));
 
+      --  Counter-driven triggers — these are NOT time-predictable
+      --  but become true synchronously inside wg_send/wg_receive when
+      --  Send_Counter crosses the limit.  After chunk 3, every such
+      --  call is followed by rearm_peer_timer, so reflecting the
+      --  crossing as "deadline = Now" makes the next esp_timer fire
+      --  immediately and Tick dispatches Initiate_Rekey or
+      --  Session_Expired without waiting for a separate periodic
+      --  recheck.
+      if Peer.Current.Send_Counter >= Reject_After_Messages
+        or else Peer.Current.Send_Counter >= Rekey_After_Messages
+      then
+         D := Earliest (D, Now);
+      end if;
+
       case Peer.Mode is
          when Established =>
             --  Time-based rekey, initiator only
