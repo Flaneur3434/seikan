@@ -129,12 +129,31 @@ is
      (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp) return Timer_Action
    with
      Refined_Post =>
-       -- Priority: expired dominates everything
-       (if Tick'Result = Session_Expired
+       -- Zero-keys is the only action that can fire on an inactive
+       -- or invalid-keypair peer (it intentionally runs first, before
+       -- the Active/Valid gate).  Every other action is gated by it.
+       (if not Peers (Peer_Idx).Active
+          or else not Peers (Peer_Idx).Current.Valid
         then
-          Peers (Peer_Idx).Session_Expire_Time_Due
-          or else
-            Peers (Peer_Idx).Current.Send_Counter >= Reject_After_Messages)
+          Tick'Result in Zero_All_Keys | No_Action)
+       -- Zero_All_Keys is only emitted when its flag is set.
+       and then
+         (if Tick'Result = Zero_All_Keys
+          then Peers (Peer_Idx).Zero_Keys_Due)
+       -- Priority: expired dominates everything
+       and then
+         (if Tick'Result = Session_Expired
+          then
+            Peers (Peer_Idx).Session_Expire_Time_Due
+            or else
+              Peers (Peer_Idx).Current.Send_Counter >= Reject_After_Messages)
+       -- Rekey_Timed_Out only fires from Rekeying mode and only when
+       -- its flag is set.
+       and then
+         (if Tick'Result = Rekey_Timed_Out
+          then
+            Peers (Peer_Idx).Mode = Rekeying
+            and then Peers (Peer_Idx).Rekey_Timed_Out_Due)
        -- Priority: timed_out dominates rekey
        and then
          (if Tick'Result = Initiate_Rekey
@@ -154,6 +173,14 @@ is
               Peers (Peer_Idx).Unresponsive_Peer_Due
             or else
               Peers (Peer_Idx).Rekey_Time_Due)
+       -- Send_Keepalive only fires when one of the two keepalive flags
+       -- is set (priority: reactive over persistent, but either implies
+       -- the action).
+       and then
+         (if Tick'Result = Send_Keepalive
+          then
+            Peers (Peer_Idx).Reactive_Keepalive_Due
+            or else Peers (Peer_Idx).Persistent_Keepalive_Due)
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
    begin
