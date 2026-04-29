@@ -30,16 +30,10 @@ is
      Pre    => Now > Timer.Clock.Never;
 
    --  Refresh_Time_Flags — Recompute time-based transition flags
-   --  for Peer_Idx from Now and stored timestamps.  Sets the
-   --  Persistent_Keepalive_Due flag in Peers when the deadline has
-   --  elapsed; leaves it unchanged otherwise (Mark_Sent /
-   --  Set_Persistent_Keepalive clear it on every relevant transition).
-   --
-   --  Step 6b.1 of the timer-driven migration: this is the bridge
-   --  that lets Tick read the flag instead of computing
-   --  Now - Last_Sent >= Persistent_Keepalive_Ms.  Future steps
-   --  will fold the remaining arithmetic checks into this routine
-   --  and remove them from Tick.
+   --  for Peer_Idx from Now and stored timestamps.  Single owner
+   --  of Now-based arithmetic for Tick: every elapsed-time check
+   --  that Tick used to compute inline is now a Boolean recomputed
+   --  here.  Tick reads only flags, counters and Mode/Active.
    --
    --  Caller must hold the session mutex.
    procedure Refresh_Time_Flags

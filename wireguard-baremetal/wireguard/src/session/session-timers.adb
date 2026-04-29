@@ -23,16 +23,16 @@ is
    ---------------------------------------------------------------------------
    --  Refresh_Time_Flags — Recompute time-based transition flags
    --
-   --  Single owner of all Now-based arithmetic for the keepalive
-   --  flags.  Called at the entry of Tick_All and On_Peer_Timer_Due
-   --  so the flags are always live when Tick runs.  Each call
-   --  fully recomputes (set or clear); transitions therefore do not
-   --  need to eagerly clear the flags.
+   --  Single owner of all Now-based arithmetic for Tick.  Called at
+   --  the entry of Tick_All and On_Peer_Timer_Due so the flags are
+   --  always live when Tick runs.  Each call fully recomputes (set
+   --  or clear); transitions therefore do not need to eagerly clear
+   --  the flags.
    --
-   --  Future commits will fold the remaining elapsed-time conditions
-   --  in Tick (key zeroing, session expiry, rekey time/timeout/retry,
-   --  unresponsive peer detection) into this routine and remove the
-   --  Now arithmetic from Tick entirely.
+   --  After step 6b.4, every elapsed-time threshold that Tick used
+   --  to compute inline lives here as a single Boolean.  Tick
+   --  consumes only flags, counters, and the discrete Mode/Active
+   --  bits — no Now arithmetic.
    ---------------------------------------------------------------------------
 
    procedure Refresh_Time_Flags
@@ -64,6 +64,53 @@ is
         and then Peer.Last_Data_Sent > Peer.Last_Received
         and then Elapsed (Peer.Last_Data_Sent, Now)
                    >= New_Handshake_Time_Ms;
+
+      --  Key zeroing (§6.3 last sentence): erase all keys 3×Reject
+      --  after the last handshake.  Applies even to inactive peers
+      --  as long as Last_Handshake is still set (the Zero_All_Keys
+      --  handler clears it via Clear_Handshake_Timestamp).
+      Peer.Zero_Keys_Due :=
+        Peer.Last_Handshake /= Timer.Clock.Never
+        and then not Peer.Active
+        and then Elapsed (Peer.Last_Handshake, Now) >= Key_Zeroing_After_Ms;
+
+      --  Hard time expiry of the current keypair.  Counter-based
+      --  Reject_After_Messages stays inline in Tick (counter, not
+      --  time).  Only meaningful when there is a current keypair.
+      Peer.Session_Expire_Time_Due :=
+        Peer.Active
+        and then Peer.Current.Valid
+        and then Elapsed (Peer.Current.Created_At, Now)
+                   >= Reject_After_Time_Ms;
+
+      --  Initiator-only time-based rekey, send side (§6.2 ¶2) at
+      --  Rekey_After_Time_Ms (120 s) and receive side at
+      --  Reject_After_Time_Ms - Keepalive - Rekey (165 s).
+      Peer.Rekey_Time_Due :=
+        Peer.Active
+        and then Peer.Current.Valid
+        and then Peer.Mode = Established
+        and then Peer.Is_Initiator
+        and then
+          (Elapsed (Peer.Current.Created_At, Now) >= Rekey_After_Time_Ms
+           or else
+             Elapsed (Peer.Current.Created_At, Now)
+               >= Reject_After_Time_Ms
+                    - Keepalive_Timeout_Ms
+                    - Rekey_Timeout_Ms);
+
+      --  Rekey attempt window exhausted (§6.4): only meaningful in
+      --  Rekeying mode where Rekey_Start /= Never (Valid_Peer).
+      Peer.Rekey_Timed_Out_Due :=
+        Peer.Mode = Rekeying
+        and then Elapsed (Peer.Rekey_Start, Now) >= Rekey_Attempt_Time_Ms;
+
+      --  Rekey retry gating (§6.1): re-initiate after
+      --  Rekey_Timeout_Ms + Rekey_Jitter_Ms.
+      Peer.Rekey_Retry_Due :=
+        Peer.Mode = Rekeying
+        and then Elapsed (Peer.Rekey_Last_Sent, Now)
+                   >= Rekey_Timeout_Ms + Peer.Rekey_Jitter_Ms;
    end Refresh_Time_Flags;
 
    ---------------------------------------------------------------------------
@@ -85,8 +132,7 @@ is
        -- Priority: expired dominates everything
        (if Tick'Result = Session_Expired
         then
-          Elapsed (Peers (Peer_Idx).Current.Created_At, Now)
-          >= Reject_After_Time_Ms
+          Peers (Peer_Idx).Session_Expire_Time_Due
           or else
             Peers (Peer_Idx).Current.Send_Counter >= Reject_After_Messages)
        -- Priority: timed_out dominates rekey
@@ -94,7 +140,7 @@ is
          (if Tick'Result = Initiate_Rekey
             and then Peers (Peer_Idx).Mode = Rekeying
           then
-            Elapsed (Peers (Peer_Idx).Rekey_Start, Now) < Rekey_Attempt_Time_Ms)
+            not Peers (Peer_Idx).Rekey_Timed_Out_Due)
        -- Established rekey: initiator-only for time, any peer for
        -- counter or unresponsive peer detection
        and then
@@ -105,20 +151,15 @@ is
             or else
               Peers (Peer_Idx).Current.Send_Counter >= Rekey_After_Messages
             or else
-              Peers (Peer_Idx).Unresponsive_Peer_Due)
+              Peers (Peer_Idx).Unresponsive_Peer_Due
+            or else
+              Peers (Peer_Idx).Rekey_Time_Due)
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
-      Age  : Unsigned_64;
    begin
-      --  Key zeroing at 3×Reject (540 s) — §6.3 last sentence
-      --  Even for inactive/expired peers: if Last_Handshake is still set,
-      --  erase all remaining cryptographic material after 540 s.
-      --  The Zero_All_Keys handler clears Last_Handshake to prevent
-      --  re-firing.
-      if Peer.Last_Handshake /= Timer.Clock.Never
-        and then not Peer.Active
-        and then Elapsed (Peer.Last_Handshake, Now) >= Key_Zeroing_After_Ms
-      then
+      --  0. Key zeroing at 3×Reject (540 s) — §6.3 last sentence.
+      --  Step 6b.4: read transition flag.
+      if Peer.Zero_Keys_Due then
          return Zero_All_Keys;
       end if;
 
@@ -127,10 +168,10 @@ is
          return No_Action;
       end if;
 
-      Age := Elapsed (Peer.Current.Created_At, Now);
-
-      --  Hard expiry — reject-after limits
-      if Age >= Reject_After_Time_Ms
+      --  1. Hard expiry — reject-after limits.
+      --  Counter limit stays inline (counter, not time); time limit
+      --  is now a transition flag.
+      if Peer.Session_Expire_Time_Due
         or else Peer.Current.Send_Counter >= Reject_After_Messages
       then
          return Session_Expired;
@@ -139,36 +180,15 @@ is
       case Peer.Mode is
          when Established =>
             --  Counter-based rekey: ANY peer (§6.2 paragraph 1).
-            --  "WireGuard will try to create a new session … after
-            --  it has sent Rekey-After-Messages transport data messages."
-            --  No initiator restriction — matches wireguard-go
-            --  keepKeyFreshSending(): nonce > RekeyAfterMessages.
+            --  Counter is not time, so it stays inline.
             if Peer.Current.Send_Counter >= Rekey_After_Messages then
                return Initiate_Rekey;
             end if;
 
             --  Time-based rekey: ONLY initiator (§6.2 paragraph 2).
-            --  Prevents the "thundering herd" problem where both
-            --  peers try to establish a new session simultaneously.
-            if Peer.Is_Initiator then
-               --  After SENDING: session >= Rekey_After_Time (120 s)
-               --  Matches wireguard-go keepKeyFreshSending():
-               --    keypair.isInitiator && age > RekeyAfterTime
-               if Age >= Rekey_After_Time_Ms then
-                  return Initiate_Rekey;
-               end if;
-
-               --  After RECEIVING: session >= Reject − Keepalive − Rekey
-               --  (180 − 10 − 5 = 165 s).  One-shot by construction:
-               --  first Initiate_Rekey → Rekeying, so Established
-               --  branch never fires again.
-               --  Matches wireguard-go keepKeyFreshReceiving().
-               if Age >= Reject_After_Time_Ms
-                            - Keepalive_Timeout_Ms
-                            - Rekey_Timeout_Ms
-               then
-                  return Initiate_Rekey;
-               end if;
+            --  Step 6b.4: read transition flag.
+            if Peer.Rekey_Time_Due then
+               return Initiate_Rekey;
             end if;
 
             --  Unresponsive peer detection — §6.5 last paragraph
@@ -180,28 +200,19 @@ is
             end if;
 
          when Rekeying    =>
-            --  Rekey attempt timed out (90 s window exhausted)
+            --  Rekey attempt timed out (90 s window exhausted).
             --  Must be checked BEFORE retry gating so we don't
             --  keep retrying after the attempt window is exhausted.
-            declare
-               Attempt_Elapsed : constant Unsigned_64 :=
-                 Elapsed (Peer.Rekey_Start, Now);
-            begin
-               if Attempt_Elapsed >= Rekey_Attempt_Time_Ms then
-                  return Rekey_Timed_Out;
-               end if;
-            end;
+            --  Step 6b.4: read transition flag.
+            if Peer.Rekey_Timed_Out_Due then
+               return Rekey_Timed_Out;
+            end if;
 
-            --  Retry gating: re-send initiation every 5 + jitter s
-            --  Jitter (0..2 s) prevents lock-step retransmissions (§6.1).
-            declare
-               Since_Last : constant Unsigned_64 :=
-                 Elapsed (Peer.Rekey_Last_Sent, Now);
-            begin
-               if Since_Last >= Rekey_Timeout_Ms + Peer.Rekey_Jitter_Ms then
-                  return Initiate_Rekey;
-               end if;
-            end;
+            --  Retry gating: re-send initiation every 5 + jitter s.
+            --  Step 6b.4: read transition flag.
+            if Peer.Rekey_Retry_Due then
+               return Initiate_Rekey;
+            end if;
 
          when Inactive    =>
             null;

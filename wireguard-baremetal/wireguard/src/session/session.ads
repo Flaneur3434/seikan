@@ -321,9 +321,6 @@ private
       --  of Tick_All / On_Peer_Timer_Due) from Now, Last_Sent and
       --  Persistent_Keepalive_Ms.  Tick reads this flag instead of
       --  computing Now - Last_Sent >= Persistent_Keepalive_Ms.
-      --  Step 6b.1 of the timer-driven migration; remaining elapsed-
-      --  time conditions in Tick will be converted in follow-up
-      --  commits.
       Persistent_Keepalive_Due : Boolean := False;
 
       --  Transition flag: we received a packet recently and have
@@ -339,6 +336,37 @@ private
       --  expiredNewHandshake.  Computed by Refresh_Time_Flags from
       --  Last_Data_Sent, Last_Received and Now.  Step 6b.3.
       Unresponsive_Peer_Due : Boolean := False;
+
+      --  Transition flag: cryptographic material has been stale long
+      --  enough that all keys must be erased (§6.3 last sentence,
+      --  3×Reject_After_Time = 540 s).  Set when Last_Handshake is
+      --  still recorded for an inactive peer and the deadline has
+      --  elapsed.  Cleared by Clear_Handshake_Timestamp.  Step 6b.4.
+      Zero_Keys_Due : Boolean := False;
+
+      --  Transition flag: current keypair is past Reject_After_Time_Ms
+      --  (180 s) and the session must be torn down.  Counter-based
+      --  Reject_After_Messages remains a separate inline check in
+      --  Tick (counter is not time and is read directly).  Step 6b.4.
+      Session_Expire_Time_Due : Boolean := False;
+
+      --  Transition flag: we are the initiator of an Established
+      --  session whose age has crossed one of the time-based rekey
+      --  thresholds (Rekey_After_Time_Ms = 120 s on the send side,
+      --  Reject_After_Time_Ms - Keepalive - Rekey = 165 s on the
+      --  receive side).  Step 6b.4.
+      Rekey_Time_Due : Boolean := False;
+
+      --  Transition flag: we are in Rekeying mode and the attempt
+      --  window (Rekey_Attempt_Time_Ms = 90 s) is exhausted.  Step
+      --  6b.4.
+      Rekey_Timed_Out_Due : Boolean := False;
+
+      --  Transition flag: we are in Rekeying mode and the retry
+      --  interval (Rekey_Timeout_Ms + Rekey_Jitter_Ms = 5–7 s) has
+      --  elapsed since the last initiation, so we should retransmit.
+      --  Step 6b.4.
+      Rekey_Retry_Due : Boolean := False;
    end record;
 
    --  Structural invariant as a ghost predicate.
