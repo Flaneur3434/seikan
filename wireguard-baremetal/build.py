@@ -236,6 +236,14 @@ def run_interactive_container():
     cmd = [
         runtime, "run", "--rm", "-it",
         "-v", f"{REPO_ROOT}:/work:Z",
+    ]
+
+    # Pass through USB devices so flash/monitor work from the interactive shell
+    # (Linux only; podman/docker on macOS/Windows can't forward USB).
+    if sys.platform == "linux":
+        cmd += ["--privileged", "-v", "/dev:/dev"]
+
+    cmd += [
         "--entrypoint", "/bin/bash",
         CONTAINER_IMAGE,
         "-c", 'source "$IDF_PATH/export.sh" && cd /work/wireguard-baremetal && exec /bin/bash',

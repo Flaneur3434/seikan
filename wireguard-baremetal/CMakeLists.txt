@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 # ============================================================================
 # Ada/SPARK Crates - Build before ESP-IDF
 # ============================================================================
-# 
+#
 # Ada crates must be built separately using Alire before running idf.py build.
 # Run: ./build_ada.sh (or manually: cd crypto && alr build, etc.)
 #
@@ -36,3 +36,5 @@ project(VeriGuard)
 
 # Note: Ada library linking is done in platform/main/CMakeLists.txt
 # because component libraries need to be linked at component level.
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

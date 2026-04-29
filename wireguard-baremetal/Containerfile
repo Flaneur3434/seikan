@@ -51,7 +51,8 @@ RUN git clone --branch "$ESP_IDF_VERSION" --depth 1 --recursive \
 
 # Install ESP-IDF toolchains for the target chip only (saves ~1 GB vs all targets)
 RUN cd "$IDF_PATH" \
-    && ./install.sh "$IDF_TARGET"
+    && ./install.sh "$IDF_TARGET" \
+    && ./install.sh --enable-pytest
 
 # ── Alire ───────────────────────────────────────────────────────────────────
 ENV ALIRE_HOME=/opt/alire
