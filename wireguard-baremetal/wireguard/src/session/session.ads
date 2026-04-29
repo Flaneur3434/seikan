@@ -316,15 +316,22 @@ private
       Rekey_Jitter_Ms : Unsigned_64 := 0;
 
       --  Transition flag: persistent-keepalive deadline has elapsed
-      --  since the last outbound packet.  Set lazily by
+      --  since the last outbound packet.  Computed by
       --  Refresh_Time_Flags in Session.Timers (called at the entry
-      --  of Tick_All / On_Peer_Timer_Due) and cleared by Mark_Sent
-      --  and Set_Persistent_Keepalive.  Tick reads this flag instead
-      --  of computing Now - Last_Sent >= Persistent_Keepalive_Ms.
+      --  of Tick_All / On_Peer_Timer_Due) from Now, Last_Sent and
+      --  Persistent_Keepalive_Ms.  Tick reads this flag instead of
+      --  computing Now - Last_Sent >= Persistent_Keepalive_Ms.
       --  Step 6b.1 of the timer-driven migration; remaining elapsed-
       --  time conditions in Tick will be converted in follow-up
       --  commits.
       Persistent_Keepalive_Due : Boolean := False;
+
+      --  Transition flag: we received a packet recently and have
+      --  not sent anything back within the keepalive window
+      --  (Since_Recv < Keepalive_Timeout_Ms and Since_Sent >=
+      --  Keepalive_Timeout_Ms).  Computed by Refresh_Time_Flags
+      --  from Last_Received, Last_Sent and Now.  Step 6b.2.
+      Reactive_Keepalive_Due : Boolean := False;
    end record;
 
    --  Structural invariant as a ghost predicate.

@@ -23,16 +23,16 @@ is
    ---------------------------------------------------------------------------
    --  Refresh_Time_Flags — Recompute time-based transition flags
    --
-   --  Step 6b.1: persistent-keepalive only.  Sets
-   --  Persistent_Keepalive_Due once the configured interval has
-   --  elapsed since the last outbound packet.  Mark_Sent and
-   --  Set_Persistent_Keepalive clear the flag on every relevant
-   --  transition, so this routine only ever needs to *set* it.
+   --  Single owner of all Now-based arithmetic for the keepalive
+   --  flags.  Called at the entry of Tick_All and On_Peer_Timer_Due
+   --  so the flags are always live when Tick runs.  Each call
+   --  fully recomputes (set or clear); transitions therefore do not
+   --  need to eagerly clear the flags.
    --
    --  Future commits will fold the remaining elapsed-time conditions
-   --  in Tick (key zeroing, session expiry, rekey, unresponsive,
-   --  reactive keepalive) into this routine and remove the Now -
-   --  arithmetic from Tick entirely.
+   --  in Tick (key zeroing, session expiry, rekey time/timeout/retry,
+   --  unresponsive peer detection) into this routine and remove the
+   --  Now arithmetic from Tick entirely.
    ---------------------------------------------------------------------------
 
    procedure Refresh_Time_Flags
@@ -40,11 +40,20 @@ is
    is
       Peer : Peer_State renames Peers (Peer_Idx);
    begin
-      if Peer.Persistent_Keepalive_Ms > 0
-        and then Elapsed (Peer.Last_Sent, Now) >= Peer.Persistent_Keepalive_Ms
-      then
-         Peer.Persistent_Keepalive_Due := True;
-      end if;
+      --  Persistent keepalive: deadline elapsed since last send.
+      Peer.Persistent_Keepalive_Due :=
+        Peer.Persistent_Keepalive_Ms > 0
+        and then Elapsed (Peer.Last_Sent, Now)
+                   >= Peer.Persistent_Keepalive_Ms;
+
+      --  Reactive keepalive: received recently, haven't sent back
+      --  within the keepalive window.  Both edges of the window
+      --  are time-based, so the flag is set or cleared by this
+      --  recomputation alone.
+      Peer.Reactive_Keepalive_Due :=
+        Peer.Last_Received /= Timer.Clock.Never
+        and then Elapsed (Peer.Last_Received, Now) < Keepalive_Timeout_Ms
+        and then Elapsed (Peer.Last_Sent, Now) >= Keepalive_Timeout_Ms;
    end Refresh_Time_Flags;
 
    ---------------------------------------------------------------------------
@@ -201,19 +210,10 @@ is
             null;
       end case;
 
-      --  4. Reactive keepalive — received recently, haven't sent back
-      if Peer.Last_Received /= Timer.Clock.Never then
-         declare
-            Since_Recv : constant Unsigned_64 :=
-              Elapsed (Peer.Last_Received, Now);
-            Since_Sent : constant Unsigned_64 := Elapsed (Peer.Last_Sent, Now);
-         begin
-            if Since_Recv < Keepalive_Timeout_Ms
-              and then Since_Sent >= Keepalive_Timeout_Ms
-            then
-               return Send_Keepalive;
-            end if;
-         end;
+      --  4. Reactive keepalive — received recently, haven't sent back.
+      --  Step 6b.2: read the transition flag set by Refresh_Time_Flags.
+      if Peer.Reactive_Keepalive_Due then
+         return Send_Keepalive;
       end if;
 
       --  5. Persistent keepalive — unconditional periodic empty packet.
