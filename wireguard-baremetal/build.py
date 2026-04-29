@@ -20,6 +20,8 @@ Usage:
     ./build.py build flash monitor --container    # Build, flash, and monitor from container (Linux)
     ./build.py prove                              # Run SPARK proofs only (gold level)
     ./build.py build --no-prove                   # Skip SPARK proofs before building
+    ./build.py interactive                         # Drop into the build container interactively
+    ./build.py interactive --container             # (same — --container is implied)
 
 Flags:
     --development       Debug build for both Ada and C (assertions, ghost checks, -Og)
@@ -40,7 +42,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.absolute()
 REPO_ROOT = SCRIPT_DIR.parent
 ADA_CRATES = ["wireguard"]  # Single consolidated crate
-VALID_COMMANDS = {"build", "clean", "keygen", "prove", "flash", "monitor"}
+VALID_COMMANDS = {"build", "clean", "keygen", "prove", "flash", "monitor", "interactive"}
 CONTAINER_IMAGE = "seikan-build"
 CONTAINERFILE = SCRIPT_DIR / "Containerfile"
 
@@ -211,6 +213,35 @@ def run_in_container(args):
     cmd += [CONTAINER_IMAGE] + forwarded
 
     print(f"\n  Delegating to container ({runtime})...")
+    print(f"  $ {' '.join(cmd)}")
+    result = subprocess.run(cmd)
+    sys.exit(result.returncode)
+
+
+def run_interactive_container():
+    """Drop into the build container with an interactive shell.
+
+    Starts /bin/bash inside the container with the ESP-IDF environment
+    sourced, so you can run arbitrary commands.
+    """
+    runtime = find_container_runtime()
+    if runtime is None:
+        print("ERROR: Neither podman nor docker found on PATH.")
+        print("       Install podman:  sudo dnf install podman")
+        sys.exit(1)
+
+    if not ensure_container_image(runtime):
+        sys.exit(1)
+
+    cmd = [
+        runtime, "run", "--rm", "-it",
+        "-v", f"{REPO_ROOT}:/work:Z",
+        "--entrypoint", "/bin/bash",
+        CONTAINER_IMAGE,
+        "-c", 'source "$IDF_PATH/export.sh" && cd /work/wireguard-baremetal && exec /bin/bash',
+    ]
+
+    print(f"\n  Dropping into interactive container ({runtime})...")
     print(f"  $ {' '.join(cmd)}")
     result = subprocess.run(cmd)
     sys.exit(result.returncode)
@@ -408,6 +439,11 @@ def main():
     if not args:
         args = ["build"]
 
+    # 'interactive' always runs inside the container
+    if "interactive" in args:
+        run_interactive_container()
+        # run_interactive_container calls sys.exit — we never reach here
+
     # If --container is present, delegate to the OCI container immediately
     if "--container" in args:
         run_in_container(args)
@@ -460,7 +496,7 @@ def main():
         else:
             print(f"ERROR: Unknown argument '{arg}'")
             print(f"\nUsage: {Path(__file__).name} [command ...] [--development|--release] [--container] [--no-prove] [--alr args...]")
-            print("\nValid commands: build, clean, keygen, prove, flash, monitor")
+            print("\nValid commands: build, clean, keygen, prove, flash, monitor, interactive")
             print("\nExamples:")
             print(f"  {Path(__file__).name} build")
             print(f"  {Path(__file__).name} build --development")
@@ -473,6 +509,7 @@ def main():
             print(f"  {Path(__file__).name} build --alr -- -XPLATFORM=esp_idf")
             print(f"  {Path(__file__).name} keygen")
             print(f"  {Path(__file__).name} keygen --psk")
+            print(f"  {Path(__file__).name} interactive")
             sys.exit(1)
     
     # Pass 2: build command list
