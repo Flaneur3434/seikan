@@ -314,6 +314,17 @@ private
       --  Per §6.1: prevents lock-step retransmissions between peers.
       --  Generated from Fill_Random in Set_Rekey_Flag on each retry.
       Rekey_Jitter_Ms : Unsigned_64 := 0;
+
+      --  Transition flag: persistent-keepalive deadline has elapsed
+      --  since the last outbound packet.  Set lazily by
+      --  Refresh_Time_Flags in Session.Timers (called at the entry
+      --  of Tick_All / On_Peer_Timer_Due) and cleared by Mark_Sent
+      --  and Set_Persistent_Keepalive.  Tick reads this flag instead
+      --  of computing Now - Last_Sent >= Persistent_Keepalive_Ms.
+      --  Step 6b.1 of the timer-driven migration; remaining elapsed-
+      --  time conditions in Tick will be converted in follow-up
+      --  commits.
+      Persistent_Keepalive_Due : Boolean := False;
    end record;
 
    --  Structural invariant as a ghost predicate.

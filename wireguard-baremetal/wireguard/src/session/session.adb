@@ -140,6 +140,12 @@ is
       Lock;
       Peers (Peer).Last_Sent := Now;
 
+      --  Sending any packet — keepalive or data — restarts the
+      --  persistent-keepalive deadline.  Clear the transition flag
+      --  so Tick does not re-fire keepalive until Refresh_Time_Flags
+      --  re-arms it once the new deadline elapses.
+      Peers (Peer).Persistent_Keepalive_Due := False;
+
       --  §6.4: reset attempt window on authenticated packet traversal.
       --  Extends the 90 s rekey-attempt window as long as there is
       --  actual traffic, preventing premature give-up.
@@ -271,6 +277,12 @@ is
       --  Public API takes seconds (user-meaningful unit); store as
       --  milliseconds to match the internal time base.
       Peers (Peer).Persistent_Keepalive_Ms := Interval_S * 1_000;
+      --  The deadline restarts from "now" whenever the interval
+      --  changes (including disable).  Clear the transition flag
+      --  so Tick does not fire a stale keepalive after a config
+      --  change — Refresh_Time_Flags will re-set it once the new
+      --  interval has actually elapsed since Last_Sent.
+      Peers (Peer).Persistent_Keepalive_Due := False;
       Unlock;
    end Set_Persistent_Keepalive;
 

@@ -21,6 +21,33 @@ is
    end Elapsed;
 
    ---------------------------------------------------------------------------
+   --  Refresh_Time_Flags — Recompute time-based transition flags
+   --
+   --  Step 6b.1: persistent-keepalive only.  Sets
+   --  Persistent_Keepalive_Due once the configured interval has
+   --  elapsed since the last outbound packet.  Mark_Sent and
+   --  Set_Persistent_Keepalive clear the flag on every relevant
+   --  transition, so this routine only ever needs to *set* it.
+   --
+   --  Future commits will fold the remaining elapsed-time conditions
+   --  in Tick (key zeroing, session expiry, rekey, unresponsive,
+   --  reactive keepalive) into this routine and remove the Now -
+   --  arithmetic from Tick entirely.
+   ---------------------------------------------------------------------------
+
+   procedure Refresh_Time_Flags
+     (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp)
+   is
+      Peer : Peer_State renames Peers (Peer_Idx);
+   begin
+      if Peer.Persistent_Keepalive_Ms > 0
+        and then Elapsed (Peer.Last_Sent, Now) >= Peer.Persistent_Keepalive_Ms
+      then
+         Peer.Persistent_Keepalive_Due := True;
+      end if;
+   end Refresh_Time_Flags;
+
+   ---------------------------------------------------------------------------
    --  Tick — Evaluate one peer, return what C should do
    --
    --  Priority is implicit in evaluation order (first match wins):
@@ -192,16 +219,15 @@ is
       --  5. Persistent keepalive — unconditional periodic empty packet.
       --  Per WireGuard §6.5: if configured (> 0), send a keepalive
       --  whenever we haven't sent anything for Persistent_Keepalive_Ms
-      --  seconds.  This keeps NAT mappings and stateful firewalls open.
-      if Peer.Persistent_Keepalive_Ms > 0 then
-         declare
-            Since_Sent : constant Unsigned_64 :=
-              Elapsed (Peer.Last_Sent, Now);
-         begin
-            if Since_Sent >= Peer.Persistent_Keepalive_Ms then
-               return Send_Keepalive;
-            end if;
-         end;
+      --  ms.  This keeps NAT mappings and stateful firewalls open.
+      --
+      --  Step 6b.1: read the transition flag set by Refresh_Time_Flags
+      --  rather than recomputing Now - Last_Sent.  Mark_Sent and
+      --  Set_Persistent_Keepalive clear the flag, so the next fire is
+      --  bounded by the wrapper re-running Refresh_Time_Flags after
+      --  the deadline elapses.
+      if Peer.Persistent_Keepalive_Due then
+         return Send_Keepalive;
       end if;
 
       return No_Action;
@@ -217,6 +243,7 @@ is
       Lock;
 
       for I in Peer_Index loop
+         Refresh_Time_Flags (I, Now);
          Actions (I) := Tick (I, Now);
       end loop;
 
@@ -235,6 +262,7 @@ is
    is
    begin
       Lock;
+      Refresh_Time_Flags (Peer_Idx, Now);
       Action        := Tick (Peer_Idx, Now);
       Next_Deadline := Session.Timers.Next_Deadline (Peer_Idx, Now);
       Unlock;

@@ -29,18 +29,38 @@ is
      Global => (Input => Peer_States),
      Pre    => Now > Timer.Clock.Never;
 
+   --  Refresh_Time_Flags — Recompute time-based transition flags
+   --  for Peer_Idx from Now and stored timestamps.  Sets the
+   --  Persistent_Keepalive_Due flag in Peers when the deadline has
+   --  elapsed; leaves it unchanged otherwise (Mark_Sent /
+   --  Set_Persistent_Keepalive clear it on every relevant transition).
+   --
+   --  Step 6b.1 of the timer-driven migration: this is the bridge
+   --  that lets Tick read the flag instead of computing
+   --  Now - Last_Sent >= Persistent_Keepalive_Ms.  Future steps
+   --  will fold the remaining arithmetic checks into this routine
+   --  and remove them from Tick.
+   --
+   --  Caller must hold the session mutex.
+   procedure Refresh_Time_Flags
+     (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp)
+   with
+     Global => (In_Out => Peer_States),
+     Pre    => Now > Timer.Clock.Never and then All_Peers_Valid,
+     Post   => All_Peers_Valid;
+
    type Action_Array is array (Peer_Index) of Timer_Action;
 
    procedure Tick_All
      (Now     : Timer.Clock.Timestamp;
       Actions : out Action_Array)
    with
-     Global => (Input => Peer_States, In_Out => Mutex_State),
+     Global => (In_Out => (Peer_States, Mutex_State)),
      Pre  =>
        Session_Ready
        and then Now > Timer.Clock.Never,
      Post =>
-       Is_Mtx_Initialized and then not Is_Mtx_Locked;
+       Session_Ready;
 
    --  On_Peer_Timer_Due — Single-peer locked tick.
    --
@@ -64,12 +84,12 @@ is
       Action        : out Timer_Action;
       Next_Deadline : out Timer.Clock.Timestamp)
    with
-     Global => (Input => Peer_States, In_Out => Mutex_State),
+     Global => (In_Out => (Peer_States, Mutex_State)),
      Pre    =>
        Session_Ready
        and then Now > Timer.Clock.Never,
      Post   =>
-       Is_Mtx_Initialized and then not Is_Mtx_Locked
+       Session_Ready
        and then
          (Next_Deadline = Timer.Clock.Never
           or else Next_Deadline >= Now);
