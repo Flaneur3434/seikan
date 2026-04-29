@@ -77,16 +77,56 @@ static wg_timer_cb_ctx_t s_cb_ctx[WG_MAX_PEERS + 1];
 /* -----------------------------------------------------------------------
  * Timer callback
  *
- * Stub for Chunk 2: no callback is wired into the esp_timer instance
- * yet (esp_timer_create_args.callback is NULL would fail), so we
- * register a do-nothing callback here. Chunk 4 replaces this with the
- * generation-check + bit-set + notify implementation.
+ * Runs in the esp_timer task at a higher priority than wg_urgent on
+ * the single-core ESP32-C3. Therefore:
+ *
+ *   - The generation read here cannot be torn relative to wg_urgent's
+ *     arm/disarm updates: arm completes (or has not yet started)
+ *     before this callback can preempt.
+ *   - The OR into s_pending_due_mask cannot race with wg_urgent's
+ *     snapshot-and-clear.
+ *
+ * The callback intentionally does no Ada work and no logging in the
+ * hot path: it only marks a bit and pokes a task. Semantic decisions
+ * happen in wg_urgent under the session mutex.
+ *
+ * Stale callbacks (arm-then-disarm-or-rearm before this callback ran)
+ * are detected by comparing the captured generation against the live
+ * generation and dropped silently.
  * --------------------------------------------------------------------- */
 
-static void wg_timer_cb_stub(void *arg)
+static void wg_timer_cb(void *arg)
 {
-    (void)arg;
-    /* Intentionally empty. Wired in Chunk 4. */
+    const wg_timer_cb_ctx_t *ctx = (const wg_timer_cb_ctx_t *)arg;
+    if (ctx == NULL) {
+        return;
+    }
+
+    const unsigned int peer = ctx->peer;
+    if (peer == 0 || peer > WG_MAX_PEERS) {
+        return;
+    }
+
+    /* Stale-expiry filter: drop callbacks for arms that have since
+     * been superseded by a re-arm or cancelled by a disarm. */
+    if (ctx->generation != s_peers[peer].generation) {
+        return;
+    }
+
+    /* Mark this peer due. Bit (peer - 1). */
+    s_pending_due_mask |= (uint32_t)(1u << (peer - 1));
+
+    /* Note that we are no longer armed; the next arm() call will skip
+     * the redundant esp_timer_stop. This is purely an optimization. */
+    s_peers[peer].armed = false;
+
+    /* Wake wg_urgent if it has been registered. esp_timer dispatch
+     * method is ESP_TIMER_TASK, so we are in task context (not ISR)
+     * and use the plain task-context notify primitive. */
+    TaskHandle_t notify = s_notify_task;
+    if (notify != NULL) {
+        xTaskNotifyGive(notify);
+    }
 }
 
 /* -----------------------------------------------------------------------
@@ -105,7 +145,7 @@ bool wg_timer_manager_init(void)
         s_cb_ctx[peer].generation = 0;
 
         const esp_timer_create_args_t args = {
-            .callback        = &wg_timer_cb_stub,
+            .callback        = &wg_timer_cb,
             .arg             = &s_cb_ctx[peer],
             .dispatch_method = ESP_TIMER_TASK,
             .name            = "wg_peer_timer",
