@@ -25,6 +25,24 @@ static const char *TAG = "wg_timer";
 _Static_assert(WG_MAX_PEERS <= 32,
                "wg_timer_manager pending mask is uint32_t");
 
+/* Critical-section guard for arm/disarm.
+ *
+ * Callers come from two task priorities now:
+ *   - wg_urgent (prio 7): re-arms in handle_peer_due
+ *   - wg_proto  (prio 6): re-arms after each Ada state-mutating call
+ *
+ * On single-core ESP32-C3 the higher-priority wg_urgent can preempt
+ * wg_proto mid-arm, which would otherwise tear the (generation,
+ * cb_ctx, armed) tuple.  taskENTER_CRITICAL on RV32 disables
+ * interrupts for the duration, which is safe because the protected
+ * region does no blocking calls.
+ *
+ * The pending-mask OR in the timer callback does NOT take this lock:
+ * esp_timer runs at higher priority than both writers, so its read-
+ * modify-write of s_pending_due_mask is atomic w.r.t. them.  The
+ * critical section here protects only the arm/disarm bookkeeping. */
+static portMUX_TYPE s_arm_lock = portMUX_INITIALIZER_UNLOCKED;
+
 /* -----------------------------------------------------------------------
  * Per-peer state
  *
@@ -175,7 +193,16 @@ bool wg_timer_manager_arm(unsigned int peer, int64_t deadline_ms)
         return false;
     }
 
-    /* Disarm any existing timer first; this also bumps the generation. */
+    esp_timer_handle_t handle;
+    uint64_t           delta_us;
+
+    /* Critical section: serialize bookkeeping vs concurrent arm/disarm
+     * from the other writer task.  esp_timer_stop is called inside the
+     * critical section because skipping it could leave a stale arm
+     * with a fresh generation outside; esp_timer_start_once is called
+     * outside to keep the interrupt-disable window small. */
+    taskENTER_CRITICAL(&s_arm_lock);
+
     if (s_peers[peer].armed) {
         (void)esp_timer_stop(s_peers[peer].handle);
         s_peers[peer].armed = false;
@@ -193,17 +220,31 @@ bool wg_timer_manager_arm(unsigned int peer, int64_t deadline_ms)
     if (delta_ms < 1) {
         delta_ms = 1;
     }
+    delta_us = (uint64_t)delta_ms * 1000ULL;
 
-    uint64_t delta_us = (uint64_t)delta_ms * 1000ULL;
-    esp_err_t err = esp_timer_start_once(s_peers[peer].handle, delta_us);
+    /* Mark armed and snapshot the handle while still under the lock so
+     * the arm-side bookkeeping is consistent with the cb_ctx update.
+     * If esp_timer_start_once below fails we'll roll back to !armed. */
+    handle                    = s_peers[peer].handle;
+    s_peers[peer].deadline_ms = deadline_ms;
+    s_peers[peer].armed       = true;
+
+    taskEXIT_CRITICAL(&s_arm_lock);
+
+    esp_err_t err = esp_timer_start_once(handle, delta_us);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "esp_timer_start_once failed for peer %u: %d",
                  peer, (int)err);
+        taskENTER_CRITICAL(&s_arm_lock);
+        /* Roll back only if our generation is still the live one;
+         * otherwise a concurrent arm has already superseded us. */
+        if (s_cb_ctx[peer].generation == s_peers[peer].generation) {
+            s_peers[peer].armed = false;
+        }
+        taskEXIT_CRITICAL(&s_arm_lock);
         return false;
     }
 
-    s_peers[peer].deadline_ms = deadline_ms;
-    s_peers[peer].armed       = true;
     return true;
 }
 
@@ -212,6 +253,8 @@ void wg_timer_manager_disarm(unsigned int peer)
     if (peer == 0 || peer > WG_MAX_PEERS) {
         return;
     }
+
+    taskENTER_CRITICAL(&s_arm_lock);
 
     if (s_peers[peer].armed) {
         (void)esp_timer_stop(s_peers[peer].handle);
@@ -223,6 +266,8 @@ void wg_timer_manager_disarm(unsigned int peer)
      * the call (defensive). */
     s_peers[peer].generation += 1;
     s_cb_ctx[peer].generation = s_peers[peer].generation;
+
+    taskEXIT_CRITICAL(&s_arm_lock);
 }
 
 uint32_t wg_timer_manager_take_due_mask(void)

@@ -69,6 +69,26 @@ is
         External_Name => "session_on_peer_timer_due",
         SPARK_Mode    => Off;
 
+   --  Single-peer next-deadline query.  Used by the C wg_proto task
+   --  to re-arm a peer's esp_timer right after each Ada state-
+   --  mutating call.  Acquires the session mutex internally.
+   --
+   --  Out_Next_Deadline_S receives the earliest absolute Now
+   --  (seconds) at which the peer should be re-evaluated, or 0 if
+   --  no time-based deadline is currently meaningful (Never).
+   --
+   --  If Peer is out of range or Out_Next_Deadline_S is null, the
+   --  call is a no-op (output is set to 0 if peer is out of range
+   --  but pointer is valid).
+   procedure C_Session_Next_Deadline
+     (Peer                : Interfaces.C.unsigned;
+      Now                 : Interfaces.Unsigned_64;
+      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
+   with Export,
+        Convention    => C,
+        External_Name => "session_next_deadline",
+        SPARK_Mode    => Off;
+
    ---------------------------------------------------------------------------
    --  Session query — is the peer's current keypair valid?
    ---------------------------------------------------------------------------

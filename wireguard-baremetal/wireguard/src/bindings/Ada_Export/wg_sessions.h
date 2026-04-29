@@ -89,6 +89,29 @@ void session_on_peer_timer_due(unsigned int peer,
                                uint8_t  *out_action,
                                uint64_t *out_next_deadline_s);
 
+/**
+ * Single-peer next-deadline query.  Used by the wg_proto task to
+ * re-arm a peer's esp_timer right after each Ada state-mutating
+ * call (wg_send, wg_auto_handshake, wg_create_response,
+ * wg_receive_netif), so the deadline tracks the freshest peer
+ * state without waiting for the next wg_urgent recheck.
+ *
+ * Acquires the session mutex internally.
+ *
+ * @param peer                 1-based peer index.
+ * @param now                  Monotonic clock value (seconds).
+ * @param out_next_deadline_s  Output: earliest absolute Now
+ *                             (seconds) at which the peer should be
+ *                             re-evaluated, or 0 for "no time-based
+ *                             deadline meaningful" (Never).
+ *
+ * If peer is out of range, *out_next_deadline_s is set to 0.  If
+ * out_next_deadline_s is NULL the call is a no-op.
+ */
+void session_next_deadline(unsigned int peer,
+                           uint64_t now,
+                           uint64_t *out_next_deadline_s);
+
 /* --------------------------------------------------------------------
  * Session query
  * -------------------------------------------------------------------- */

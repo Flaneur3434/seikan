@@ -241,6 +241,21 @@ is
    end On_Peer_Timer_Due;
 
    ---------------------------------------------------------------------------
+   --  Locked_Next_Deadline — Single-peer locked deadline query
+   ---------------------------------------------------------------------------
+
+   procedure Locked_Next_Deadline
+     (Peer_Idx      : Peer_Index;
+      Now           : Timer.Clock.Timestamp;
+      Next_Deadline : out Timer.Clock.Timestamp)
+   is
+   begin
+      Lock;
+      Next_Deadline := Session.Timers.Next_Deadline (Peer_Idx, Now);
+      Unlock;
+   end Locked_Next_Deadline;
+
+   ---------------------------------------------------------------------------
    --  Next_Deadline helpers
    ---------------------------------------------------------------------------
 

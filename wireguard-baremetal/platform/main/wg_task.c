@@ -85,6 +85,55 @@ bool wg_task_get_peer_endpoint(unsigned int peer, struct sockaddr_in *out)
     return true;
 }
 
+/* -----------------------------------------------------------------------
+ * Re-arm peer timer after an Ada state-mutating call.
+ *
+ * Each Ada entry point that touches per-peer session state
+ * (wg_send, wg_auto_handshake, wg_create_response, wg_receive_netif)
+ * can shift a peer's next deadline — e.g. a fresh Last_Sent extends
+ * keepalive, a completed handshake sets Created_At.  Without this
+ * helper, the timer manager keeps firing at the deadline armed by
+ * wg_urgent's previous wake (at most 1 s old), so the *acted* state
+ * change lags by up to 1 s.
+ *
+ * Calls session_next_deadline (lock + Next_Deadline read, no Tick),
+ * then arms the peer's esp_timer.  Caps at WG_REARM_FALLBACK_MS to
+ * keep the wg_urgent-driven safety recheck cadence even when Ada
+ * returns Never (counter-driven triggers, etc.).
+ *
+ * Concurrency: wg_timer_manager_arm is now serialized internally
+ * against wg_urgent's concurrent arms via taskENTER_CRITICAL.
+ * --------------------------------------------------------------------- */
+
+#define WG_REARM_FALLBACK_MS  1000
+
+static void rearm_peer_timer(unsigned int peer)
+{
+    if (peer == 0 || peer > WG_MAX_PEERS) {
+        return;
+    }
+
+    uint64_t now_s          = wg_clock_now();
+    uint64_t next_deadline_s = 0;
+    session_next_deadline(peer, now_s, &next_deadline_s);
+
+    int64_t now_ms = wg_clock_now_ms();
+    int64_t next_deadline_ms;
+    if (next_deadline_s != 0) {
+        next_deadline_ms = (int64_t)next_deadline_s * 1000;
+        int64_t fallback_ms = now_ms + WG_REARM_FALLBACK_MS;
+        if (next_deadline_ms > fallback_ms) {
+            next_deadline_ms = fallback_ms;
+        }
+        if (next_deadline_ms < now_ms + 1) {
+            next_deadline_ms = now_ms + 1;
+        }
+    } else {
+        next_deadline_ms = now_ms + WG_REARM_FALLBACK_MS;
+    }
+    (void)wg_timer_manager_arm(peer, next_deadline_ms);
+}
+
 /* send_outer_packet — transmit then free.
  *
  * wg_netif_send_outer() uses PBUF_REF: on success the pbuf_custom callback
@@ -155,6 +204,7 @@ static void wg_task(void *pvParameters)
                             &tx_len);
 
                     tx_pool_free(inner_msg.buf);
+                    rearm_peer_timer(peer);
 
                     if (tx_pkt == NULL || tx_len == 0)
                     {
@@ -176,6 +226,7 @@ static void wg_task(void *pvParameters)
                 void *init_pkt = NULL;
                 uint16_t init_len = 0;
                 wg_auto_handshake(peer, &init_pkt, &init_len);
+                rearm_peer_timer(peer);
                 if (init_pkt != NULL && init_len > 0)
                 {
                     struct sockaddr_in endpoint = get_peer_endpoint(peer);
@@ -227,6 +278,11 @@ static void wg_task(void *pvParameters)
         // Any non-error return means crypto verification passed.
         if (action != WG_ACTION_ERROR && rx_peer != 0) {
             update_peer_endpoint(rx_peer, &rx_msg.peer);
+            // Any authenticated RX may have shifted this peer's
+            // next deadline (Last_Received, handshake completion,
+            // etc.); arm before any further Ada calls below so the
+            // re-arm reflects post-receive state.
+            rearm_peer_timer(rx_peer);
         }
 
         switch (action)
@@ -237,6 +293,7 @@ static void wg_task(void *pvParameters)
             uint16_t resp_len = 0;
             packet_buffer_t *resp_pkt =
                 (packet_buffer_t *)wg_create_response(&resp_len);
+            rearm_peer_timer(rx_peer);
 
             if (resp_pkt == NULL || resp_len == 0)
             {
@@ -276,6 +333,7 @@ static void wg_task(void *pvParameters)
 
                 // Done with RX buffer
                 rx_pool_free(rx_buf);
+                rearm_peer_timer(rx_peer);
 
                 if (tx_pkt == NULL || tx_len == 0)
                 {

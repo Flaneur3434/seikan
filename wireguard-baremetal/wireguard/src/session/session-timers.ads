@@ -74,6 +74,27 @@ is
          (Next_Deadline = Timer.Clock.Never
           or else Next_Deadline >= Now);
 
+   --  Locked_Next_Deadline — Same as Next_Deadline but takes the
+   --  session mutex internally.  Used by the C wg_proto task to
+   --  re-arm a peer's esp_timer immediately after a state-mutating
+   --  Ada call (wg_send, wg_auto_handshake, wg_create_response,
+   --  wg_receive_netif), so the deadline reflects the new state
+   --  without waiting for the next wg_urgent wake.
+   procedure Locked_Next_Deadline
+     (Peer_Idx      : Peer_Index;
+      Now           : Timer.Clock.Timestamp;
+      Next_Deadline : out Timer.Clock.Timestamp)
+   with
+     Global => (Input => Peer_States, In_Out => Mutex_State),
+     Pre    =>
+       Session_Ready
+       and then Now > Timer.Clock.Never,
+     Post   =>
+       Is_Mtx_Initialized and then not Is_Mtx_Locked
+       and then
+         (Next_Deadline = Timer.Clock.Never
+          or else Next_Deadline >= Now);
+
    --  Next_Deadline — When should this peer be re-evaluated?
    --
    --  Returns the earliest absolute Now at which Tick would (or might)

@@ -72,6 +72,37 @@ is
    end C_Session_On_Peer_Timer_Due;
 
    ---------------------------------------------------------------------------
+   --  Single-peer next-deadline query
+   ---------------------------------------------------------------------------
+
+   procedure C_Session_Next_Deadline
+     (Peer                : Interfaces.C.unsigned;
+      Now                 : Interfaces.Unsigned_64;
+      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
+   is
+      Deadline : Timer.Clock.Timestamp;
+   begin
+      if Out_Next_Deadline_S = null then
+         return;
+      end if;
+
+      if Peer not in
+        Interfaces.C.unsigned (Session.Peer_Index'First) ..
+        Interfaces.C.unsigned (Session.Peer_Index'Last)
+      then
+         Out_Next_Deadline_S.all := 0;
+         return;
+      end if;
+
+      Session.Timers.Locked_Next_Deadline
+        (Peer_Idx      => Session.Peer_Index (Peer),
+         Now           => Now,
+         Next_Deadline => Deadline);
+
+      Out_Next_Deadline_S.all := Interfaces.Unsigned_64 (Deadline);
+   end C_Session_Next_Deadline;
+
+   ---------------------------------------------------------------------------
    --  Session query
    ---------------------------------------------------------------------------
 
