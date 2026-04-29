@@ -24,9 +24,13 @@ static const char *TAG = "wg_urgent";
 #define WG_URGENT_TASK_STACK     4096
 #define WG_URGENT_TASK_PRIORITY  7   /* one above wg_proto (6) */
 
-/* Per-peer rearm cadence used until Ada emits next-deadline intents
- * (Phase 3 chunk 3). All WireGuard timers (keepalive, rekey, expiry,
- * zero-keys) operate on second-scale deadlines, so 1 s slop is fine. */
+/* Fallback rearm cadence used when Ada returns "Never" (no
+ * time-based deadline meaningful for this peer right now). Counter-
+ * driven Tick triggers (Send_Counter limits) and not-yet-emitted
+ * transition deadlines are caught at this cadence until later
+ * Phase-3 chunks make every state change emit a precise next
+ * deadline. All WireGuard timers are second-scale, so 1 s slop is
+ * fine. */
 #define WG_URGENT_RECHECK_MS     1000
 
 static TaskHandle_t s_urgent_task;
@@ -72,7 +76,10 @@ static bool send_outer_packet(packet_buffer_t *pkt,
 static void handle_peer_due(unsigned int peer)
 {
     uint64_t now_s = wg_clock_now();
-    uint8_t  action = session_on_peer_timer_due(peer, now_s);
+    uint8_t  action = WG_TIMER_NO_ACTION;
+    uint64_t next_deadline_s = 0;
+
+    session_on_peer_timer_due(peer, now_s, &action, &next_deadline_s);
 
     if (action != WG_TIMER_NO_ACTION) {
         void *tx_buf = NULL;
@@ -113,7 +120,23 @@ static void handle_peer_due(unsigned int peer)
         }
     }
 
-    int64_t next_deadline_ms = wg_clock_now_ms() + WG_URGENT_RECHECK_MS;
+    /* Rearm. If Ada gave us a precise deadline, use it (clamped to
+     * future). Otherwise fall back to the fixed recheck cadence so
+     * counter-driven and not-yet-emitted deadlines still get caught. */
+    int64_t now_ms = wg_clock_now_ms();
+    int64_t next_deadline_ms;
+    if (next_deadline_s != 0) {
+        next_deadline_ms = (int64_t)next_deadline_s * 1000;
+        int64_t fallback_ms = now_ms + WG_URGENT_RECHECK_MS;
+        if (next_deadline_ms > fallback_ms) {
+            next_deadline_ms = fallback_ms;
+        }
+        if (next_deadline_ms < now_ms + 1) {
+            next_deadline_ms = now_ms + 1;
+        }
+    } else {
+        next_deadline_ms = now_ms + WG_URGENT_RECHECK_MS;
+    }
     (void)wg_timer_manager_arm(peer, next_deadline_ms);
 }
 

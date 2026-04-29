@@ -51,11 +51,19 @@ is
    --  path: the C wg_urgent task calls this for each peer whose
    --  esp_timer expired. Acquires the session mutex internally.
    --
-   --  Returns 0 if Peer is out of range (defensive — wg_urgent should
-   --  never pass an out-of-range peer index).
-   function C_Session_On_Peer_Timer_Due
-     (Peer : Interfaces.C.unsigned;
-      Now  : Interfaces.Unsigned_64) return C_Timer_Action
+   --  Out_Action receives the Timer_Action enum (0..5).
+   --  Out_Next_Deadline_S receives the earliest absolute Now (seconds
+   --  since boot) at which C should re-evaluate this peer.  0 means
+   --  "no time-based deadline meaningful for this peer right now"
+   --  (Timer.Clock.Never).  Both outputs are set under one lock hold
+   --  so they are an atomic snapshot of peer state at Now.
+   --
+   --  If Peer is out of range, both outputs are set to 0 (defensive).
+   procedure C_Session_On_Peer_Timer_Due
+     (Peer                : Interfaces.C.unsigned;
+      Now                 : Interfaces.Unsigned_64;
+      Out_Action          : access Interfaces.Unsigned_8;
+      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
    with Export,
         Convention    => C,
         External_Name => "session_on_peer_timer_due",

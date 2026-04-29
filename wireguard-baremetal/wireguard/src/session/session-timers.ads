@@ -50,19 +50,29 @@ is
    --  WG_MAX_PEERS that the polling path requires.
    --
    --  Acquires and releases Mutex_State internally; safe to call from
-   --  any task. The returned action is what the caller should
+   --  any task. The returned Action is what the caller should
    --  immediately dispatch (typically via wg_dispatch_timer in C).
+   --
+   --  Next_Deadline is the earliest absolute timestamp at which the
+   --  caller should re-evaluate this peer (= Session.Timers.Next_Deadline
+   --  applied at the same Now, evaluated under the same lock hold so
+   --  the two values are an atomic snapshot).  Timer.Clock.Never means
+   --  no time-based deadline is currently meaningful for this peer.
    procedure On_Peer_Timer_Due
-     (Peer_Idx : Peer_Index;
-      Now      : Timer.Clock.Timestamp;
-      Action   : out Timer_Action)
+     (Peer_Idx      : Peer_Index;
+      Now           : Timer.Clock.Timestamp;
+      Action        : out Timer_Action;
+      Next_Deadline : out Timer.Clock.Timestamp)
    with
      Global => (Input => Peer_States, In_Out => Mutex_State),
      Pre    =>
        Session_Ready
        and then Now > Timer.Clock.Never,
      Post   =>
-       Is_Mtx_Initialized and then not Is_Mtx_Locked;
+       Is_Mtx_Initialized and then not Is_Mtx_Locked
+       and then
+         (Next_Deadline = Timer.Clock.Never
+          or else Next_Deadline >= Now);
 
    --  Next_Deadline — When should this peer be re-evaluated?
    --

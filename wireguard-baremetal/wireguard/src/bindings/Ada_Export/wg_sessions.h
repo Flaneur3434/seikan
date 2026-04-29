@@ -64,13 +64,30 @@ void session_tick_all(uint64_t now, uint8_t actions[]);
  * path marks one peer as due. Equivalent to extracting the relevant
  * slot from session_tick_all() but without the per-peer scan.
  *
- * Acquires the session mutex internally.
+ * Acquires the session mutex internally and snapshots the peer's
+ * current action AND its next time-based deadline atomically.
  *
- * @param peer  1-based peer index (Ada Session.Peer_Index).
- * @param now   Monotonic clock value (seconds; matches session_tick_all).
- * @return      Per-peer timer action (wg_timer_action_t).
+ * @param peer                 1-based peer index (Ada Session.Peer_Index).
+ * @param now                  Monotonic clock value (seconds).
+ * @param out_action           Output: per-peer timer action
+ *                             (wg_timer_action_t enum).
+ * @param out_next_deadline_s  Output: earliest absolute Now (seconds)
+ *                             at which the caller should re-evaluate
+ *                             this peer.  0 means "no time-based
+ *                             deadline meaningful right now"
+ *                             (Timer.Clock.Never); the caller should
+ *                             fall back to its periodic recheck.
+ *                             Counter-driven triggers (Send_Counter
+ *                             limits) are NOT modelled by this value.
+ *
+ * If peer is out of range or either output pointer is NULL, no
+ * action is performed.  If only peer is out of range, both outputs
+ * are set to 0.
  */
-uint8_t session_on_peer_timer_due(unsigned int peer, uint64_t now);
+void session_on_peer_timer_due(unsigned int peer,
+                               uint64_t now,
+                               uint8_t  *out_action,
+                               uint64_t *out_next_deadline_s);
 
 /* --------------------------------------------------------------------
  * Session query

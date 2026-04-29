@@ -1,6 +1,7 @@
 --  WG_Sessions - C FFI Implementation
 
 with Session.Timers;
+with Timer.Clock;
 
 package body WG_Sessions
    with SPARK_Mode => Off
@@ -37,25 +38,37 @@ is
    --  Single-peer timer evaluation
    ---------------------------------------------------------------------------
 
-   function C_Session_On_Peer_Timer_Due
-     (Peer : Interfaces.C.unsigned;
-      Now  : Interfaces.Unsigned_64) return C_Timer_Action
+   procedure C_Session_On_Peer_Timer_Due
+     (Peer                : Interfaces.C.unsigned;
+      Now                 : Interfaces.Unsigned_64;
+      Out_Action          : access Interfaces.Unsigned_8;
+      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
    is
-      Action : Session.Timers.Timer_Action;
+      Action   : Session.Timers.Timer_Action;
+      Deadline : Timer.Clock.Timestamp;
    begin
+      if Out_Action = null or else Out_Next_Deadline_S = null then
+         return;
+      end if;
+
       if Peer not in
         Interfaces.C.unsigned (Session.Peer_Index'First) ..
         Interfaces.C.unsigned (Session.Peer_Index'Last)
       then
-         return 0;
+         Out_Action.all          := 0;
+         Out_Next_Deadline_S.all := 0;
+         return;
       end if;
 
       Session.Timers.On_Peer_Timer_Due
-        (Peer_Idx => Session.Peer_Index (Peer),
-         Now      => Now,
-         Action   => Action);
+        (Peer_Idx      => Session.Peer_Index (Peer),
+         Now           => Now,
+         Action        => Action,
+         Next_Deadline => Deadline);
 
-      return C_Timer_Action (Session.Timers.Timer_Action'Pos (Action));
+      Out_Action.all :=
+        Interfaces.Unsigned_8 (Session.Timers.Timer_Action'Pos (Action));
+      Out_Next_Deadline_S.all := Interfaces.Unsigned_64 (Deadline);
    end C_Session_On_Peer_Timer_Due;
 
    ---------------------------------------------------------------------------

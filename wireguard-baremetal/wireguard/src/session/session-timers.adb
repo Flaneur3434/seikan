@@ -228,13 +228,15 @@ is
    ---------------------------------------------------------------------------
 
    procedure On_Peer_Timer_Due
-     (Peer_Idx : Peer_Index;
-      Now      : Timer.Clock.Timestamp;
-      Action   : out Timer_Action)
+     (Peer_Idx      : Peer_Index;
+      Now           : Timer.Clock.Timestamp;
+      Action        : out Timer_Action;
+      Next_Deadline : out Timer.Clock.Timestamp)
    is
    begin
       Lock;
-      Action := Tick (Peer_Idx, Now);
+      Action        := Tick (Peer_Idx, Now);
+      Next_Deadline := Session.Timers.Next_Deadline (Peer_Idx, Now);
       Unlock;
    end On_Peer_Timer_Due;
 
