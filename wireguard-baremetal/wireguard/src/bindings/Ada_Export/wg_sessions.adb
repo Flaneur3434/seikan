@@ -39,15 +39,15 @@ is
    ---------------------------------------------------------------------------
 
    procedure C_Session_On_Peer_Timer_Due
-     (Peer                : Interfaces.C.unsigned;
-      Now                 : Interfaces.Unsigned_64;
-      Out_Action          : access Interfaces.Unsigned_8;
-      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
+     (Peer                 : Interfaces.C.unsigned;
+      Now                  : Interfaces.Unsigned_64;
+      Out_Action           : access Interfaces.Unsigned_8;
+      Out_Next_Deadline_Ms : access Interfaces.Unsigned_64)
    is
       Action   : Session.Timers.Timer_Action;
       Deadline : Timer.Clock.Timestamp;
    begin
-      if Out_Action = null or else Out_Next_Deadline_S = null then
+      if Out_Action = null or else Out_Next_Deadline_Ms = null then
          return;
       end if;
 
@@ -55,8 +55,8 @@ is
         Interfaces.C.unsigned (Session.Peer_Index'First) ..
         Interfaces.C.unsigned (Session.Peer_Index'Last)
       then
-         Out_Action.all          := 0;
-         Out_Next_Deadline_S.all := 0;
+         Out_Action.all           := 0;
+         Out_Next_Deadline_Ms.all := 0;
          return;
       end if;
 
@@ -68,7 +68,7 @@ is
 
       Out_Action.all :=
         Interfaces.Unsigned_8 (Session.Timers.Timer_Action'Pos (Action));
-      Out_Next_Deadline_S.all := Interfaces.Unsigned_64 (Deadline);
+      Out_Next_Deadline_Ms.all := Interfaces.Unsigned_64 (Deadline);
    end C_Session_On_Peer_Timer_Due;
 
    ---------------------------------------------------------------------------
@@ -76,13 +76,13 @@ is
    ---------------------------------------------------------------------------
 
    procedure C_Session_Next_Deadline
-     (Peer                : Interfaces.C.unsigned;
-      Now                 : Interfaces.Unsigned_64;
-      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
+     (Peer                 : Interfaces.C.unsigned;
+      Now                  : Interfaces.Unsigned_64;
+      Out_Next_Deadline_Ms : access Interfaces.Unsigned_64)
    is
       Deadline : Timer.Clock.Timestamp;
    begin
-      if Out_Next_Deadline_S = null then
+      if Out_Next_Deadline_Ms = null then
          return;
       end if;
 
@@ -90,7 +90,7 @@ is
         Interfaces.C.unsigned (Session.Peer_Index'First) ..
         Interfaces.C.unsigned (Session.Peer_Index'Last)
       then
-         Out_Next_Deadline_S.all := 0;
+         Out_Next_Deadline_Ms.all := 0;
          return;
       end if;
 
@@ -99,7 +99,7 @@ is
          Now           => Now,
          Next_Deadline => Deadline);
 
-      Out_Next_Deadline_S.all := Interfaces.Unsigned_64 (Deadline);
+      Out_Next_Deadline_Ms.all := Interfaces.Unsigned_64 (Deadline);
    end C_Session_Next_Deadline;
 
    ---------------------------------------------------------------------------

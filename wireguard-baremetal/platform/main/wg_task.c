@@ -112,21 +112,20 @@ static void rearm_peer_timer(unsigned int peer)
         return;
     }
 
-    uint64_t now_s          = wg_clock_now();
-    uint64_t next_deadline_s = 0;
-    session_next_deadline(peer, now_s, &next_deadline_s);
+    int64_t  now_ms          = wg_clock_now_ms();
+    uint64_t next_deadline_ms = 0;
+    session_next_deadline(peer, (uint64_t)now_ms, &next_deadline_ms);
 
-    if (next_deadline_s == 0) {
+    if (next_deadline_ms == 0) {
         /* Never — no time-based deadline is meaningful right now. */
         return;
     }
 
-    int64_t now_ms          = wg_clock_now_ms();
-    int64_t next_deadline_ms = (int64_t)next_deadline_s * 1000;
-    if (next_deadline_ms < now_ms + 1) {
-        next_deadline_ms = now_ms + 1;
+    int64_t deadline_ms = (int64_t)next_deadline_ms;
+    if (deadline_ms < now_ms + 1) {
+        deadline_ms = now_ms + 1;
     }
-    (void)wg_timer_manager_arm(peer, next_deadline_ms);
+    (void)wg_timer_manager_arm(peer, deadline_ms);
 }
 
 /* send_outer_packet — transmit then free.

@@ -170,7 +170,7 @@ is
    --  Rate-limited handshake initiation for auto-init.
    --
    --  Called when inner data is queued but no session exists.
-   --  Rate-limits to at most once per Rekey_Timeout_S (5 s) and
+   --  Rate-limits to at most once per Rekey_Timeout_Ms (5 s) and
    --  skips if a handshake is already in flight for this peer.
    --
    --  On success: TX_Ptr/TX_Len point to wire-ready initiation buffer.

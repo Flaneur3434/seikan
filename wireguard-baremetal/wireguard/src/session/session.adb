@@ -208,13 +208,13 @@ is
 
       declare
          Saved_PKA : constant Unsigned_64 :=
-           Peers (Peer).Persistent_Keepalive_S;
+           Peers (Peer).Persistent_Keepalive_Ms;
          Saved_LH  : constant Timer.Clock.Timestamp :=
            Peers (Peer).Last_Handshake;
       begin
          Peers (Peer) := (others => <>);
          --  Preserve configuration that outlives sessions
-         Peers (Peer).Persistent_Keepalive_S := Saved_PKA;
+         Peers (Peer).Persistent_Keepalive_Ms := Saved_PKA;
          --  Preserve Last_Handshake so the 540 s key-zeroing check
          --  in Tick can fire after the session has been expired.
          Peers (Peer).Last_Handshake := Saved_LH;
@@ -226,12 +226,13 @@ is
    procedure Set_Rekey_Flag
      (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    is
-      --  Generate 0..2 s of jitter from one random byte. Granularity in seconds.
+      --  Generate 0..2000 ms of jitter from one random byte
+      --  (per-second granularity is preserved; storage unit is ms).
       Rand_Buf : Byte_Array (0 .. 0);
       Jitter   : Unsigned_64;
    begin
       Crypto.Random.Fill_Random (Rand_Buf);
-      Jitter := Unsigned_64 (Rand_Buf (0)) mod 3;
+      Jitter := (Unsigned_64 (Rand_Buf (0)) mod 3) * 1_000;
 
       Lock;
 
@@ -243,12 +244,12 @@ is
             Peers (Peer).Mode            := Rekeying;
             Peers (Peer).Rekey_Start     := Now;
             Peers (Peer).Rekey_Last_Sent := Now;
-            Peers (Peer).Rekey_Jitter_S  := Jitter;
+            Peers (Peer).Rekey_Jitter_Ms := Jitter;
 
          when Rekeying =>
             --  Already rekeying — update retry timestamp and jitter.
             Peers (Peer).Rekey_Last_Sent := Now;
-            Peers (Peer).Rekey_Jitter_S  := Jitter;
+            Peers (Peer).Rekey_Jitter_Ms := Jitter;
 
          when Inactive =>
             --  No session to rekey — no-op.
@@ -267,7 +268,9 @@ is
    is
    begin
       Lock;
-      Peers (Peer).Persistent_Keepalive_S := Interval_S;
+      --  Public API takes seconds (user-meaningful unit); store as
+      --  milliseconds to match the internal time base.
+      Peers (Peer).Persistent_Keepalive_Ms := Interval_S * 1_000;
       Unlock;
    end Set_Persistent_Keepalive;
 

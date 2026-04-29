@@ -1,7 +1,7 @@
 --  Timer.Platform - POSIX host implementation
 --
---  Uses C clock_gettime(CLOCK_MONOTONIC) via import.
---  This is a simple binding — the C function returns seconds directly.
+--  Uses Ada.Real_Time monotonic clock.
+--  Returns milliseconds since Boot_Time.
 
 with Interfaces.C;
 with Ada.Real_Time; use Ada.Real_Time;
@@ -13,9 +13,10 @@ is
    function Clock_Now return Timer.Clock.Timestamp is
       Elapsed : constant Time_Span := Ada.Real_Time.Clock - Boot_Time;
    begin
-      --  Convert to seconds
+      --  Convert to milliseconds
       return
-        Timer.Clock.Timestamp (Interfaces.Unsigned_64 (To_Duration (Elapsed)));
+        Timer.Clock.Timestamp
+          (Interfaces.Unsigned_64 (To_Duration (Elapsed) * 1_000.0));
    end Clock_Now;
 
 end Timer.Platform;

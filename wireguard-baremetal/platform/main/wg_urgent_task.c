@@ -66,11 +66,12 @@ static bool send_outer_packet(packet_buffer_t *pkt,
 
 static void handle_peer_due(unsigned int peer)
 {
-    uint64_t now_s = wg_clock_now();
-    uint8_t  action = WG_TIMER_NO_ACTION;
-    uint64_t next_deadline_s = 0;
+    int64_t  now_ms          = wg_clock_now_ms();
+    uint8_t  action          = WG_TIMER_NO_ACTION;
+    uint64_t next_deadline_ms = 0;
 
-    session_on_peer_timer_due(peer, now_s, &action, &next_deadline_s);
+    session_on_peer_timer_due(peer, (uint64_t)now_ms, &action,
+                              &next_deadline_ms);
 
     if (action != WG_TIMER_NO_ACTION) {
         void *tx_buf = NULL;
@@ -117,15 +118,14 @@ static void handle_peer_due(unsigned int peer)
      * disarmed — the next state change in wg_proto (wg_send,
      * wg_auto_handshake, wg_receive_netif, wg_create_response) will
      * call rearm_peer_timer and bring the timer back online. */
-    if (next_deadline_s == 0) {
+    if (next_deadline_ms == 0) {
         return;
     }
-    int64_t now_ms          = wg_clock_now_ms();
-    int64_t next_deadline_ms = (int64_t)next_deadline_s * 1000;
-    if (next_deadline_ms < now_ms + 1) {
-        next_deadline_ms = now_ms + 1;
+    int64_t deadline_ms = (int64_t)next_deadline_ms;
+    if (deadline_ms < now_ms + 1) {
+        deadline_ms = now_ms + 1;
     }
-    (void)wg_timer_manager_arm(peer, next_deadline_ms);
+    (void)wg_timer_manager_arm(peer, deadline_ms);
 }
 
 /* -----------------------------------------------------------------------

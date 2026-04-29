@@ -23,20 +23,20 @@ is
    Rekey_After_Messages  : constant Unsigned_64 := 2 ** 60;
    Reject_After_Messages : constant Unsigned_64 := Unsigned_64'Last - 2 ** 13;
 
-   --  WireGuard protocol timing constants (seconds)
+   --  WireGuard protocol timing constants (milliseconds)
    --  From whitepaper §6.1–6.4
-   Rekey_After_Time_S   : constant Unsigned_64 := 120;
-   Reject_After_Time_S  : constant Unsigned_64 := 180;
-   Rekey_Attempt_Time_S : constant Unsigned_64 := 90;
-   Rekey_Timeout_S      : constant Unsigned_64 := 5;
-   Keepalive_Timeout_S  : constant Unsigned_64 := 10;
+   Rekey_After_Time_Ms   : constant Unsigned_64 := 120 * 1_000;
+   Reject_After_Time_Ms  : constant Unsigned_64 := 180 * 1_000;
+   Rekey_Attempt_Time_Ms : constant Unsigned_64 :=  90 * 1_000;
+   Rekey_Timeout_Ms      : constant Unsigned_64 :=   5 * 1_000;
+   Keepalive_Timeout_Ms  : constant Unsigned_64 :=  10 * 1_000;
 
    --  §6.3: erase all keys after 3×Reject_After_Time (540 s)
-   Key_Zeroing_After_S  : constant Unsigned_64 := 3 * Reject_After_Time_S;
+   Key_Zeroing_After_Ms  : constant Unsigned_64 := 3 * Reject_After_Time_Ms;
 
    --  §6.5: unresponsive peer detection threshold (15 s)
-   New_Handshake_Time_S : constant Unsigned_64 :=
-     Keepalive_Timeout_S + Rekey_Timeout_S;
+   New_Handshake_Time_Ms : constant Unsigned_64 :=
+     Keepalive_Timeout_Ms + Rekey_Timeout_Ms;
 
    ---------------------------------------------------------------------------
    --  Peer Index — Direct-mapped array index (1..Max_Peers)
@@ -169,7 +169,7 @@ is
 
    --  Record that we sent a DATA packet (not keepalive) to this peer.
    --  Used by unresponsive peer detection (§6.5): if we sent data but
-   --  got no reply in New_Handshake_Time_S (15 s), initiate a rekey.
+   --  got no reply in New_Handshake_Time_Ms (15 s), initiate a rekey.
    procedure Mark_Data_Sent (Peer : Peer_Index; Now : Timer.Clock.Timestamp)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
@@ -301,16 +301,19 @@ private
       --  problem where both peers try to rekey simultaneously.
       Is_Initiator : Boolean    := False;
 
-      --  Persistent keepalive interval in seconds (0 = disabled).
+      --  Persistent keepalive interval in milliseconds (0 = disabled).
       --  Per WireGuard §6.5: if configured, the peer unconditionally
       --  sends an empty transport packet every N seconds to keep
-      --  NAT mappings and stateful firewalls open.
-      Persistent_Keepalive_S : Unsigned_64 := 0;
+      --  NAT mappings and stateful firewalls open.  Stored as ms so
+      --  it can be compared directly against the ms-resolution
+      --  monotonic clock; the public Set_Persistent_Keepalive setter
+      --  takes seconds and converts.
+      Persistent_Keepalive_Ms : Unsigned_64 := 0;
 
-      --  Jitter added to rekey retry interval (0..2 seconds).
+      --  Jitter added to rekey retry interval (0..2000 ms).
       --  Per §6.1: prevents lock-step retransmissions between peers.
       --  Generated from Fill_Random in Set_Rekey_Flag on each retry.
-      Rekey_Jitter_S : Unsigned_64 := 0;
+      Rekey_Jitter_Ms : Unsigned_64 := 0;
    end record;
 
    --  Structural invariant as a ghost predicate.

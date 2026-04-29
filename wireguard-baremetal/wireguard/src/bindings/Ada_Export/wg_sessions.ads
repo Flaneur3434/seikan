@@ -52,18 +52,19 @@ is
    --  esp_timer expired. Acquires the session mutex internally.
    --
    --  Out_Action receives the Timer_Action enum (0..5).
-   --  Out_Next_Deadline_S receives the earliest absolute Now (seconds
-   --  since boot) at which C should re-evaluate this peer.  0 means
-   --  "no time-based deadline meaningful for this peer right now"
-   --  (Timer.Clock.Never).  Both outputs are set under one lock hold
-   --  so they are an atomic snapshot of peer state at Now.
+   --  Out_Next_Deadline_Ms receives the earliest absolute Now
+   --  (milliseconds since boot) at which C should re-evaluate this
+   --  peer.  0 means "no time-based deadline meaningful for this
+   --  peer right now" (Timer.Clock.Never).  Both outputs are set
+   --  under one lock hold so they are an atomic snapshot of peer
+   --  state at Now.
    --
    --  If Peer is out of range, both outputs are set to 0 (defensive).
    procedure C_Session_On_Peer_Timer_Due
-     (Peer                : Interfaces.C.unsigned;
-      Now                 : Interfaces.Unsigned_64;
-      Out_Action          : access Interfaces.Unsigned_8;
-      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
+     (Peer                 : Interfaces.C.unsigned;
+      Now                  : Interfaces.Unsigned_64;
+      Out_Action           : access Interfaces.Unsigned_8;
+      Out_Next_Deadline_Ms : access Interfaces.Unsigned_64)
    with Export,
         Convention    => C,
         External_Name => "session_on_peer_timer_due",
@@ -73,17 +74,17 @@ is
    --  to re-arm a peer's esp_timer right after each Ada state-
    --  mutating call.  Acquires the session mutex internally.
    --
-   --  Out_Next_Deadline_S receives the earliest absolute Now
-   --  (seconds) at which the peer should be re-evaluated, or 0 if
-   --  no time-based deadline is currently meaningful (Never).
+   --  Out_Next_Deadline_Ms receives the earliest absolute Now
+   --  (milliseconds) at which the peer should be re-evaluated, or 0
+   --  if no time-based deadline is currently meaningful (Never).
    --
-   --  If Peer is out of range or Out_Next_Deadline_S is null, the
+   --  If Peer is out of range or Out_Next_Deadline_Ms is null, the
    --  call is a no-op (output is set to 0 if peer is out of range
    --  but pointer is valid).
    procedure C_Session_Next_Deadline
-     (Peer                : Interfaces.C.unsigned;
-      Now                 : Interfaces.Unsigned_64;
-      Out_Next_Deadline_S : access Interfaces.Unsigned_64)
+     (Peer                 : Interfaces.C.unsigned;
+      Now                  : Interfaces.Unsigned_64;
+      Out_Next_Deadline_Ms : access Interfaces.Unsigned_64)
    with Export,
         Convention    => C,
         External_Name => "session_next_deadline",

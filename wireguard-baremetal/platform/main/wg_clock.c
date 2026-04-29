@@ -1,16 +1,10 @@
 /**
  * @file wg_clock.c
- * @brief Monotonic clock wrapper — seconds since boot.
+ * @brief Monotonic clock wrapper — milliseconds since boot.
  */
 
 #include "wg_clock.h"
 #include <esp_timer.h>
-
-uint64_t wg_clock_now(void)
-{
-    // Converts esp_timer_get_time() (microseconds) to seconds.
-    return (uint64_t)(esp_timer_get_time() / 1000000ULL);
-}
 
 int64_t wg_clock_now_ms(void)
 {

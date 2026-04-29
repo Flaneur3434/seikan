@@ -5,7 +5,7 @@ package body Session.Timers
 is
 
    ---------------------------------------------------------------------------
-   --  Elapsed — Seconds since a timestamp (clamped to 0)
+   --  Elapsed — Milliseconds since a timestamp (clamped to 0)
    ---------------------------------------------------------------------------
 
    function Elapsed
@@ -40,7 +40,7 @@ is
        (if Tick'Result = Session_Expired
         then
           Elapsed (Peers (Peer_Idx).Current.Created_At, Now)
-          >= Reject_After_Time_S
+          >= Reject_After_Time_Ms
           or else
             Peers (Peer_Idx).Current.Send_Counter >= Reject_After_Messages)
        -- Priority: timed_out dominates rekey
@@ -48,7 +48,7 @@ is
          (if Tick'Result = Initiate_Rekey
             and then Peers (Peer_Idx).Mode = Rekeying
           then
-            Elapsed (Peers (Peer_Idx).Rekey_Start, Now) < Rekey_Attempt_Time_S)
+            Elapsed (Peers (Peer_Idx).Rekey_Start, Now) < Rekey_Attempt_Time_Ms)
        -- Established rekey: initiator-only for time, any peer for
        -- counter or unresponsive peer detection
        and then
@@ -65,7 +65,7 @@ is
                  > Peers (Peer_Idx).Last_Received
                and then
                  Elapsed (Peers (Peer_Idx).Last_Data_Sent, Now)
-                 >= New_Handshake_Time_S))
+                 >= New_Handshake_Time_Ms))
    is
       Peer : constant Peer_State := Peers (Peer_Idx);
       Age  : Unsigned_64;
@@ -77,7 +77,7 @@ is
       --  re-firing.
       if Peer.Last_Handshake /= Timer.Clock.Never
         and then not Peer.Active
-        and then Elapsed (Peer.Last_Handshake, Now) >= Key_Zeroing_After_S
+        and then Elapsed (Peer.Last_Handshake, Now) >= Key_Zeroing_After_Ms
       then
          return Zero_All_Keys;
       end if;
@@ -90,7 +90,7 @@ is
       Age := Elapsed (Peer.Current.Created_At, Now);
 
       --  Hard expiry — reject-after limits
-      if Age >= Reject_After_Time_S
+      if Age >= Reject_After_Time_Ms
         or else Peer.Current.Send_Counter >= Reject_After_Messages
       then
          return Session_Expired;
@@ -114,7 +114,7 @@ is
                --  After SENDING: session >= Rekey_After_Time (120 s)
                --  Matches wireguard-go keepKeyFreshSending():
                --    keypair.isInitiator && age > RekeyAfterTime
-               if Age >= Rekey_After_Time_S then
+               if Age >= Rekey_After_Time_Ms then
                   return Initiate_Rekey;
                end if;
 
@@ -123,9 +123,9 @@ is
                --  first Initiate_Rekey → Rekeying, so Established
                --  branch never fires again.
                --  Matches wireguard-go keepKeyFreshReceiving().
-               if Age >= Reject_After_Time_S
-                            - Keepalive_Timeout_S
-                            - Rekey_Timeout_S
+               if Age >= Reject_After_Time_Ms
+                            - Keepalive_Timeout_Ms
+                            - Rekey_Timeout_Ms
                then
                   return Initiate_Rekey;
                end if;
@@ -141,7 +141,7 @@ is
             if Peer.Last_Data_Sent /= Timer.Clock.Never
               and then Peer.Last_Data_Sent > Peer.Last_Received
               and then Elapsed (Peer.Last_Data_Sent, Now)
-                       >= New_Handshake_Time_S
+                       >= New_Handshake_Time_Ms
             then
                return Initiate_Rekey;
             end if;
@@ -154,7 +154,7 @@ is
                Attempt_Elapsed : constant Unsigned_64 :=
                  Elapsed (Peer.Rekey_Start, Now);
             begin
-               if Attempt_Elapsed >= Rekey_Attempt_Time_S then
+               if Attempt_Elapsed >= Rekey_Attempt_Time_Ms then
                   return Rekey_Timed_Out;
                end if;
             end;
@@ -165,7 +165,7 @@ is
                Since_Last : constant Unsigned_64 :=
                  Elapsed (Peer.Rekey_Last_Sent, Now);
             begin
-               if Since_Last >= Rekey_Timeout_S + Peer.Rekey_Jitter_S then
+               if Since_Last >= Rekey_Timeout_Ms + Peer.Rekey_Jitter_Ms then
                   return Initiate_Rekey;
                end if;
             end;
@@ -181,8 +181,8 @@ is
               Elapsed (Peer.Last_Received, Now);
             Since_Sent : constant Unsigned_64 := Elapsed (Peer.Last_Sent, Now);
          begin
-            if Since_Recv < Keepalive_Timeout_S
-              and then Since_Sent >= Keepalive_Timeout_S
+            if Since_Recv < Keepalive_Timeout_Ms
+              and then Since_Sent >= Keepalive_Timeout_Ms
             then
                return Send_Keepalive;
             end if;
@@ -191,14 +191,14 @@ is
 
       --  5. Persistent keepalive — unconditional periodic empty packet.
       --  Per WireGuard §6.5: if configured (> 0), send a keepalive
-      --  whenever we haven't sent anything for Persistent_Keepalive_S
+      --  whenever we haven't sent anything for Persistent_Keepalive_Ms
       --  seconds.  This keeps NAT mappings and stateful firewalls open.
-      if Peer.Persistent_Keepalive_S > 0 then
+      if Peer.Persistent_Keepalive_Ms > 0 then
          declare
             Since_Sent : constant Unsigned_64 :=
               Elapsed (Peer.Last_Sent, Now);
          begin
-            if Since_Sent >= Peer.Persistent_Keepalive_S then
+            if Since_Sent >= Peer.Persistent_Keepalive_Ms then
                return Send_Keepalive;
             end if;
          end;
@@ -333,7 +333,7 @@ is
         and then not Peer.Active
       then
          D := Earliest
-                (D, Add_Capped (Peer.Last_Handshake, Key_Zeroing_After_S));
+                (D, Add_Capped (Peer.Last_Handshake, Key_Zeroing_After_Ms));
       end if;
 
       --  Inactive / no current keypair: only key-zeroing matters.
@@ -343,7 +343,7 @@ is
 
       --  2. Hard expiry — Reject_After_Time
       D := Earliest
-             (D, Add_Capped (Peer.Current.Created_At, Reject_After_Time_S));
+             (D, Add_Capped (Peer.Current.Created_At, Reject_After_Time_Ms));
 
       --  Counter-driven triggers — these are NOT time-predictable
       --  but become true synchronously inside wg_send/wg_receive when
@@ -366,13 +366,13 @@ is
                D := Earliest
                       (D,
                        Add_Capped (Peer.Current.Created_At,
-                                   Rekey_After_Time_S));
+                                   Rekey_After_Time_Ms));
                D := Earliest
                       (D,
                        Add_Capped (Peer.Current.Created_At,
-                                   Reject_After_Time_S
-                                   - Keepalive_Timeout_S
-                                   - Rekey_Timeout_S));
+                                   Reject_After_Time_Ms
+                                   - Keepalive_Timeout_Ms
+                                   - Rekey_Timeout_Ms));
             end if;
 
             --  Unresponsive-peer probe: only meaningful while
@@ -382,28 +382,28 @@ is
             then
                D := Earliest
                       (D, Add_Capped (Peer.Last_Data_Sent,
-                                      New_Handshake_Time_S));
+                                      New_Handshake_Time_Ms));
             end if;
 
             --  Reactive keepalive (idle responder side).
             if Peer.Last_Received /= Timer.Clock.Never then
                D := Earliest
-                      (D, Add_Capped (Peer.Last_Sent, Keepalive_Timeout_S));
+                      (D, Add_Capped (Peer.Last_Sent, Keepalive_Timeout_Ms));
             end if;
 
             --  Persistent keepalive.
-            if Peer.Persistent_Keepalive_S > 0 then
+            if Peer.Persistent_Keepalive_Ms > 0 then
                D := Earliest
                       (D, Add_Capped (Peer.Last_Sent,
-                                      Peer.Persistent_Keepalive_S));
+                                      Peer.Persistent_Keepalive_Ms));
             end if;
 
          when Rekeying =>
             D := Earliest
-                   (D, Add_Capped (Peer.Rekey_Start, Rekey_Attempt_Time_S));
+                   (D, Add_Capped (Peer.Rekey_Start, Rekey_Attempt_Time_Ms));
             D := Earliest
                    (D, Add_Capped (Peer.Rekey_Last_Sent,
-                                   Rekey_Timeout_S + Peer.Rekey_Jitter_S));
+                                   Rekey_Timeout_Ms + Peer.Rekey_Jitter_Ms));
 
          when Inactive =>
             null;

@@ -11,8 +11,8 @@ is
 
    function Clock_Now return Timer.Clock.Timestamp is
    begin
-      --  Convert microseconds to seconds
-      return Get_Clock_Now / 1_000_000;
+      --  Convert microseconds to milliseconds
+      return Get_Clock_Now / 1_000;
    end Clock_Now;
 
 end Timer.Platform;

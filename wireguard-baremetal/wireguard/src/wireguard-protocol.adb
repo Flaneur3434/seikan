@@ -574,9 +574,9 @@ is
          return;
       end if;
 
-      --  Rate limit: at most once every Rekey_Timeout_S seconds per peer
+      --  Rate limit: at most once every Rekey_Timeout_Ms ms per peer
       if Last_Auto_Inits (Peer) /= Timer.Clock.Never
-        and then Now - Last_Auto_Inits (Peer) < Session.Rekey_Timeout_S
+        and then Now - Last_Auto_Inits (Peer) < Session.Rekey_Timeout_Ms
       then
          return;
       end if;

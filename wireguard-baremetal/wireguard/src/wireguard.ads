@@ -105,7 +105,7 @@ is
    --  wg_auto_handshake — Rate-limited auto-initiation
    --
    --  Called by C when inner data is queued but no session exists.
-   --  Ada rate-limits (Rekey_Timeout_S) and checks for in-flight handshake.
+   --  Ada rate-limits (Rekey_Timeout_Ms) and checks for in-flight handshake.
    --  Returns a TX buffer + length if C should sendto(),
    --  or Null_Address / 0 if rate-limited or already handshaking.
    ---------------------------------------------------------------------------

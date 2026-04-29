@@ -54,7 +54,7 @@ typedef enum {
  * Evaluate all peer timers under a single session-mutex hold.
  * Fills actions[0..WG_MAX_PEERS-1].  C index 0 = Ada Peer 1.
  *
- * @param now      Monotonic clock value (microseconds).
+ * @param now      Monotonic clock value (milliseconds).
  * @param actions  Output array of per-peer timer actions.
  */
 void session_tick_all(uint64_t now, uint8_t actions[]);
@@ -68,17 +68,15 @@ void session_tick_all(uint64_t now, uint8_t actions[]);
  * current action AND its next time-based deadline atomically.
  *
  * @param peer                 1-based peer index (Ada Session.Peer_Index).
- * @param now                  Monotonic clock value (seconds).
+ * @param now                  Monotonic clock value (milliseconds).
  * @param out_action           Output: per-peer timer action
  *                             (wg_timer_action_t enum).
- * @param out_next_deadline_s  Output: earliest absolute Now (seconds)
+ * @param out_next_deadline_ms  Output: earliest absolute Now (milliseconds)
  *                             at which the caller should re-evaluate
  *                             this peer.  0 means "no time-based
  *                             deadline meaningful right now"
- *                             (Timer.Clock.Never); the caller should
- *                             fall back to its periodic recheck.
- *                             Counter-driven triggers (Send_Counter
- *                             limits) are NOT modelled by this value.
+ *                             (Timer.Clock.Never); the caller may
+ *                             leave the peer disarmed in that case.
  *
  * If peer is out of range or either output pointer is NULL, no
  * action is performed.  If only peer is out of range, both outputs
@@ -87,7 +85,7 @@ void session_tick_all(uint64_t now, uint8_t actions[]);
 void session_on_peer_timer_due(unsigned int peer,
                                uint64_t now,
                                uint8_t  *out_action,
-                               uint64_t *out_next_deadline_s);
+                               uint64_t *out_next_deadline_ms);
 
 /**
  * Single-peer next-deadline query.  Used by the wg_proto task to
@@ -99,18 +97,19 @@ void session_on_peer_timer_due(unsigned int peer,
  * Acquires the session mutex internally.
  *
  * @param peer                 1-based peer index.
- * @param now                  Monotonic clock value (seconds).
- * @param out_next_deadline_s  Output: earliest absolute Now
- *                             (seconds) at which the peer should be
- *                             re-evaluated, or 0 for "no time-based
- *                             deadline meaningful" (Never).
+ * @param now                  Monotonic clock value (milliseconds).
+ * @param out_next_deadline_ms  Output: earliest absolute Now
+ *                              (milliseconds) at which the peer
+ *                              should be re-evaluated, or 0 for
+ *                              "no time-based deadline meaningful"
+ *                              (Never).
  *
- * If peer is out of range, *out_next_deadline_s is set to 0.  If
- * out_next_deadline_s is NULL the call is a no-op.
+ * If peer is out of range, *out_next_deadline_ms is set to 0.  If
+ * out_next_deadline_ms is NULL the call is a no-op.
  */
 void session_next_deadline(unsigned int peer,
                            uint64_t now,
-                           uint64_t *out_next_deadline_s);
+                           uint64_t *out_next_deadline_ms);
 
 /* --------------------------------------------------------------------
  * Session query

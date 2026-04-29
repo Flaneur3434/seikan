@@ -1,6 +1,6 @@
 /**
  * @file wg_clock.h
- * @brief Monotonic clock wrapper — seconds since boot.
+ * @brief Monotonic clock wrapper — milliseconds since boot.
  */
 
 #pragma once
@@ -10,17 +10,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @brief Return monotonic seconds since boot.
- *
- * Resolution: 1 second.
- *
- * @deprecated Slated for removal once the timer-driven peer-deadline
- * design is fully migrated. Prefer wg_clock_now_ms(). See
- * docs/timer_driven_urgent_queue_design.md.
- */
-uint64_t wg_clock_now(void);
 
 /**
  * @brief Return monotonic milliseconds since boot.
