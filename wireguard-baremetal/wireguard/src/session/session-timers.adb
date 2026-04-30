@@ -23,16 +23,20 @@ is
    ---------------------------------------------------------------------------
    --  Refresh_Time_Flags — Recompute time-based transition flags
    --
-   --  Single owner of all Now-based arithmetic for Tick.  Called at
+   --  Single owner of all Now-based comparisons for Tick.  Called at
    --  the entry of Tick_All and On_Peer_Timer_Due so the flags are
    --  always live when Tick runs.  Each call fully recomputes (set
    --  or clear); transitions therefore do not need to eagerly clear
    --  the flags.
    --
-   --  After step 6b.4, every elapsed-time threshold that Tick used
-   --  to compute inline lives here as a single Boolean.  Tick
-   --  consumes only flags, counters, and the discrete Mode/Active
-   --  bits — no Now arithmetic.
+   --  After step 7c, this routine performs no elapsed-time
+   --  arithmetic.  Every one of the eight rules is a uniform
+   --  "deadline armed AND now past it" test against a deadline that
+   --  some prior transition (chunk 7b) stamped in Peer_State.  All
+   --  context-sensitive arming logic — "only initiator", "only in
+   --  Rekeying", "only when Last_Data_Sent > Last_Received", etc. —
+   --  lives at the transition site; the deadline being /= Never
+   --  encodes "rule currently armed".
    ---------------------------------------------------------------------------
 
    procedure Refresh_Time_Flags
@@ -40,77 +44,37 @@ is
    is
       Peer : Peer_State renames Peers (Peer_Idx);
    begin
-      --  Persistent keepalive: deadline elapsed since last send.
       Peer.Persistent_Keepalive_Due :=
-        Peer.Persistent_Keepalive_Ms > 0
-        and then Elapsed (Peer.Last_Sent, Now)
-                   >= Peer.Persistent_Keepalive_Ms;
+        Peer.Persistent_Keepalive_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Persistent_Keepalive_Deadline;
 
-      --  Reactive keepalive: received recently, haven't sent back
-      --  within the keepalive window.  Both edges of the window
-      --  are time-based, so the flag is set or cleared by this
-      --  recomputation alone.
       Peer.Reactive_Keepalive_Due :=
-        Peer.Last_Received /= Timer.Clock.Never
-        and then Elapsed (Peer.Last_Received, Now) < Keepalive_Timeout_Ms
-        and then Elapsed (Peer.Last_Sent, Now) >= Keepalive_Timeout_Ms;
+        Peer.Reactive_Keepalive_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Reactive_Keepalive_Deadline;
 
-      --  Unresponsive peer probe (§6.5 last paragraph): we sent DATA
-      --  and got no authenticated reply within New_Handshake_Time_Ms.
-      --  Last_Data_Sent is set only for real payloads, so reactive
-      --  keepalives never trigger this.
       Peer.Unresponsive_Peer_Due :=
-        Peer.Last_Data_Sent /= Timer.Clock.Never
-        and then Peer.Last_Data_Sent > Peer.Last_Received
-        and then Elapsed (Peer.Last_Data_Sent, Now)
-                   >= New_Handshake_Time_Ms;
+        Peer.Unresponsive_Peer_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Unresponsive_Peer_Deadline;
 
-      --  Key zeroing (§6.3 last sentence): erase all keys 3×Reject
-      --  after the last handshake.  Applies even to inactive peers
-      --  as long as Last_Handshake is still set (the Zero_All_Keys
-      --  handler clears it via Clear_Handshake_Timestamp).
       Peer.Zero_Keys_Due :=
-        Peer.Last_Handshake /= Timer.Clock.Never
-        and then not Peer.Active
-        and then Elapsed (Peer.Last_Handshake, Now) >= Key_Zeroing_After_Ms;
+        Peer.Zero_Keys_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Zero_Keys_Deadline;
 
-      --  Hard time expiry of the current keypair.  Counter-based
-      --  Reject_After_Messages stays inline in Tick (counter, not
-      --  time).  Only meaningful when there is a current keypair.
       Peer.Session_Expire_Time_Due :=
-        Peer.Active
-        and then Peer.Current.Valid
-        and then Elapsed (Peer.Current.Created_At, Now)
-                   >= Reject_After_Time_Ms;
+        Peer.Session_Expire_Time_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Session_Expire_Time_Deadline;
 
-      --  Initiator-only time-based rekey, send side (§6.2 ¶2) at
-      --  Rekey_After_Time_Ms (120 s) and receive side at
-      --  Reject_After_Time_Ms - Keepalive - Rekey (165 s).
       Peer.Rekey_Time_Due :=
-        Peer.Active
-        and then Peer.Current.Valid
-        and then Peer.Mode = Established
-        and then Peer.Is_Initiator
-        and then
-          (Elapsed (Peer.Current.Created_At, Now) >= Rekey_After_Time_Ms
-           or else
-             Elapsed (Peer.Current.Created_At, Now)
-               >= Reject_After_Time_Ms
-                    - Keepalive_Timeout_Ms
-                    - Rekey_Timeout_Ms);
+        Peer.Rekey_Time_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Rekey_Time_Deadline;
 
-      --  Rekey attempt window exhausted (§6.4): only meaningful in
-      --  Rekeying mode where Rekey_Start /= Never (Valid_Peer).
       Peer.Rekey_Timed_Out_Due :=
-        Peer.Mode = Rekeying
-        and then Elapsed (Peer.Rekey_Start, Now) >= Rekey_Attempt_Time_Ms;
+        Peer.Rekey_Timed_Out_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Rekey_Timed_Out_Deadline;
 
-      --  Rekey retry gating (§6.1): re-initiate after
-      --  Rekey_Timeout_Ms + Rekey_Jitter_Ms.
       Peer.Rekey_Retry_Due :=
-        Peer.Mode = Rekeying
-        and then Elapsed (Peer.Rekey_Last_Sent, Now)
-                   >= Rekey_Timeout_Ms + Peer.Rekey_Jitter_Ms;
+        Peer.Rekey_Retry_Deadline /= Timer.Clock.Never
+        and then Now >= Peer.Rekey_Retry_Deadline;
    end Refresh_Time_Flags;
 
    ---------------------------------------------------------------------------
