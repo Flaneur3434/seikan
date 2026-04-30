@@ -67,17 +67,12 @@ is
    begin
       --  Rotate keys: Next → Current → Previous, clear Next.
       --  Order matters: save Current before overwriting.
-      Peers (Peer).Previous        := Peers (Peer).Current;
-      Peers (Peer).Current         := Peers (Peer).Next;
-      Peers (Peer).Next            := (others => <>);
-      Peers (Peer).Last_Handshake  := Peers (Peer).Current.Created_At;
-      Peers (Peer).Last_Sent       := Peers (Peer).Current.Created_At;
-      Peers (Peer).Last_Data_Sent  := Timer.Clock.Never;
-      Peers (Peer).Last_Received   := Peers (Peer).Current.Created_At;
-      Peers (Peer).Rekey_Start     := Timer.Clock.Never;
-      Peers (Peer).Rekey_Last_Sent := Timer.Clock.Never;
-      Peers (Peer).Active          := True;
-      Peers (Peer).Mode            := Established;
+      Peers (Peer).Previous := Peers (Peer).Current;
+      Peers (Peer).Current  := Peers (Peer).Next;
+      Peers (Peer).Next     := (others => <>);
+      Peers (Peer).Last_Sent := Peers (Peer).Current.Created_At;
+      Peers (Peer).Active   := True;
+      Peers (Peer).Mode     := Established;
 
       --  Chunk 7b: arm deadlines from the freshly minted Current.
       --  Rekey_Time_Deadline is left Never here and stamped by
@@ -193,15 +188,6 @@ is
       Lock;
       Peers (Peer).Last_Sent := Now;
 
-      --  §6.4: reset attempt window on authenticated packet traversal.
-      --  Extends the 90 s rekey-attempt window as long as there is
-      --  actual traffic, preventing premature give-up.
-      if Peers (Peer).Mode = Rekeying
-        and then Now /= Timer.Clock.Never
-      then
-         Peers (Peer).Rekey_Start := Now;
-      end if;
-
       --  Chunk 7b: re-arm send-side deadlines.
       --  Persistent keepalive: count again from this send.
       if Peers (Peer).Persistent_Keepalive_Ms > 0
@@ -216,8 +202,10 @@ is
       --  Reactive keepalive is satisfied by this send: clear it.
       Peers (Peer).Reactive_Keepalive_Deadline := Timer.Clock.Never;
 
-      --  In Rekeying, Rekey_Start moved with this send (§6.4), so
-      --  the 90 s timed-out deadline shifts with it.
+      --  §6.4: extend the 90 s rekey-attempt window on every
+      --  authenticated send while in Rekeying.  Encoded as a fresh
+      --  Now + 90 s deadline (chunk 7g: replaced the old
+      --  Rekey_Start := Now bookkeeping).
       if Peers (Peer).Mode = Rekeying
         and then Now /= Timer.Clock.Never
       then
@@ -233,15 +221,13 @@ is
    is
    begin
       Lock;
-      Peers (Peer).Last_Data_Sent := Now;
-
-      --  Chunk 7b: arm the 15 s unresponsive-peer probe only when
-      --  this data send creates the "we sent, they haven't replied"
-      --  condition (Last_Data_Sent > Last_Received).  Otherwise
-      --  Mark_Received will have already cleared it / kept it Never.
-      if Now /= Timer.Clock.Never
-        and then Now > Peers (Peer).Last_Received
-      then
+      --  Chunk 7b/7g: arm the 15 s unresponsive-peer probe on every
+      --  data send.  Mark_Received clears it on the next reply, so
+      --  no per-call gate against Last_Received is needed: if a
+      --  receive came in between two data sends it has already
+      --  cleared the deadline, and this re-arm just resets the
+      --  window to the latest send.
+      if Now /= Timer.Clock.Never then
          Peers (Peer).Unresponsive_Peer_Deadline :=
            Add_Capped (Now, New_Handshake_Time_Ms);
       end if;
@@ -252,14 +238,6 @@ is
    is
    begin
       Lock;
-      Peers (Peer).Last_Received := Now;
-
-      --  §6.4: reset attempt window on authenticated packet traversal.
-      if Peers (Peer).Mode = Rekeying
-        and then Now /= Timer.Clock.Never
-      then
-         Peers (Peer).Rekey_Start := Now;
-      end if;
 
       --  Chunk 7b: re-arm receive-side deadlines.
       --  Reactive keepalive: we received and have not sent back.
@@ -274,8 +252,8 @@ is
       --  probe — they replied.
       Peers (Peer).Unresponsive_Peer_Deadline := Timer.Clock.Never;
 
-      --  In Rekeying, Rekey_Start moved with this receive (§6.4),
-      --  so the timed-out deadline shifts with it.
+      --  §6.4: extend the 90 s rekey-attempt window on every
+      --  authenticated receive while in Rekeying.
       if Peers (Peer).Mode = Rekeying
         and then Now /= Timer.Clock.Never
       then
@@ -318,24 +296,26 @@ is
       declare
          Saved_PKA : constant Unsigned_64 :=
            Peers (Peer).Persistent_Keepalive_Ms;
-         Saved_LH  : constant Timer.Clock.Timestamp :=
-           Peers (Peer).Last_Handshake;
+         --  Capture the about-to-be-expired session's birth time so
+         --  we can anchor the 540 s key-zeroing deadline at it
+         --  before the record reset wipes Current.  Only meaningful
+         --  if there actually was a current keypair.
+         Had_Current : constant Boolean :=
+           Peers (Peer).Current.Valid;
+         Saved_Created_At : constant Timer.Clock.Timestamp :=
+           Peers (Peer).Current.Created_At;
       begin
          Peers (Peer) := (others => <>);
          --  Preserve configuration that outlives sessions
          Peers (Peer).Persistent_Keepalive_Ms := Saved_PKA;
-         --  Preserve Last_Handshake so the 540 s key-zeroing check
-         --  in Tick can fire after the session has been expired.
-         Peers (Peer).Last_Handshake := Saved_LH;
 
-         --  Chunk 7b: arm the key-zeroing deadline relative to
-         --  Last_Handshake (the moment of the handshake whose
-         --  cryptographic material is now stale).  All other
+         --  Chunk 7b/7g: arm the key-zeroing deadline relative to
+         --  the just-expired session's Created_At.  All other
          --  per-condition deadlines reset to Never via the record
          --  default above.
-         if Saved_LH /= Timer.Clock.Never then
+         if Had_Current then
             Peers (Peer).Zero_Keys_Deadline :=
-              Add_Capped (Saved_LH, Key_Zeroing_After_Ms);
+              Add_Capped (Saved_Created_At, Key_Zeroing_After_Ms);
          end if;
       end;
 
@@ -360,10 +340,7 @@ is
             --  Transition Established → Rekeying.
             --  Valid_Peer(Established) guarantees Active and Current.Valid,
             --  which Valid_Peer(Rekeying) also requires.
-            Peers (Peer).Mode            := Rekeying;
-            Peers (Peer).Rekey_Start     := Now;
-            Peers (Peer).Rekey_Last_Sent := Now;
-            Peers (Peer).Rekey_Jitter_Ms := Jitter;
+            Peers (Peer).Mode := Rekeying;
 
             --  Chunk 7b: rekey-time no longer applies (we ARE
             --  rekeying); attempt window and retry timer arm now.
@@ -375,14 +352,10 @@ is
             pragma Assert (Valid_Peer (Peers (Peer)));
 
          when Rekeying =>
-            --  Already rekeying — update retry timestamp and jitter.
-            Peers (Peer).Rekey_Last_Sent := Now;
-            Peers (Peer).Rekey_Jitter_Ms := Jitter;
-
-            --  Chunk 7b: re-arm only the retry deadline; the 90 s
-            --  attempt window is anchored at Rekey_Start which has
-            --  not moved here (it moves only on send/receive of
-            --  authenticated packets — §6.4).
+            --  Already rekeying — chunk 7b/7g: re-arm only the retry
+            --  deadline.  The 90 s attempt window is anchored at
+            --  the most recent authenticated traffic event (Mark_Sent
+            --  / Mark_Received) per §6.4, not at the retry itself.
             Peers (Peer).Rekey_Retry_Deadline :=
               Add_Capped (Now, Rekey_Timeout_Ms + Jitter);
 
@@ -431,9 +404,9 @@ is
    is
    begin
       Lock;
-      Peers (Peer).Last_Handshake := Timer.Clock.Never;
-      --  Chunk 7b: clearing Last_Handshake retires the key-zeroing
-      --  rule until a future handshake re-arms it.
+      --  Chunk 7g: the only state the Zero_All_Keys handler needs
+      --  to clear is the deadline itself; the legacy Last_Handshake
+      --  field that used to gate it has been retired.
       Peers (Peer).Zero_Keys_Deadline := Timer.Clock.Never;
       Unlock;
    end Clear_Handshake_Timestamp;

@@ -18,7 +18,7 @@ is
    --  "deadline armed AND now past it" test against a deadline that
    --  some prior transition (chunk 7b) stamped in Peer_State.  All
    --  context-sensitive arming logic — "only initiator", "only in
-   --  Rekeying", "only when Last_Data_Sent > Last_Received", etc. —
+   --  Rekeying", "only after a data send has gone unanswered", etc.
    --  lives at the transition site; the deadline being /= Never
    --  encodes "rule currently armed".
    ---------------------------------------------------------------------------
@@ -168,8 +168,8 @@ is
 
             --  Unresponsive peer detection — §6.5 last paragraph
             --  Matches wireguard-go expiredNewHandshake (15 s).
-            --  Step 6b.3: read the transition flag set by
-            --  Refresh_Time_Flags from Last_Data_Sent / Last_Received.
+            --  Read the deadline-driven transition flag set by
+            --  Refresh_Time_Flags from Unresponsive_Peer_Deadline.
             if Peer.Unresponsive_Peer_Due then
                return Initiate_Rekey;
             end if;
@@ -204,11 +204,10 @@ is
       --  whenever we haven't sent anything for Persistent_Keepalive_Ms
       --  ms.  This keeps NAT mappings and stateful firewalls open.
       --
-      --  Step 6b.1: read the transition flag set by Refresh_Time_Flags
-      --  rather than recomputing Now - Last_Sent.  Mark_Sent and
-      --  Set_Persistent_Keepalive clear the flag, so the next fire is
-      --  bounded by the wrapper re-running Refresh_Time_Flags after
-      --  the deadline elapses.
+      --  Read the deadline-driven transition flag set by
+      --  Refresh_Time_Flags from Persistent_Keepalive_Deadline.
+      --  Mark_Sent re-arms the deadline; Set_Persistent_Keepalive
+      --  re-arms or clears it on reconfiguration.
       if Peer.Persistent_Keepalive_Due then
          return Send_Keepalive;
       end if;

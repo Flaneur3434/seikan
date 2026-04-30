@@ -262,10 +262,11 @@ is
      Pre  => Session_Ready,
      Post => Session_Ready;
 
-   --  Clear the Last_Handshake timestamp for a peer.
+   --  Disarm the Zero_Keys deadline for a peer.
    --  Called by the Zero_All_Keys handler at 540 s to prevent
    --  the zeroing action from firing repeatedly.  After this call,
-   --  Tick will no longer see a stale Last_Handshake for this peer.
+   --  Zero_Keys_Deadline is Never until a future Expire_Session
+   --  re-arms it.
    procedure Clear_Handshake_Timestamp (Peer : Peer_Index)
    with
      Global => (In_Out => (Peer_States, Mutex_State)),
@@ -282,15 +283,17 @@ private
       Previous : Session_Keys.Keypair;
       Next     : Session_Keys.Keypair;
 
-      --  Packet timestamps (data path)
-      Last_Sent      : Timer.Clock.Timestamp := Timer.Clock.Never;
-      Last_Data_Sent : Timer.Clock.Timestamp := Timer.Clock.Never;
-      Last_Received  : Timer.Clock.Timestamp := Timer.Clock.Never;
-      Last_Handshake : Timer.Clock.Timestamp := Timer.Clock.Never;
-
-      --  Rekey timestamps (timer path)
-      Rekey_Start     : Timer.Clock.Timestamp := Timer.Clock.Never;
-      Rekey_Last_Sent : Timer.Clock.Timestamp := Timer.Clock.Never;
+      --  Last_Sent — most recent outbound packet, in ms.
+      --  Read by Mark_Received to anchor Reactive_Keepalive_Deadline
+      --  at Last_Sent + Keepalive_Timeout_Ms (§6.5: keepalive 10 s
+      --  after the last send) and by Set_Persistent_Keepalive to
+      --  anchor the persistent-keepalive deadline at reconfig time.
+      --  All other former timestamp fields (Last_Data_Sent,
+      --  Last_Received, Last_Handshake, Rekey_Start,
+      --  Rekey_Last_Sent, Rekey_Jitter_Ms) were retired in chunk 7g:
+      --  the deadlines they used to feed are now stamped directly
+      --  at the originating transitions.
+      Last_Sent : Timer.Clock.Timestamp := Timer.Clock.Never;
 
       Active       : Boolean    := False;
       Mode         : Peer_Mode  := Inactive;
@@ -310,38 +313,27 @@ private
       --  takes seconds and converts.
       Persistent_Keepalive_Ms : Unsigned_64 := 0;
 
-      --  Jitter added to rekey retry interval (0..2000 ms).
-      --  Per §6.1: prevents lock-step retransmissions between peers.
-      --  Generated from Fill_Random in Set_Rekey_Flag on each retry.
-      Rekey_Jitter_Ms : Unsigned_64 := 0;
-
       --  Transition flag: persistent-keepalive deadline has elapsed
-      --  since the last outbound packet.  Computed by
-      --  Refresh_Time_Flags in Session.Timers (called at the entry
-      --  of Tick_All / On_Peer_Timer_Due) from Now, Last_Sent and
-      --  Persistent_Keepalive_Ms.  Tick reads this flag instead of
-      --  computing Now - Last_Sent >= Persistent_Keepalive_Ms.
+      --  since the last outbound packet.  After chunk 7c:
+      --    Due  <=>  Persistent_Keepalive_Deadline /= Never
+      --              and then Now >= Persistent_Keepalive_Deadline
       Persistent_Keepalive_Due : Boolean := False;
 
       --  Transition flag: we received a packet recently and have
       --  not sent anything back within the keepalive window
-      --  (Since_Recv < Keepalive_Timeout_Ms and Since_Sent >=
-      --  Keepalive_Timeout_Ms).  Computed by Refresh_Time_Flags
-      --  from Last_Received, Last_Sent and Now.  Step 6b.2.
+      --  (§6.5).  Same shape as the other Due flags after 7c.
       Reactive_Keepalive_Due : Boolean := False;
 
       --  Transition flag: we sent DATA (not just keepalive) and got
       --  no authenticated reply within New_Handshake_Time_Ms (15 s).
       --  Per §6.5 last paragraph; matches wireguard-go
-      --  expiredNewHandshake.  Computed by Refresh_Time_Flags from
-      --  Last_Data_Sent, Last_Received and Now.  Step 6b.3.
+      --  expiredNewHandshake.
       Unresponsive_Peer_Due : Boolean := False;
 
       --  Transition flag: cryptographic material has been stale long
       --  enough that all keys must be erased (§6.3 last sentence,
-      --  3×Reject_After_Time = 540 s).  Set when Last_Handshake is
-      --  still recorded for an inactive peer and the deadline has
-      --  elapsed.  Cleared by Clear_Handshake_Timestamp.  Step 6b.4.
+      --  3×Reject_After_Time = 540 s).  Armed by Expire_Session at
+      --  Created_At + 540 s; cleared by Clear_Handshake_Timestamp.
       Zero_Keys_Due : Boolean := False;
 
       --  Transition flag: current keypair is past Reject_After_Time_Ms
@@ -363,9 +355,8 @@ private
       Rekey_Timed_Out_Due : Boolean := False;
 
       --  Transition flag: we are in Rekeying mode and the retry
-      --  interval (Rekey_Timeout_Ms + Rekey_Jitter_Ms = 5–7 s) has
-      --  elapsed since the last initiation, so we should retransmit.
-      --  Step 6b.4.
+      --  interval (Rekey_Timeout_Ms + jitter = 5–7 s) has elapsed
+      --  since the last initiation, so we should retransmit.
       Rekey_Retry_Due : Boolean := False;
 
       --  Per-condition deadlines (chunk 7a/7b/7c).
@@ -381,9 +372,9 @@ private
       --    Persistent_Keepalive_Deadline -> Mark_Sent / Set_Persistent_Keepalive
       --    Reactive_Keepalive_Deadline   -> Mark_Received (cleared by Mark_Sent)
       --    Unresponsive_Peer_Deadline    -> Mark_Data_Sent (cleared by Mark_Received)
-      --    Zero_Keys_Deadline            -> Expire_Session (uses Last_Handshake)
+      --    Zero_Keys_Deadline            -> Expire_Session (Created_At + 540 s)
       --    Session_Expire_Time_Deadline  -> Activate_Next (Created_At + 180 s)
-      --    Rekey_Time_Deadline           -> Activate_Next when Is_Initiator
+      --    Rekey_Time_Deadline           -> Derive_And_Activate when Is_Initiator
       --    Rekey_Timed_Out_Deadline      -> Set_Rekey_Flag / Mark_Sent / Mark_Received
       --    Rekey_Retry_Deadline          -> Set_Rekey_Flag (each retry)
       Persistent_Keepalive_Deadline : Timer.Clock.Timestamp :=
@@ -421,14 +412,11 @@ private
         when Established =>
           P.Active
           and then P.Current.Valid
-          and then P.Rekey_Start = Timer.Clock.Never
-          and then P.Rekey_Last_Sent = Timer.Clock.Never
           and then P.Rekey_Timed_Out_Deadline = Timer.Clock.Never
           and then P.Rekey_Retry_Deadline = Timer.Clock.Never,
         when Rekeying    =>
           P.Active
           and then P.Current.Valid
-          and then P.Rekey_Start /= Timer.Clock.Never
           and then P.Rekey_Timed_Out_Deadline /= Timer.Clock.Never
           and then P.Rekey_Retry_Deadline /= Timer.Clock.Never
           and then P.Rekey_Time_Deadline = Timer.Clock.Never)
@@ -482,7 +470,6 @@ private
        All_Peers_Valid
        and then not Peers (Peer).Next.Valid
        and then Peers (Peer).Mode = Established
-       and then Peers (Peer).Last_Sent = Peers (Peer).Current.Created_At
-       and then Peers (Peer).Last_Received = Peers (Peer).Current.Created_At;
+       and then Peers (Peer).Last_Sent = Peers (Peer).Current.Created_At;
 
 end Session;
