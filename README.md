@@ -262,6 +262,8 @@ $ sudo wg set wg0 \
 # Activate interface
 $ ip link set up dev wg0
 
+$ ip route add 10.0.0.2/32 dev wg0
+
 # Show curent configuration
 $ wg
 
