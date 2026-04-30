@@ -367,6 +367,41 @@ private
       --  elapsed since the last initiation, so we should retransmit.
       --  Step 6b.4.
       Rekey_Retry_Due : Boolean := False;
+
+      --  Per-condition deadlines (chunk 7a/7b/7c).
+      --
+      --  These replace Refresh_Time_Flags's derived arithmetic with a
+      --  uniform "Now >= Deadline" check (computed in 7c).  Each
+      --  deadline is stamped at the transition that arms the
+      --  corresponding rule (chunk 7b).  Never (= 0) means "no such
+      --  deadline is currently meaningful for this peer" and the
+      --  matching flag stays False.
+      --
+      --  Field-by-field arming origin (set in 7b):
+      --    Persistent_Keepalive_Deadline -> Mark_Sent / Set_Persistent_Keepalive
+      --    Reactive_Keepalive_Deadline   -> Mark_Received (cleared by Mark_Sent)
+      --    Unresponsive_Peer_Deadline    -> Mark_Data_Sent (cleared by Mark_Received)
+      --    Zero_Keys_Deadline            -> Expire_Session (uses Last_Handshake)
+      --    Session_Expire_Time_Deadline  -> Activate_Next (Created_At + 180 s)
+      --    Rekey_Time_Deadline           -> Activate_Next when Is_Initiator
+      --    Rekey_Timed_Out_Deadline      -> Set_Rekey_Flag / Mark_Sent / Mark_Received
+      --    Rekey_Retry_Deadline          -> Set_Rekey_Flag (each retry)
+      Persistent_Keepalive_Deadline : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
+      Reactive_Keepalive_Deadline   : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
+      Unresponsive_Peer_Deadline    : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
+      Zero_Keys_Deadline            : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
+      Session_Expire_Time_Deadline  : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
+      Rekey_Time_Deadline           : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
+      Rekey_Timed_Out_Deadline      : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
+      Rekey_Retry_Deadline          : Timer.Clock.Timestamp :=
+        Timer.Clock.Never;
    end record;
 
    --  Structural invariant as a ghost predicate.
