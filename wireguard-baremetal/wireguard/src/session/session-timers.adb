@@ -5,22 +5,6 @@ package body Session.Timers
 is
 
    ---------------------------------------------------------------------------
-   --  Elapsed — Milliseconds since a timestamp (clamped to 0)
-   ---------------------------------------------------------------------------
-
-   function Elapsed
-     (Start : Timer.Clock.Timestamp; Now : Timer.Clock.Timestamp)
-      return Unsigned_64
-   with Post => (if Now > Start then Elapsed'Result > 0)
-   is
-   begin
-      if Now <= Start then
-         return 0;
-      end if;
-      return Now - Start;
-   end Elapsed;
-
-   ---------------------------------------------------------------------------
    --  Refresh_Time_Flags — Recompute time-based transition flags
    --
    --  Single owner of all Now-based comparisons for Tick.  Called at
@@ -286,22 +270,6 @@ is
    --  Next_Deadline helpers
    ---------------------------------------------------------------------------
 
-   --  Saturating add for Timer.Clock.Timestamp arithmetic.  Used to
-   --  compute Start + Delay without wrapping.  Caps at Timestamp'Last,
-   --  which is treated as a finite (very far-future) deadline by
-   --  Earliest, never as Never.
-   function Add_Capped
-     (Start : Timer.Clock.Timestamp; D : Unsigned_64)
-      return Timer.Clock.Timestamp
-   with Post => Add_Capped'Result >= Start
-   is
-   begin
-      if Timer.Clock.Timestamp'Last - Start <= D then
-         return Timer.Clock.Timestamp'Last;
-      end if;
-      return Start + D;
-   end Add_Capped;
-
    --  Minimum of two deadlines, treating Never as +infinity.
    function Earliest
      (A, B : Timer.Clock.Timestamp) return Timer.Clock.Timestamp
@@ -351,90 +319,36 @@ is
      (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp)
       return Timer.Clock.Timestamp
    is
-      Peer : constant Peer_State := Peers (Peer_Idx);
+      Peer : Peer_State renames Peers (Peer_Idx);
       D    : Timer.Clock.Timestamp := Timer.Clock.Never;
    begin
-      --  1. Key zeroing — applies even to inactive peers as long as
-      --  Last_Handshake is still set.
-      if Peer.Last_Handshake /= Timer.Clock.Never
-        and then not Peer.Active
-      then
-         D := Earliest
-                (D, Add_Capped (Peer.Last_Handshake, Key_Zeroing_After_Ms));
-      end if;
+      --  Chunk 7d: walk the eight per-condition deadlines stamped by
+      --  the transitions in Session.  Earliest treats Never as
+      --  +infinity, so unarmed deadlines are skipped automatically.
+      D := Earliest (D, Peer.Persistent_Keepalive_Deadline);
+      D := Earliest (D, Peer.Reactive_Keepalive_Deadline);
+      D := Earliest (D, Peer.Unresponsive_Peer_Deadline);
+      D := Earliest (D, Peer.Zero_Keys_Deadline);
+      D := Earliest (D, Peer.Session_Expire_Time_Deadline);
+      D := Earliest (D, Peer.Rekey_Time_Deadline);
+      D := Earliest (D, Peer.Rekey_Timed_Out_Deadline);
+      D := Earliest (D, Peer.Rekey_Retry_Deadline);
 
-      --  Inactive / no current keypair: only key-zeroing matters.
-      if not Peer.Active or else not Peer.Current.Valid then
-         return Clamp_Future (D, Now);
-      end if;
-
-      --  2. Hard expiry — Reject_After_Time
-      D := Earliest
-             (D, Add_Capped (Peer.Current.Created_At, Reject_After_Time_Ms));
-
-      --  Counter-driven triggers — these are NOT time-predictable
-      --  but become true synchronously inside wg_send/wg_receive when
+      --  Counter-driven triggers — not time-predictable but become
+      --  true synchronously inside wg_send/wg_receive when
       --  Send_Counter crosses the limit.  After chunk 3, every such
       --  call is followed by rearm_peer_timer, so reflecting the
       --  crossing as "deadline = Now" makes the next esp_timer fire
       --  immediately and Tick dispatches Initiate_Rekey or
       --  Session_Expired without waiting for a separate periodic
       --  recheck.
-      if Peer.Current.Send_Counter >= Reject_After_Messages
-        or else Peer.Current.Send_Counter >= Rekey_After_Messages
+      if Peer.Active
+        and then Peer.Current.Valid
+        and then (Peer.Current.Send_Counter >= Reject_After_Messages
+                  or else Peer.Current.Send_Counter >= Rekey_After_Messages)
       then
          D := Earliest (D, Now);
       end if;
-
-      case Peer.Mode is
-         when Established =>
-            --  Time-based rekey, initiator only
-            if Peer.Is_Initiator then
-               D := Earliest
-                      (D,
-                       Add_Capped (Peer.Current.Created_At,
-                                   Rekey_After_Time_Ms));
-               D := Earliest
-                      (D,
-                       Add_Capped (Peer.Current.Created_At,
-                                   Reject_After_Time_Ms
-                                   - Keepalive_Timeout_Ms
-                                   - Rekey_Timeout_Ms));
-            end if;
-
-            --  Unresponsive-peer probe: only meaningful while
-            --  Last_Data_Sent > Last_Received.
-            if Peer.Last_Data_Sent /= Timer.Clock.Never
-              and then Peer.Last_Data_Sent > Peer.Last_Received
-            then
-               D := Earliest
-                      (D, Add_Capped (Peer.Last_Data_Sent,
-                                      New_Handshake_Time_Ms));
-            end if;
-
-            --  Reactive keepalive (idle responder side).
-            if Peer.Last_Received /= Timer.Clock.Never then
-               D := Earliest
-                      (D, Add_Capped (Peer.Last_Sent, Keepalive_Timeout_Ms));
-            end if;
-
-            --  Persistent keepalive.
-            if Peer.Persistent_Keepalive_Ms > 0 then
-               D := Earliest
-                      (D, Add_Capped (Peer.Last_Sent,
-                                      Peer.Persistent_Keepalive_Ms));
-            end if;
-
-         when Rekeying =>
-            D := Earliest
-                   (D, Add_Capped (Peer.Rekey_Start, Rekey_Attempt_Time_Ms));
-            D := Earliest
-                   (D, Add_Capped (Peer.Rekey_Last_Sent,
-                                   Rekey_Timeout_Ms + Peer.Rekey_Jitter_Ms));
-
-         when Inactive =>
-            null;
-      end case;
 
       return Clamp_Future (D, Now);
    end Next_Deadline;
