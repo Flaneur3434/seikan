@@ -27,38 +27,26 @@ is
      (Peer_Idx : Peer_Index; Now : Timer.Clock.Timestamp)
    is
       Peer : Peer_State renames Peers (Peer_Idx);
+
+      function Is_Due (Deadline : Timer.Clock.Timestamp) return Boolean
+      is (Deadline /= Timer.Clock.Never and then Now >= Deadline);
    begin
       Peer.Persistent_Keepalive_Due :=
-        Peer.Persistent_Keepalive_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Persistent_Keepalive_Deadline;
-
-      Peer.Reactive_Keepalive_Due :=
-        Peer.Reactive_Keepalive_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Reactive_Keepalive_Deadline;
-
-      Peer.Unresponsive_Peer_Due :=
-        Peer.Unresponsive_Peer_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Unresponsive_Peer_Deadline;
-
-      Peer.Zero_Keys_Due :=
-        Peer.Zero_Keys_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Zero_Keys_Deadline;
-
-      Peer.Session_Expire_Time_Due :=
-        Peer.Session_Expire_Time_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Session_Expire_Time_Deadline;
-
-      Peer.Rekey_Time_Due :=
-        Peer.Rekey_Time_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Rekey_Time_Deadline;
-
-      Peer.Rekey_Timed_Out_Due :=
-        Peer.Rekey_Timed_Out_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Rekey_Timed_Out_Deadline;
-
-      Peer.Rekey_Retry_Due :=
-        Peer.Rekey_Retry_Deadline /= Timer.Clock.Never
-        and then Now >= Peer.Rekey_Retry_Deadline;
+        Is_Due (Peer.Persistent_Keepalive_Deadline);
+      Peer.Reactive_Keepalive_Due   :=
+        Is_Due (Peer.Reactive_Keepalive_Deadline);
+      Peer.Unresponsive_Peer_Due    :=
+        Is_Due (Peer.Unresponsive_Peer_Deadline);
+      Peer.Zero_Keys_Due            :=
+        Is_Due (Peer.Zero_Keys_Deadline);
+      Peer.Session_Expire_Time_Due  :=
+        Is_Due (Peer.Session_Expire_Time_Deadline);
+      Peer.Rekey_Time_Due           :=
+        Is_Due (Peer.Rekey_Time_Deadline);
+      Peer.Rekey_Timed_Out_Due      :=
+        Is_Due (Peer.Rekey_Timed_Out_Deadline);
+      Peer.Rekey_Retry_Due          :=
+        Is_Due (Peer.Rekey_Retry_Deadline);
    end Refresh_Time_Flags;
 
    ---------------------------------------------------------------------------
