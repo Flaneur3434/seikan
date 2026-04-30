@@ -413,16 +413,25 @@ private
    function Valid_Peer (P : Peer_State) return Boolean is
      (case P.Mode is
         when Inactive    =>
-          not P.Active or else not P.Current.Valid,
+          (not P.Active or else not P.Current.Valid)
+          and then P.Rekey_Timed_Out_Deadline = Timer.Clock.Never
+          and then P.Rekey_Retry_Deadline = Timer.Clock.Never
+          and then P.Rekey_Time_Deadline = Timer.Clock.Never
+          and then P.Session_Expire_Time_Deadline = Timer.Clock.Never,
         when Established =>
           P.Active
           and then P.Current.Valid
           and then P.Rekey_Start = Timer.Clock.Never
-          and then P.Rekey_Last_Sent = Timer.Clock.Never,
+          and then P.Rekey_Last_Sent = Timer.Clock.Never
+          and then P.Rekey_Timed_Out_Deadline = Timer.Clock.Never
+          and then P.Rekey_Retry_Deadline = Timer.Clock.Never,
         when Rekeying    =>
           P.Active
           and then P.Current.Valid
-          and then P.Rekey_Start /= Timer.Clock.Never)
+          and then P.Rekey_Start /= Timer.Clock.Never
+          and then P.Rekey_Timed_Out_Deadline /= Timer.Clock.Never
+          and then P.Rekey_Retry_Deadline /= Timer.Clock.Never
+          and then P.Rekey_Time_Deadline = Timer.Clock.Never)
    with Ghost;
 
    Peers : array (Peer_Index) of Peer_State := [others => <>]
